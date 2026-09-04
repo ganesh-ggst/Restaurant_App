@@ -11,6 +11,7 @@ web-build/
 expo-env.d.ts
 CLAUDE.md
 .env
+.idea
 
 # Native
 .kotlin/

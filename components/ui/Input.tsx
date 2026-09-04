@@ -17,6 +17,9 @@ interface InputProps {
   editable?: boolean;
   error?: string;
   icon?: React.ReactNode;
+  prefix?: React.ReactNode;
+  maxLength?: number;
+  autoFocus?: boolean;
 }
 
 export function Input({
@@ -30,11 +33,13 @@ export function Input({
   editable = true,
   error,
   icon,
+  prefix,
+  maxLength,
+  autoFocus = false,
 }: InputProps) {
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === "dark";
 
-  const inputBgColor = isDark ? "hsl(149, 16%, 24%)" : "hsl(141, 47%, 83%)";
   const textColor = isDark ? "hsl(136, 42%, 92%)" : "hsl(146, 52%, 15%)";
   const placeholderColor = isDark ? "hsl(140, 17%, 68%)" : "hsl(146, 26%, 40%)";
   const borderColor = error
@@ -61,6 +66,7 @@ export function Input({
         style={{ borderColor: borderColor }}
       >
         {icon && <View className="mr-3">{icon}</View>}
+        {prefix && <View className="mr-2">{prefix}</View>}
         <TextInput
           placeholder={placeholder}
           placeholderTextColor={placeholderColor}
@@ -70,6 +76,8 @@ export function Input({
           keyboardType={keyboardType}
           autoCapitalize={autoCapitalize}
           editable={editable}
+          maxLength={maxLength}
+          autoFocus={autoFocus}
           style={{
             color: textColor,
             flex: 1,
