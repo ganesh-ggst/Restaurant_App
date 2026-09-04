@@ -6,8 +6,6 @@ export default function AuthLayout() {
   const isDark = colorScheme === "dark";
 
   const headerBgColor = isDark ? "hsl(150, 31%, 9%)" : "hsl(138, 47%, 97%)";
-  const headerTextColor = isDark ? "hsl(136, 42%, 92%)" : "hsl(146, 52%, 15%)";
-  const tintColor = isDark ? "hsl(142, 70%, 54%)" : "hsl(147, 75%, 33%)";
 
   return (
     <Stack
@@ -25,15 +23,15 @@ export default function AuthLayout() {
         }}
       />
       <Stack.Screen
-        name="sign-up"
+        name="verify-otp"
         options={{
-          title: "Create Account",
+          title: "Verify OTP",
         }}
       />
       <Stack.Screen
-        name="forgot-password"
+        name="basic-details"
         options={{
-          title: "Reset Password",
+          title: "Complete Profile",
         }}
       />
     </Stack>

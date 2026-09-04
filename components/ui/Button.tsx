@@ -1,24 +1,29 @@
 import { useColorScheme } from "nativewind";
-import { Pressable, Text } from "react-native";
+import { ActivityIndicator, Pressable, Text } from "react-native";
 
+// Interface defining the props for the Button component
 interface ButtonProps {
   title: string;
   onPress: () => void;
   variant?: "primary" | "secondary" | "outline" | "destructive";
   disabled?: boolean;
   loading?: boolean;
+  className?: string;
 }
 
+// Custom Button component with variants and loading state
 export function Button({
   title,
   onPress,
   variant = "primary",
   disabled = false,
   loading = false,
+  className = "",
 }: ButtonProps) {
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === "dark";
 
+  // Determines background and border colors based on variant
   const getVariantStyles = () => {
     switch (variant) {
       case "primary":
@@ -46,6 +51,7 @@ export function Button({
     }
   };
 
+  // Determines text color based on variant
   const getTextColor = () => {
     switch (variant) {
       case "primary":
@@ -62,12 +68,13 @@ export function Button({
   };
 
   const styles = getVariantStyles();
+  const textColor = getTextColor();
 
   return (
     <Pressable
       onPress={onPress}
       disabled={disabled || loading}
-      className={`rounded-xl border-2 py-4 px-6 ${disabled || loading ? "opacity-50" : ""}`}
+      className={`rounded-xl border-2 py-4 px-6 flex-row justify-center items-center ${disabled || loading ? "opacity-50" : ""} ${className}`}
       style={[
         {
           backgroundColor: styles.backgroundColor,
@@ -75,12 +82,16 @@ export function Button({
         },
       ]}
     >
-      <Text
-        className="text-center text-lg font-bold"
-        style={{ color: getTextColor() }}
-      >
-        {loading ? "Loading..." : title}
-      </Text>
+      {loading ? (
+        <ActivityIndicator color={textColor} />
+      ) : (
+        <Text
+          className="text-center text-lg font-bold"
+          style={{ color: textColor }}
+        >
+          {title}
+        </Text>
+      )}
     </Pressable>
   );
 }

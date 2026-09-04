@@ -1,10 +1,12 @@
 import { useClerk, useUser } from "@clerk/expo";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useGlobalSearchParams, useRouter } from "expo-router";
 import { useColorScheme } from "nativewind";
+import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
+import { getUserByPhone } from "../../lib/db";
 
 interface ProfileMenuItemProps {
   icon: string;
@@ -57,6 +59,19 @@ export default function ProfileScreen() {
   const { signOut } = useClerk();
   const router = useRouter();
 
+  // Catch the phone number globally passed from authentication
+  const { phone } = useGlobalSearchParams<{ phone?: string }>();
+  const [dbFirstName, setDbFirstName] = useState<string | null>(null);
+
+  // Fetch the name dynamically from Neon DB
+  useEffect(() => {
+    if (phone) {
+      getUserByPhone(phone).then((data) => {
+        if (data) setDbFirstName(data.first_name);
+      });
+    }
+  }, [phone]);
+
   const bgColor = isDark ? "hsl(150, 31%, 9%)" : "hsl(138, 47%, 97%)";
   const textColor = isDark ? "hsl(136, 42%, 92%)" : "hsl(146, 52%, 15%)";
   const subtitleColor = isDark ? "hsl(140, 17%, 68%)" : "hsl(146, 26%, 40%)";
@@ -64,12 +79,15 @@ export default function ProfileScreen() {
 
   const handleLogout = async () => {
     try {
-      await signOut();
+      await signOut(); // Safe to leave here for Clerk cleanup later
       router.replace("(auth)/login" as any);
     } catch (error) {
       console.error("Logout error:", error);
     }
   };
+
+  // Priority: 1. Neon DB, 2. Clerk (if using it later), 3. Fallback
+  const displayFirstName = dbFirstName || user?.firstName || "Siva";
 
   return (
     <ScrollView
@@ -77,7 +95,6 @@ export default function ProfileScreen() {
       contentContainerStyle={{ flexGrow: 1 }}
       className="px-6 py-4"
     >
-      {/* Profile Header */}
       <Card variant="elevated" className="mb-6">
         <View className="items-center gap-4">
           <View
@@ -96,18 +113,15 @@ export default function ProfileScreen() {
               color={primaryColor}
             />
           </View>
+
           <View className="items-center">
             <Text className="text-2xl font-bold" style={{ color: textColor }}>
-              {user?.fullName || "User"}
-            </Text>
-            <Text className="mt-1 text-sm" style={{ color: subtitleColor }}>
-              {user?.primaryEmailAddress?.emailAddress || "No email"}
+              {displayFirstName}
             </Text>
           </View>
         </View>
       </Card>
 
-      {/* Account Settings */}
       <View className="mb-6">
         <Text className="mb-3 text-lg font-bold" style={{ color: textColor }}>
           Account
@@ -132,7 +146,6 @@ export default function ProfileScreen() {
         />
       </View>
 
-      {/* App Settings */}
       <View className="mb-6">
         <Text className="mb-3 text-lg font-bold" style={{ color: textColor }}>
           Settings
@@ -157,7 +170,6 @@ export default function ProfileScreen() {
         />
       </View>
 
-      {/* Support */}
       <View className="mb-6">
         <Text className="mb-3 text-lg font-bold" style={{ color: textColor }}>
           Support
@@ -176,12 +188,10 @@ export default function ProfileScreen() {
         />
       </View>
 
-      {/* Logout Button */}
       <View className="mb-4">
         <Button title="Sign Out" variant="destructive" onPress={handleLogout} />
       </View>
 
-      {/* App Version */}
       <Text className="text-center text-xs" style={{ color: subtitleColor }}>
         Restaurant App v1.0.0
       </Text>
