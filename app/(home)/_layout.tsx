@@ -1,57 +1,69 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { BlurView } from "expo-blur";
 import { Tabs } from "expo-router";
 import { useColorScheme } from "nativewind";
-import { Platform } from "react-native";
+import { Platform, StyleSheet } from "react-native";
 
 export default function HomeLayout() {
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === "dark";
 
-  const tabBarBgColor = isDark ? "hsl(150, 31%, 9%)" : "hsl(0, 0%, 100%)";
-  const inactiveColor = isDark ? "hsl(140, 17%, 68%)" : "hsl(146, 26%, 40%)";
-  const activeColor = isDark ? "hsl(142, 70%, 54%)" : "hsl(147, 75%, 33%)";
-  const borderColor = isDark ? "hsl(149, 16%, 24%)" : "hsl(141, 47%, 83%)";
+  // Colors matching the high-contrast aesthetic
+  const activeColor = isDark ? "#34D399" : "#10B981"; // Emerald
+  const inactiveColor = isDark ? "#9CA3AF" : "#6B7280"; // Slate 400 / Gray 500
 
   return (
     <Tabs
       screenOptions={{
+        headerShown: false,
+        // The magic for the floating pill design
         tabBarStyle: {
-          backgroundColor: tabBarBgColor,
-          borderTopWidth: 0, // Removed border for a sleeker look
-          elevation: 10, // Added shadow for Android
-          shadowColor: "#000", // Added shadow for iOS
-          shadowOffset: { width: 0, height: -2 },
-          shadowOpacity: isDark ? 0.3 : 0.1,
-          shadowRadius: 4,
-          paddingBottom: Platform.OS === "ios" ? 20 : 8,
-          paddingTop: 8,
-          height: Platform.OS === "ios" ? 85 : 65,
+          position: "absolute",
+          bottom: Platform.OS === "ios" ? 32 : 20,
+          left: 20,
+          right: 20,
+          height: 68,
+          borderRadius: 34,
+          borderTopWidth: 0,
+          paddingBottom: 0, // Overrides default iOS safe area padding
+          // Android gets a near-solid background since BlurView doesn't work the same way
+          backgroundColor:
+            Platform.OS === "ios"
+              ? "transparent"
+              : isDark
+                ? "rgba(30, 41, 59, 0.98)"
+                : "rgba(255, 255, 255, 0.98)",
+          elevation: 10,
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 8 },
+          shadowOpacity: 0.15,
+          shadowRadius: 12,
         },
+        // Injects the glass effect behind the absolute positioned tab bar on iOS
+        tabBarBackground: () =>
+          Platform.OS === "ios" ? (
+            <BlurView
+              tint={isDark ? "dark" : "light"}
+              intensity={85}
+              style={StyleSheet.absoluteFill}
+              className="overflow-hidden rounded-[34px]"
+            />
+          ) : undefined,
         tabBarActiveTintColor: activeColor,
         tabBarInactiveTintColor: inactiveColor,
+        tabBarItemStyle: {
+          paddingVertical: 10,
+        },
         tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: "700",
+          fontSize: 11,
+          fontWeight: "800",
           marginTop: 2,
-        },
-        headerStyle: {
-          backgroundColor: tabBarBgColor,
-          borderBottomColor: borderColor,
-          borderBottomWidth: 1,
-          elevation: 0,
-          shadowOpacity: 0,
-        },
-        headerTintColor: activeColor,
-        headerTitleStyle: {
-          fontWeight: "900",
-          fontSize: 18,
         },
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
-          headerShown: false, // Hiding native header so our custom layout takes over
           title: "Home",
           tabBarLabel: "Home",
           tabBarIcon: ({ color, size }) => (
@@ -68,7 +80,6 @@ export default function HomeLayout() {
         options={{
           title: "Menu",
           tabBarLabel: "Menu",
-          headerTitle: "Explore Menu",
           tabBarIcon: ({ color, size }) => (
             <MaterialCommunityIcons
               name="silverware-fork-knife"
@@ -83,7 +94,6 @@ export default function HomeLayout() {
         options={{
           title: "Orders",
           tabBarLabel: "Orders",
-          headerTitle: "My Orders",
           tabBarIcon: ({ color, size }) => (
             <MaterialCommunityIcons
               name="receipt-text"
@@ -93,17 +103,12 @@ export default function HomeLayout() {
           ),
         }}
       />
-      {/* 
-        Setting href: null completely hides this from the bottom tab bar, 
-        but keeps it accessible via the profile icon on the home screen! 
-      */}
+      {/* Hidden from the tab bar, accessed via top-right profile icon on Home */}
       <Tabs.Screen
         name="profile"
         options={{
           href: null,
-          headerShown: true,
           title: "My Profile",
-          headerTitle: "My Profile",
         }}
       />
     </Tabs>

@@ -21,7 +21,7 @@ const CARD_WIDTH = width * 0.43; // Optimal 2-column width with padding
 
 // Inside your component, set up the video player instance:
 const player = useVideoPlayer(
-  "../../assets/videos/show-video.mp4",
+  require("../../assets/videos/show-video.mp4"),
   (player) => {
     player.loop = true;
     player.muted = true;
