@@ -1,169 +1,52 @@
 import { useUser } from "@clerk/expo";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useGlobalSearchParams, useRouter } from "expo-router";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { useColorScheme } from "nativewind";
-import { useEffect, useState } from "react";
 import {
-  Dimensions,
-  Image,
-  Pressable,
-  ScrollView,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+  BellRing,
+  ChevronDown,
+  ChevronRightCircle,
+  MapPin,
+  Mic,
+  Receipt,
+  ScanLine,
+  Search,
+  ShoppingBag,
+  Store,
+  UserRound,
+  Wifi,
+} from "lucide-react-native";
+import { useEffect, useState } from "react";
+import { Dimensions, Image, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import FoodCard from "../../components/home/FoodCard";
+import { CATEGORIES, FOOD_ITEMS, OFFERS } from "../../constants/mockData";
+import { useAppTheme } from "../../constants/theme";
 import { getUserByPhone } from "../../lib/db";
+import { useOrderMode } from "./_layout";
 
 const { width } = Dimensions.get("window");
-const CARD_WIDTH = width * 0.43; // Optimal 2-column width with padding
-
-// Inside your component, set up the video player instance:
-const player = useVideoPlayer(
-  require("../../assets/videos/show-video.mp4"),
-  (player) => {
-    player.loop = true;
-    player.muted = true;
-    player.play();
-  },
-);
-
-// --- MASSIVE MOCK DATA FOR DENSE UI ---
-const OFFERS = [
-  {
-    id: 1,
-    title: "50% OFF",
-    subtitle: "On your first Biryani order",
-    image:
-      "https://images.unsplash.com/photo-1633945274405-b6c8069047b0?auto=format&fit=crop&w=800&q=80",
-  },
-  {
-    id: 2,
-    title: "FREE DESSERT",
-    subtitle: "On orders above ₹499",
-    image:
-      "https://images.unsplash.com/photo-1551024506-0baa2740d303?auto=format&fit=crop&w=800&q=80",
-  },
-];
-
-const CATEGORIES = [
-  { id: 1, name: "Biryani", icon: "rice" },
-  { id: 2, name: "Grills", icon: "fire" },
-  { id: 3, name: "Curries", icon: "pot-steam" },
-  { id: 4, name: "Breads", icon: "baguette" },
-  { id: 5, name: "Desserts", icon: "ice-cream" },
-];
-
-const BEST_SELLERS = [
-  {
-    id: 1,
-    name: "Special Chicken Dum Biryani",
-    price: "₹319",
-    time: "30 mins",
-    rating: "4.8",
-    offer: "₹50 OFF",
-    image:
-      "https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?auto=format&fit=crop&w=400&q=80",
-    isVeg: false,
-  },
-  {
-    id: 2,
-    name: "Tandoori Platter Full",
-    price: "₹549",
-    time: "40 mins",
-    rating: "4.9",
-    offer: "BESTSELLER",
-    image:
-      "https://images.unsplash.com/photo-1544025162-8315ea011505?auto=format&fit=crop&w=400&q=80",
-    isVeg: false,
-  },
-  {
-    id: 3,
-    name: "Paneer Butter Masala",
-    price: "₹289",
-    time: "25 mins",
-    rating: "4.6",
-    offer: "20% OFF",
-    image:
-      "https://images.unsplash.com/photo-1645177628172-a94c1f96e6db?auto=format&fit=crop&w=400&q=80",
-    isVeg: true,
-  },
-  {
-    id: 4,
-    name: "Mutton Keema Fry",
-    price: "₹429",
-    time: "35 mins",
-    rating: "4.7",
-    offer: "SPICY",
-    image:
-      "https://images.unsplash.com/photo-1600891964092-4316c288032e?auto=format&fit=crop&w=400&q=80",
-    isVeg: false,
-  },
-];
-
-const BIRYANIS = [
-  {
-    id: 1,
-    name: "Hyderabadi Mutton",
-    price: "₹449",
-    time: "35 mins",
-    rating: "4.9",
-    offer: "MUST TRY",
-    image:
-      "https://images.unsplash.com/photo-1631515243349-e0cb75fb8d3a?auto=format&fit=crop&w=400&q=80",
-    isVeg: false,
-  },
-  {
-    id: 2,
-    name: "Paneer Tikka Biryani",
-    price: "₹299",
-    time: "30 mins",
-    rating: "4.5",
-    offer: "NEW",
-    image:
-      "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?auto=format&fit=crop&w=400&q=80",
-    isVeg: true,
-  },
-];
-
-const GRILLS = [
-  {
-    id: 1,
-    name: "Afghani Chicken",
-    price: "₹399",
-    time: "30 mins",
-    rating: "4.7",
-    offer: "₹40 OFF",
-    image:
-      "https://images.unsplash.com/photo-1599487488170-d11ec9c172f0?auto=format&fit=crop&w=400&q=80",
-    isVeg: false,
-  },
-  {
-    id: 2,
-    name: "Seekh Kebab",
-    price: "₹349",
-    time: "25 mins",
-    rating: "4.6",
-    offer: "HOT",
-    image:
-      "https://images.unsplash.com/photo-1604908176997-125f25cc6f3d?auto=format&fit=crop&w=400&q=80",
-    isVeg: false,
-  },
-];
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { colorScheme } = useColorScheme();
-  const isDark = colorScheme === "dark";
   const insets = useSafeAreaInsets();
   const { user } = useUser();
+  const theme = useAppTheme(); 
 
-  const [orderMode, setOrderMode] = useState("Delivery");
-  const [isVegOnly, setIsVegOnly] = useState(false);
+  const { mode, setMode } = useOrderMode();
   const [searchQuery, setSearchQuery] = useState("");
+  const [isVegOnly, setIsVegOnly] = useState(false);
 
-  // Fetch DB User Info
+  const player = useVideoPlayer(
+    require("../../assets/videos/show-video.mp4"),
+    (p) => {
+      p.loop = true;
+      p.muted = true;
+      p.play();
+    }
+  );
+
   const { phone } = useGlobalSearchParams<{ phone?: string }>();
   const [dbFirstName, setDbFirstName] = useState<string | null>(null);
 
@@ -177,385 +60,235 @@ export default function HomeScreen() {
 
   const displayFirstName = dbFirstName || user?.firstName || "Siva";
 
-  // --- REUSABLE PREMIUM FOOD CARD ---
-  const FoodCard = ({
-    item,
-    widthOverride,
-  }: {
-    item: any;
-    widthOverride?: number;
-  }) => (
-    <View
-      className="mb-4 overflow-hidden rounded-[24px] bg-white shadow-sm dark:bg-slate-800 border border-gray-100 dark:border-slate-700/50"
-      style={{ width: widthOverride || CARD_WIDTH }}
-    >
-      {/* Image & Overlays */}
-      <View className="relative h-36 w-full">
-        <Image
-          source={{ uri: item.image }}
-          className="h-full w-full"
-          resizeMode="cover"
-        />
-        <View className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent" />
-
-        {/* Veg/Non-Veg Tag */}
-        <View className="absolute top-3 left-3 rounded bg-white/95 px-1.5 py-1">
-          <MaterialCommunityIcons
-            name="circle-box"
-            size={14}
-            color={item.isVeg ? "#16A34A" : "#DC2626"}
-          />
-        </View>
-
-        {/* Heart Icon */}
-        <Pressable className="absolute top-3 right-3 rounded-full bg-black/40 p-2 backdrop-blur-md">
-          <MaterialCommunityIcons
-            name="heart-outline"
-            size={18}
-            color="white"
-          />
-        </Pressable>
-
-        {/* Bottom Image Overlay (Offer) */}
-        <Text className="absolute bottom-3 left-3 text-lg font-black text-white tracking-tight">
-          {item.offer}
-        </Text>
-      </View>
-
-      {/* Card Info & Huge Add Button */}
-      <View className="p-3.5">
-        <Text
-          className="text-[15px] font-extrabold text-gray-900 dark:text-white"
-          numberOfLines={1}
-        >
-          {item.name}
-        </Text>
-
-        <View className="mt-1.5 flex-row items-center">
-          <MaterialCommunityIcons
-            name="star-circle"
-            size={15}
-            color="#10B981"
-          />
-          <Text className="ml-1 text-xs font-bold text-gray-600 dark:text-slate-300">
-            {item.rating}
-          </Text>
-          <Text className="mx-1.5 text-xs text-gray-400">•</Text>
-          <Text className="text-xs font-semibold text-gray-600 dark:text-slate-300">
-            {item.time}
-          </Text>
-        </View>
-
-        <View className="mt-4 flex-row items-center justify-between">
-          <Text className="text-lg font-black text-gray-900 dark:text-white">
-            {item.price}
-          </Text>
-
-          {/* MASSIVE ADD BUTTON */}
-          <Pressable className="rounded-xl bg-emerald-100 px-6 py-2.5 dark:bg-emerald-900/40 border border-emerald-200 dark:border-emerald-800/50">
-            <Text className="text-sm font-black text-emerald-700 dark:text-emerald-400 uppercase">
-              ADD
-            </Text>
-          </Pressable>
-        </View>
-      </View>
-    </View>
-  );
-
   return (
-    <View
-      className="flex-1 bg-gray-50 dark:bg-[#0B1120]"
-      style={{ paddingTop: insets.top }}
-    >
-      {/* 1. TOP HEADER: Location & Profile */}
-      <View className="flex-row items-center justify-between px-4 pb-2 pt-2 bg-gray-50 dark:bg-[#0B1120] z-10">
+    <View className="flex-1" style={{ backgroundColor: theme.bg, paddingTop: insets.top }}>
+      
+      {/* DYNAMIC TOP HEADER */}
+      <View className="flex-row items-center justify-between px-4 pb-2 pt-2 z-10" style={{ backgroundColor: theme.bg }}>
         <View className="flex-1">
           <View className="flex-row items-center">
-            <MaterialCommunityIcons
-              name="map-marker"
-              size={24}
-              color={isDark ? "#34D399" : "#10B981"}
-            />
-            <Text className="ml-1 text-xl font-black text-gray-900 dark:text-white tracking-tight">
-              Silicon Valley
+            {mode === "Delivery" ? (
+              <MapPin size={22} color={theme.primary} strokeWidth={2.5} />
+            ) : (
+              <Store size={22} color={theme.primary} strokeWidth={2.5} />
+            )}
+            <Text className="ml-1 text-xl font-black tracking-tight" style={{ color: theme.text }}>
+              {mode === "Delivery" ? "Deliver to:" : "Currently at:"}
             </Text>
-            <MaterialCommunityIcons
-              name="chevron-down"
-              size={24}
-              color={isDark ? "white" : "black"}
-            />
+            <ChevronDown size={20} color={theme.text} strokeWidth={2.5} style={{ marginLeft: 4 }} />
           </View>
-          <Text
-            className="ml-7 text-xs font-semibold text-gray-500 dark:text-slate-400"
-            numberOfLines={1}
-          >
-            Madhapur, Hyderabad, Telangana
+          <Text className="ml-7 text-xs font-bold mt-0.5 tracking-wide" style={{ color: theme.primary }} numberOfLines={1}>
+            {mode === "Delivery" ? "Silicon Valley, Madhapur" : "Hitech City Premium Branch"}
           </Text>
         </View>
 
         <Pressable
           onPress={() => router.push("/(home)/profile")}
-          className="ml-4 h-12 w-12 items-center justify-center rounded-full bg-white shadow-sm dark:bg-slate-800 border border-gray-200 dark:border-slate-700"
+          className="ml-4 h-11 w-11 items-center justify-center rounded-full shadow-sm border"
+          style={{ backgroundColor: theme.card, borderColor: theme.border }}
         >
-          <MaterialCommunityIcons
-            name="account-outline"
-            size={26}
-            color={isDark ? "white" : "black"}
-          />
+          <UserRound size={22} color={theme.text} strokeWidth={2} />
         </Pressable>
       </View>
 
-      {/* MAIN SCROLLVIEW - stickyHeaderIndices=[1] makes the Search Bar stick to the top! */}
-      <ScrollView
-        contentContainerStyle={{ paddingBottom: 100 }}
-        showsVerticalScrollIndicator={false}
-        stickyHeaderIndices={[1]}
-      >
-        {/* INDEX 0: GREETING & COMPACT DELIVERY TOGGLE */}
+      <ScrollView contentContainerStyle={{ paddingBottom: 120 }} showsVerticalScrollIndicator={false} stickyHeaderIndices={[1]}>
+        
+        {/* GREETING & TOGGLE */}
         <View className="px-4 mt-2 mb-4 flex-row items-center justify-between">
-          <Text className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">
+          <Text className="text-2xl font-black tracking-tight" style={{ color: theme.text }}>
             Hello, {displayFirstName}!
           </Text>
 
-          {/* Compact Toggle container */}
-          <View className="flex-row rounded-xl bg-gray-200 p-1 dark:bg-[#1A222C]">
-            {["Delivery", "Takeaway", "Dine-in"].map((tab) => (
-              <Pressable
-                key={tab}
-                onPress={() => setOrderMode(tab)}
-                className={`items-center justify-center rounded-md px-3 py-1.5 ${
-                  orderMode === tab
-                    ? "bg-[#3DEC8A] shadow-sm"
-                    : "bg-transparent"
-                }`}
-              >
-                <Text
-                  className={`text-xs ${
-                    orderMode === tab
-                      ? "font-extrabold text-gray-900"
-                      : "font-semibold text-gray-500 dark:text-gray-400"
-                  }`}
-                >
-                  {tab}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
+          <Pressable onPress={() => setMode(mode === "Delivery" ? "Dine-In" : "Delivery")} className="flex-row items-center">
+            <Text className="text-[10px] font-black uppercase tracking-wider mr-2" style={{ color: mode === "Delivery" ? theme.primary : theme.muted }}>
+              Delivery
+            </Text>
+            <View className="w-10 h-5 rounded-full justify-center px-0.5 border" style={{ backgroundColor: theme.card, borderColor: theme.border }}>
+              <View className={`w-4 h-4 rounded-full shadow-sm ${mode === "Delivery" ? "self-start" : "self-end"}`} style={{ backgroundColor: theme.primary }} />
+            </View>
+            <Text className="text-[10px] font-black uppercase tracking-wider ml-2" style={{ color: mode !== "Delivery" ? theme.primary : theme.muted }}>
+              Dine-In
+            </Text>
+          </Pressable>
         </View>
 
-        {/* INDEX 1: STICKY SEARCH BAR & VEG TOGGLE */}
-        <View className="px-4 py-3 bg-gray-50 dark:bg-[#0B1120] z-50">
-          <View className="flex-row items-center gap-3">
-            {/* Main Search Bar Box (Fixed iOS/Android Center Alignment) */}
-            <View className="flex-1 flex-row items-center h-12 rounded-2xl bg-white px-4 shadow-sm dark:bg-[#1E293B] border border-gray-200 dark:border-slate-700/60">
-              <MaterialCommunityIcons
-                name="magnify"
-                size={22}
-                color={isDark ? "#9CA3AF" : "#6B7280"}
-              />
-
+        {/* SHARED STICKY SEARCH BAR */}
+        <View style={{ backgroundColor: theme.bg, paddingHorizontal: 16, paddingVertical: 12, zIndex: 50 }}>
+          <View style={{ flexDirection: "row", gap: 12 }}>
+            <View style={{ flex: 1, flexDirection: "row", alignItems: "center", backgroundColor: theme.card, borderRadius: 16, paddingHorizontal: 16, height: 48, borderWidth: 1, borderColor: theme.border }}>
+              <Search size={20} color={theme.muted} strokeWidth={2.5} />
               <TextInput
-                placeholder="Search for 'Biryani'"
-                placeholderTextColor={isDark ? "#9CA3AF" : "#6B7280"}
+                placeholder={mode === "Delivery" ? "Search for 'Biryani'" : "Search in-store menu..."}
+                placeholderTextColor={theme.muted}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
-                className="ml-3 flex-1 text-base font-semibold text-gray-900 dark:text-white"
-                style={{
-                  textAlignVertical: "center",
-                  paddingVertical: 0,
-                  paddingTop: 0,
-                  paddingBottom: 0,
-                  includeFontPadding: false,
-                }}
+                style={{ flex: 1, marginLeft: 12, color: theme.text, fontSize: 16, fontWeight: "500", includeFontPadding: false, paddingVertical: 0 }}
               />
-
-              {/* Divider & Microphone Icon */}
-              <View className="flex-row items-center pl-3">
-                <View className="h-5 w-[1px] bg-gray-300 dark:bg-slate-600 mr-3" />
+              <View style={{ flexDirection: "row", alignItems: "center", paddingLeft: 12 }}>
+                <View style={{ height: 20, width: 1, marginRight: 12, backgroundColor: theme.border }} />
                 <Pressable onPress={() => console.log("Mic pressed")}>
-                  <MaterialCommunityIcons
-                    name="microphone"
-                    size={20}
-                    color="#F97316"
-                  />
+                  <Mic size={18} color={theme.primary} strokeWidth={2.5} />
                 </Pressable>
               </View>
             </View>
-
-            {/* VEG Toggle Button */}
-            <Pressable
-              onPress={() => setIsVegOnly(!isVegOnly)}
-              className={`flex-row items-center justify-center rounded-2xl px-3.5 py-3 border shadow-sm ${
-                isVegOnly
-                  ? "bg-green-50 border-green-300 dark:bg-green-950/40 dark:border-green-800"
-                  : "bg-white border-gray-200 dark:bg-[#1E293B] dark:border-slate-700/60"
-              }`}
-            >
-              <View className="items-center">
-                <Text
-                  className={`text-[10px] font-black tracking-wider ${isVegOnly ? "text-green-700 dark:text-green-400" : "text-gray-700 dark:text-slate-300"}`}
-                >
-                  VEG
-                </Text>
-                <View
-                  className={`mt-0.5 h-3.5 w-3.5 rounded-sm border items-center justify-center ${isVegOnly ? "border-green-600 bg-green-600" : "border-gray-400 bg-transparent"}`}
-                >
-                  {isVegOnly && (
-                    <View className="h-1.5 w-1.5 rounded-full bg-white" />
-                  )}
-                </View>
+            <Pressable onPress={() => setIsVegOnly(!isVegOnly)} style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: isVegOnly ? theme.primary : theme.card, borderRadius: 16, paddingHorizontal: 16, borderWidth: 1, borderColor: isVegOnly ? theme.primary : theme.border }}>
+              <View style={{ width: 12, height: 12, borderWidth: 1, borderColor: isVegOnly ? "#fff" : theme.muted, justifyContent: "center", alignItems: "center", borderRadius: 2, marginRight: 6 }}>
+                {isVegOnly && <View style={{ width: 6, height: 6, backgroundColor: "#fff", borderRadius: 3 }} />}
               </View>
+              <Text style={{ color: isVegOnly ? "#fff" : theme.muted, fontSize: 12, fontWeight: "900", letterSpacing: 0.5 }}>VEG</Text>
             </Pressable>
           </View>
         </View>
 
-        {/* VIDEO BANNER SECTION (Placed right below search bar) */}
-        <View className="px-4 mt-4 mb-2">
-          <View className="relative h-48 w-full overflow-hidden rounded-[24px] bg-slate-900 shadow-sm border border-gray-200 dark:border-slate-700/50">
-            <VideoView
-              player={player}
-              style={{ width: "100%", height: "100%" }}
-              contentFit="cover"
-              nativeControls={false}
-            />
-            <View className="absolute inset-0 bg-black/20 pointer-events-none" />
-            <View className="absolute bottom-4 left-4 pointer-events-none">
-              <View className="self-start rounded-lg bg-emerald-600 px-2.5 py-1 mb-1">
-                <Text className="text-[10px] font-black text-white uppercase tracking-wider">
-                  Featured Reel
-                </Text>
-              </View>
-              <Text className="text-xl font-black text-white shadow-md">
-                Freshly Crafted Daily
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* OFFERS SCROLL */}
-        <View className="mt-2 mb-8">
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingHorizontal: 16, gap: 16 }}
-          >
-            {OFFERS.map((offer) => (
-              <Pressable
-                key={offer.id}
-                className="relative h-40 overflow-hidden rounded-[24px]"
-                style={{ width: width * 0.85 }}
-              >
-                <Image
-                  source={{ uri: offer.image }}
-                  className="absolute h-full w-full"
-                  resizeMode="cover"
-                />
-                <View className="absolute inset-0 bg-gradient-to-r from-black/80 to-black/20" />
-                <View className="absolute inset-0 p-5 justify-center">
-                  <Text className="text-4xl font-black text-white tracking-tighter">
-                    {offer.title}
-                  </Text>
-                  <Text className="text-base font-bold text-gray-200 mt-1">
-                    {offer.subtitle}
-                  </Text>
-                  <View className="mt-4 self-start rounded-xl bg-white px-5 py-2">
-                    <Text className="text-xs font-black text-emerald-600">
-                      ORDER NOW
-                    </Text>
+        {/* CONTENT TRANSITION BLOCK */}
+        <View className="mt-2">
+          
+          {/* ==================================================== */}
+          {/* 🛵 DELIVERY VIEW */}
+          {/* ==================================================== */}
+          {mode === "Delivery" ? (
+            <Animated.View entering={FadeIn.duration(300)} exiting={FadeOut.duration(200)}>
+              
+              <View className="px-4 mb-2">
+                <View className="relative h-48 w-full overflow-hidden rounded-[24px] shadow-sm border" style={{ backgroundColor: theme.card, borderColor: theme.border }}>
+                  <VideoView player={player} style={{ width: "100%", height: "100%" }} contentFit="cover" nativeControls={false} />
+                  <View className="absolute inset-0 bg-black/20 pointer-events-none" />
+                  <View className="absolute bottom-4 left-4 pointer-events-none">
+                    <View className="self-start rounded-lg px-2.5 py-1 mb-1" style={{ backgroundColor: theme.primary }}>
+                      <Text className="text-[10px] font-black text-white uppercase tracking-wider">Featured Reel</Text>
+                    </View>
+                    <Text className="text-xl font-black text-white shadow-md">Freshly Crafted Daily</Text>
                   </View>
                 </View>
-              </Pressable>
-            ))}
-          </ScrollView>
-        </View>
+              </View>
 
-        {/* CATEGORIES PILLS */}
-        <View className="mb-10 px-4">
-          <Text className="mb-4 text-xl font-black text-gray-900 dark:text-white">
-            Explore Menu
-          </Text>
-          <View className="flex-row flex-wrap justify-between gap-y-4">
-            {CATEGORIES.map((cat) => (
-              <Pressable key={cat.id} className="items-center w-[18%]">
-                <View className="h-16 w-16 items-center justify-center rounded-2xl bg-white shadow-sm dark:bg-slate-800 border border-gray-100 dark:border-slate-700/50 mb-2">
-                  <MaterialCommunityIcons
-                    name={cat.icon as any}
-                    size={28}
-                    color={isDark ? "#34D399" : "#10B981"}
-                  />
+              <View className="mt-2 mb-8">
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 16 }}>
+                  {OFFERS.map((offer) => (
+                    <Pressable key={offer.id} className="relative h-40 overflow-hidden rounded-[24px]" style={{ width: width * 0.85 }}>
+                      <Image source={{ uri: offer.image }} className="absolute h-full w-full" resizeMode="cover" />
+                      <View className="absolute inset-0 bg-gradient-to-r from-black/80 to-black/20" />
+                      <View className="absolute inset-0 p-5 justify-center">
+                        <Text className="text-4xl font-black text-white tracking-tighter">{offer.title}</Text>
+                        <Text className="text-base font-bold text-gray-200 mt-1">{offer.subtitle}</Text>
+                        <View className="mt-4 self-start rounded-xl bg-white px-5 py-2">
+                          <Text className="text-xs font-black" style={{ color: theme.primary }}>ORDER NOW</Text>
+                        </View>
+                      </View>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              </View>
+
+              <View className="mb-10 px-4">
+                <Text className="mb-4 text-xl font-black" style={{ color: theme.text }}>Explore Menu</Text>
+                <View className="flex-row flex-wrap justify-between gap-y-4">
+                  {CATEGORIES.map((cat) => (
+                    <Pressable key={cat.id} className="items-center w-[18%]">
+                      <View className="h-16 w-16 items-center justify-center rounded-2xl shadow-sm border mb-2" style={{ backgroundColor: theme.card, borderColor: theme.border }}>
+                        <cat.icon size={26} color={theme.primary} strokeWidth={2} />
+                      </View>
+                      <Text className="text-xs font-bold" style={{ color: theme.muted }}>{cat.name}</Text>
+                    </Pressable>
+                  ))}
                 </View>
-                <Text className="text-xs font-bold text-gray-600 dark:text-slate-300">
-                  {cat.name}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        </View>
+              </View>
 
-        {/* SPOTLIGHT / BEST SELLERS (2-Column Dense Grid) */}
-        <View className="px-4 mb-8">
-          <Text className="mb-4 text-2xl font-black text-gray-900 dark:text-white tracking-tight">
-            In The Spotlight
-          </Text>
-          <View className="flex-row flex-wrap justify-between">
-            {BEST_SELLERS.filter((i) => !isVegOnly || i.isVeg).map((item) => (
-              <FoodCard key={item.id} item={item} />
-            ))}
-          </View>
-        </View>
+              <View className="px-4 mb-8">
+                <Text className="mb-4 text-2xl font-black tracking-tight" style={{ color: theme.text }}>In The Spotlight</Text>
+                <View className="flex-row flex-wrap justify-between">
+                  {FOOD_ITEMS.filter((i) => !isVegOnly || i.isVeg).map((item) => (
+                    <FoodCard key={item.id} item={item} />
+                  ))}
+                </View>
+              </View>
 
-        {/* HORIZONTAL SECTION: Authentic Biryanis */}
-        <View className="mb-8">
-          <View className="flex-row justify-between items-center px-4 mb-4">
-            <Text className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">
-              Authentic Biryanis
-            </Text>
-            <MaterialCommunityIcons
-              name="arrow-right-circle"
-              size={28}
-              color={isDark ? "#34D399" : "#10B981"}
-            />
-          </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingHorizontal: 16, gap: 16 }}
-          >
-            {BIRYANIS.filter((i) => !isVegOnly || i.isVeg).map((item) => (
-              <FoodCard
-                key={item.id}
-                item={item}
-                widthOverride={width * 0.65}
-              />
-            ))}
-          </ScrollView>
-        </View>
+            </Animated.View>
 
-        {/* HORIZONTAL SECTION: Grills & Tikkas */}
-        <View className="mb-8">
-          <View className="flex-row justify-between items-center px-4 mb-4">
-            <Text className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">
-              Grills & Tikkas
-            </Text>
-            <MaterialCommunityIcons
-              name="arrow-right-circle"
-              size={28}
-              color={isDark ? "#34D399" : "#10B981"}
-            />
-          </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingHorizontal: 16, gap: 16 }}
-          >
-            {GRILLS.filter((i) => !isVegOnly || i.isVeg).map((item) => (
-              <FoodCard
-                key={item.id}
-                item={item}
-                widthOverride={width * 0.65}
-              />
-            ))}
-          </ScrollView>
+          ) : (
+
+          /* ==================================================== */
+          /* 🍽️ IN-STORE VIEW (DINE-IN) */
+          /* ==================================================== */
+            <Animated.View entering={FadeIn.duration(300)} exiting={FadeOut.duration(200)}>
+              
+              <View className="px-4 mb-6">
+                <Pressable 
+                  className="w-full rounded-[24px] overflow-hidden shadow-sm border p-6 flex-row items-center justify-between"
+                  style={{ backgroundColor: theme.primary, borderColor: theme.border }}
+                >
+                  <View className="flex-1">
+                    <View className="flex-row items-center mb-2">
+                      <View className="bg-white/20 px-2 py-1 rounded-md mr-2">
+                        <Text className="text-[10px] font-black text-white uppercase tracking-wider">Step 1</Text>
+                      </View>
+                      <Text className="text-sm font-bold text-white/90 uppercase tracking-widest">Order to Table</Text>
+                    </View>
+                    <Text className="text-2xl font-black text-white tracking-tight leading-tight">Scan Table QR</Text>
+                    <Text className="text-sm font-semibold text-white/80 mt-1">Open digital menu instantly.</Text>
+                  </View>
+                  <View className="h-16 w-16 bg-white rounded-2xl items-center justify-center shadow-lg transform rotate-3">
+                    <ScanLine size={32} color={theme.primary} strokeWidth={2} />
+                  </View>
+                </Pressable>
+              </View>
+
+              <View className="px-4 mb-10">
+                <Text className="mb-4 text-lg font-black uppercase tracking-wider" style={{ color: theme.muted }}>In-Store Services</Text>
+                {/* Changed justify-between to justify-around since there are only 3 items now */}
+                <View className="flex-row justify-around">
+                  <Pressable className="items-center">
+                    <View className="h-[72px] w-[72px] items-center justify-center rounded-[24px] shadow-sm border mb-2" style={{ backgroundColor: theme.card, borderColor: theme.border }}>
+                      <BellRing size={28} color={theme.primary} strokeWidth={1.5} />
+                    </View>
+                    <Text className="text-xs font-bold" style={{ color: theme.text }}>Call Waiter</Text>
+                  </Pressable>
+                  <Pressable className="items-center">
+                    <View className="h-[72px] w-[72px] items-center justify-center rounded-[24px] shadow-sm border mb-2" style={{ backgroundColor: theme.card, borderColor: theme.border }}>
+                      <Wifi size={28} color={theme.primary} strokeWidth={1.5} />
+                    </View>
+                    <Text className="text-xs font-bold" style={{ color: theme.text }}>Free Wi-Fi</Text>
+                  </Pressable>
+                  <Pressable className="items-center">
+                    <View className="h-[72px] w-[72px] items-center justify-center rounded-[24px] shadow-sm border mb-2" style={{ backgroundColor: theme.card, borderColor: theme.border }}>
+                      <Receipt size={28} color={theme.primary} strokeWidth={1.5} />
+                    </View>
+                    <Text className="text-xs font-bold" style={{ color: theme.text }}>Pay Bill</Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              <View className="px-4 mb-8">
+                <Pressable 
+                  className="w-full rounded-[20px] shadow-sm border p-5 flex-row items-center justify-between"
+                  style={{ backgroundColor: theme.card, borderColor: theme.border }}
+                >
+                  <View className="flex-row items-center">
+                    <View className="h-12 w-12 rounded-full items-center justify-center border mr-4" style={{ backgroundColor: theme.isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.03)", borderColor: theme.border }}>
+                      <ShoppingBag size={22} color={theme.text} strokeWidth={2} />
+                    </View>
+                    <View>
+                      <Text className="text-lg font-black" style={{ color: theme.text }}>Order Takeaway</Text>
+                      <Text className="text-xs font-semibold" style={{ color: theme.muted }}>Pick up at the counter in 15 mins.</Text>
+                    </View>
+                  </View>
+                  <ChevronRightCircle size={24} color={theme.primary} strokeWidth={2} />
+                </Pressable>
+              </View>
+
+              <View className="mb-8">
+                <View className="flex-row justify-between items-center px-4 mb-4">
+                  <Text className="text-2xl font-black tracking-tight" style={{ color: theme.text }}>Trending at this Branch</Text>
+                </View>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 16 }}>
+                  {FOOD_ITEMS.filter((i) => !isVegOnly || i.isVeg).map((item) => (
+                    <FoodCard key={item.id} item={item} widthOverride={width * 0.65} />
+                  ))}
+                </ScrollView>
+              </View>
+
+            </Animated.View>
+          )}
         </View>
       </ScrollView>
     </View>
