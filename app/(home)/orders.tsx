@@ -1,5 +1,5 @@
 import { useRouter } from "expo-router";
-import { ScrollText, UserRound } from "lucide-react-native";
+import { Heart, ScrollText, UserRound } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
 import { useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
@@ -41,7 +41,6 @@ export default function OrdersScreen() {
 
   const [activeTab, setActiveTab] = useState("Active");
 
-  // --- YOUR EXACT GLOBAL.CSS COLORS ---
   const bgColor = isDark ? "hsl(150, 31%, 9%)" : "hsl(138, 47%, 97%)";
   const cardBg = isDark ? "hsl(149, 27%, 12%)" : "hsl(0, 0%, 100%)";
   const textColor = isDark ? "hsl(136, 42%, 92%)" : "hsl(146, 52%, 15%)";
@@ -55,7 +54,7 @@ export default function OrdersScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: bgColor, paddingTop: insets.top }}>
-      {/* HEADER */}
+      {/* UNIVERSAL HEADER */}
       <View
         style={{
           paddingHorizontal: 16,
@@ -68,21 +67,40 @@ export default function OrdersScreen() {
         <Text style={{ color: textColor, fontSize: 28, fontWeight: "900" }}>
           Your Orders
         </Text>
-        <Pressable
-          onPress={() => router.push("/(home)/profile")}
-          style={{
-            height: 44,
-            width: 44,
-            alignItems: "center",
-            justifyContent: "center",
-            borderRadius: 22,
-            backgroundColor: cardBg,
-            borderWidth: 1,
-            borderColor,
-          }}
-        >
-          <UserRound size={22} color={textColor} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          <Pressable
+            onPress={() => router.push("/(home)/favorites")}
+            style={{
+              height: 44,
+              width: 44,
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: 22,
+              backgroundColor: cardBg,
+              borderWidth: 1,
+              borderColor: borderColor,
+              marginRight: 12,
+            }}
+          >
+            <Heart size={20} color={textColor} strokeWidth={2.5} />
+          </Pressable>
+
+          <Pressable
+            onPress={() => router.push("/(home)/profile")}
+            style={{
+              height: 44,
+              width: 44,
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: 22,
+              backgroundColor: cardBg,
+              borderWidth: 1,
+              borderColor: borderColor,
+            }}
+          >
+            <UserRound size={22} color={textColor} strokeWidth={2} />
+          </Pressable>
+        </View>
       </View>
 
       {/* CUSTOM 2-WAY TAB SWITCH */}
@@ -171,7 +189,6 @@ export default function OrdersScreen() {
                 borderColor: borderColor,
               }}
             >
-              {/* Order Header */}
               <View
                 style={{
                   flexDirection: "row",
@@ -225,7 +242,6 @@ export default function OrdersScreen() {
                 </View>
               </View>
 
-              {/* Order Details */}
               <Text
                 style={{
                   color: mutedText,
@@ -237,7 +253,6 @@ export default function OrdersScreen() {
                 {order.items}
               </Text>
 
-              {/* Order Footer */}
               <View
                 style={{
                   flexDirection: "row",

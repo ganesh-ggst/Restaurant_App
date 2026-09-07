@@ -1,24 +1,20 @@
-import { Drumstick, Leaf, Search, Star } from "lucide-react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { Heart, Search, UserRound } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
-import { useState } from "react";
-import {
-  Image,
-  Pressable,
-  ScrollView,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { useEffect, useState } from "react";
+import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import FoodCard from "../../components/home/FoodCard";
 
-// --- MOCK MENU DATA ---
-const MENU_ITEMS = [
+// --- SYNCHRONIZED MENU DATA FOR FOODCARD COMPATIBILITY ---
+const FOOD_ITEMS = [
   {
     id: 1,
     name: "Special Chicken Dum Biryani",
-    desc: "Aromatic basmati rice cooked with tender chicken and secret spices.",
     price: "₹319",
+    time: "30 mins",
     rating: "4.8",
+    offer: "₹50 OFF",
     image:
       "https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?auto=format&fit=crop&w=400&q=80",
     isVeg: false,
@@ -26,32 +22,35 @@ const MENU_ITEMS = [
   },
   {
     id: 2,
-    name: "Paneer Butter Masala",
-    desc: "Soft paneer cubes in a rich, creamy tomato gravy.",
-    price: "₹289",
-    rating: "4.6",
-    image:
-      "https://images.unsplash.com/photo-1645177628172-a94c1f96e6db?auto=format&fit=crop&w=400&q=80",
-    isVeg: true,
-    category: "Curries",
-  },
-  {
-    id: 3,
-    name: "Tandoori Platter",
-    desc: "Assorted kebabs and tikkas grilled to perfection.",
+    name: "Tandoori Platter Full",
     price: "₹549",
+    time: "40 mins",
     rating: "4.9",
+    offer: "BESTSELLER",
     image:
       "https://images.unsplash.com/photo-1544025162-8315ea011505?auto=format&fit=crop&w=400&q=80",
     isVeg: false,
     category: "Grills",
   },
   {
+    id: 3,
+    name: "Paneer Butter Masala",
+    price: "₹289",
+    time: "25 mins",
+    rating: "4.6",
+    offer: "20% OFF",
+    image:
+      "https://images.unsplash.com/photo-1645177628172-a94c1f96e6db?auto=format&fit=crop&w=400&q=80",
+    isVeg: true,
+    category: "Curries",
+  },
+  {
     id: 4,
     name: "Garlic Naan",
-    desc: "Soft flatbread topped with minced garlic and butter.",
     price: "₹55",
+    time: "15 mins",
     rating: "4.7",
+    offer: "HOT",
     image:
       "https://images.unsplash.com/photo-1604908176997-125f25cc6f3d?auto=format&fit=crop&w=400&q=80",
     isVeg: true,
@@ -60,9 +59,10 @@ const MENU_ITEMS = [
   {
     id: 5,
     name: "Gulab Jamun",
-    desc: "Soft, melt-in-your-mouth milk solids soaked in sugar syrup.",
     price: "₹99",
+    time: "10 mins",
     rating: "4.8",
+    offer: "SWEET",
     image:
       "https://images.unsplash.com/photo-1596803822253-625d8122a613?auto=format&fit=crop&w=400&q=80",
     isVeg: true,
@@ -80,15 +80,27 @@ const CATEGORIES = [
 ];
 
 export default function SearchScreen() {
+  const router = useRouter();
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === "dark";
   const insets = useSafeAreaInsets();
+
+  // FIX: useLocalSearchParams combined with the tab bar override prevents sticky state
+  const params = useLocalSearchParams();
 
   const [searchQuery, setSearchQuery] = useState("");
   const [activeCategory, setActiveCategory] = useState("All");
   const [isVegOnly, setIsVegOnly] = useState(false);
 
-  // --- YOUR EXACT GLOBAL.CSS COLORS ---
+  // FIX: Added 'else' block so it properly resets to 'All' when clicking the bottom menu tab
+  useEffect(() => {
+    if (params.category) {
+      setActiveCategory(params.category as string);
+    } else {
+      setActiveCategory("All");
+    }
+  }, [params.category]);
+
   const bgColor = isDark ? "hsl(150, 31%, 9%)" : "hsl(138, 47%, 97%)";
   const cardBg = isDark ? "hsl(149, 27%, 12%)" : "hsl(0, 0%, 100%)";
   const textColor = isDark ? "hsl(136, 42%, 92%)" : "hsl(146, 52%, 15%)";
@@ -96,7 +108,7 @@ export default function SearchScreen() {
   const primaryColor = isDark ? "hsl(142, 70%, 54%)" : "hsl(147, 75%, 33%)";
   const borderColor = isDark ? "hsl(149, 16%, 24%)" : "hsl(141, 47%, 83%)";
 
-  const filteredItems = MENU_ITEMS.filter(
+  const filteredItems = FOOD_ITEMS.filter(
     (item) =>
       (activeCategory === "All" || item.category === activeCategory) &&
       (!isVegOnly || item.isVeg) &&
@@ -105,7 +117,7 @@ export default function SearchScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: bgColor, paddingTop: insets.top }}>
-      {/* HEADER & SEARCH (Sticky) */}
+      {/* UNIVERSAL HEADER & SEARCH (Sticky) */}
       <View
         style={{
           backgroundColor: bgColor,
@@ -114,16 +126,52 @@ export default function SearchScreen() {
           zIndex: 10,
         }}
       >
-        <Text
+        <View
           style={{
-            color: textColor,
-            fontSize: 28,
-            fontWeight: "900",
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
             marginBottom: 16,
           }}
         >
-          Full Menu
-        </Text>
+          <Text style={{ color: textColor, fontSize: 28, fontWeight: "900" }}>
+            Full Menu
+          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <Pressable
+              onPress={() => router.push("/(home)/favorites")}
+              style={{
+                height: 44,
+                width: 44,
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: 22,
+                backgroundColor: cardBg,
+                borderWidth: 1,
+                borderColor: borderColor,
+                marginRight: 12,
+              }}
+            >
+              <Heart size={20} color={textColor} strokeWidth={2.5} />
+            </Pressable>
+
+            <Pressable
+              onPress={() => router.push("/(home)/profile")}
+              style={{
+                height: 44,
+                width: 44,
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: 22,
+                backgroundColor: cardBg,
+                borderWidth: 1,
+                borderColor: borderColor,
+              }}
+            >
+              <UserRound size={22} color={textColor} strokeWidth={2} />
+            </Pressable>
+          </View>
+        </View>
 
         <View style={{ flexDirection: "row", gap: 12 }}>
           {/* Search Input */}
@@ -256,126 +304,17 @@ export default function SearchScreen() {
           </ScrollView>
         </View>
 
-        {/* MENU LIST */}
-        <View style={{ paddingHorizontal: 16, gap: 16 }}>
+        {/* UNIFIED FOOD CARDS GRID */}
+        <View
+          style={{
+            flexDirection: "row",
+            flexWrap: "wrap",
+            justifyContent: "space-between",
+            paddingHorizontal: 16,
+          }}
+        >
           {filteredItems.map((item) => (
-            <View
-              key={item.id}
-              style={{
-                flexDirection: "row",
-                backgroundColor: cardBg,
-                borderRadius: 24,
-                padding: 12,
-                borderWidth: 1,
-                borderColor: borderColor,
-              }}
-            >
-              {/* Item Info */}
-              <View style={{ flex: 1, paddingRight: 12 }}>
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    marginBottom: 6,
-                  }}
-                >
-                  {item.isVeg ? (
-                    <Leaf
-                      size={14}
-                      color="hsl(146, 80%, 40%)"
-                      strokeWidth={3}
-                    />
-                  ) : (
-                    <Drumstick
-                      size={14}
-                      color="hsl(8, 100%, 65%)"
-                      strokeWidth={3}
-                    />
-                  )}
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      marginLeft: 6,
-                    }}
-                  >
-                    <Star size={12} color={primaryColor} fill={primaryColor} />
-                    <Text
-                      style={{
-                        marginLeft: 4,
-                        color: primaryColor,
-                        fontSize: 12,
-                        fontWeight: "800",
-                      }}
-                    >
-                      {item.rating}
-                    </Text>
-                  </View>
-                </View>
-
-                <Text
-                  style={{
-                    color: textColor,
-                    fontSize: 16,
-                    fontWeight: "800",
-                    marginBottom: 4,
-                  }}
-                >
-                  {item.name}
-                </Text>
-                <Text
-                  style={{ color: mutedText, fontSize: 12, lineHeight: 18 }}
-                  numberOfLines={2}
-                >
-                  {item.desc}
-                </Text>
-                <Text
-                  style={{
-                    color: textColor,
-                    fontSize: 18,
-                    fontWeight: "900",
-                    marginTop: 12,
-                  }}
-                >
-                  {item.price}
-                </Text>
-              </View>
-
-              {/* Item Image & Add Button */}
-              <View style={{ alignItems: "center" }}>
-                <Image
-                  source={{ uri: item.image }}
-                  style={{ width: 110, height: 110, borderRadius: 16 }}
-                />
-                <Pressable
-                  style={{
-                    position: "absolute",
-                    bottom: -12,
-                    backgroundColor: cardBg,
-                    borderWidth: 1,
-                    borderColor: primaryColor,
-                    borderRadius: 12,
-                    paddingHorizontal: 20,
-                    paddingVertical: 6,
-                    shadowColor: primaryColor,
-                    shadowOffset: { width: 0, height: 4 },
-                    shadowOpacity: 0.2,
-                    shadowRadius: 8,
-                    elevation: 4,
-                  }}
-                >
-                  <Text
-                    style={{
-                      color: primaryColor,
-                      fontSize: 14,
-                      fontWeight: "900",
-                    }}
-                  >
-                    ADD
-                  </Text>
-                </Pressable>
-              </View>
-            </View>
+            <FoodCard key={item.id} item={item} />
           ))}
         </View>
       </ScrollView>
