@@ -1,5 +1,5 @@
-import { useColorScheme } from "nativewind";
 import { View } from "react-native";
+import { useAppTheme } from "../../hooks/useAppTheme";
 
 interface CardProps {
   children: React.ReactNode;
@@ -12,30 +12,20 @@ export function Card({
   className = "",
   variant = "default",
 }: CardProps) {
-  const { colorScheme } = useColorScheme();
-  const isDark = colorScheme === "dark";
+  const theme = useAppTheme();
 
-  const getBgColor = () => {
-    switch (variant) {
-      case "elevated":
-        return isDark ? "hsl(149, 27%, 15%)" : "hsl(0, 0%, 100%)";
-      case "subtle":
-        return isDark ? "hsl(149, 18%, 16%)" : "hsl(141, 47%, 83%)";
-      default:
-        return isDark ? "hsl(149, 27%, 12%)" : "hsl(0, 0%, 100%)";
-    }
-  };
-
-  const getBorderColor = () => {
-    return isDark ? "hsl(149, 16%, 24%)" : "hsl(141, 47%, 83%)";
+  const bgColors = {
+    default: theme.card,
+    elevated: theme.isDark ? "hsl(149, 27%, 15%)" : "hsl(0, 0%, 100%)",
+    subtle: theme.isDark ? "hsl(149, 18%, 16%)" : "hsl(141, 47%, 83%)",
   };
 
   return (
     <View
       className={`rounded-2xl border p-6 ${className}`}
       style={{
-        backgroundColor: getBgColor(),
-        borderColor: getBorderColor(),
+        backgroundColor: bgColors[variant],
+        borderColor: theme.border,
         borderWidth: 1,
       }}
     >

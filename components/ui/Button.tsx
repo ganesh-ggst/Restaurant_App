@@ -1,7 +1,6 @@
-import { useColorScheme } from "nativewind";
 import { ActivityIndicator, Pressable, Text } from "react-native";
+import { useAppTheme } from "../../hooks/useAppTheme";
 
-// Interface defining the props for the Button component
 interface ButtonProps {
   title: string;
   onPress: () => void;
@@ -11,7 +10,6 @@ interface ButtonProps {
   className?: string;
 }
 
-// Custom Button component with variants and loading state
 export function Button({
   title,
   onPress,
@@ -20,74 +18,51 @@ export function Button({
   loading = false,
   className = "",
 }: ButtonProps) {
-  const { colorScheme } = useColorScheme();
-  const isDark = colorScheme === "dark";
+  const theme = useAppTheme();
 
-  // Determines background and border colors based on variant
-  const getVariantStyles = () => {
-    switch (variant) {
-      case "primary":
-        return {
-          backgroundColor: isDark ? "hsl(142, 70%, 54%)" : "hsl(147, 75%, 33%)",
-          borderColor: "transparent",
-        };
-      case "secondary":
-        return {
-          backgroundColor: isDark ? "hsl(149, 24%, 19%)" : "hsl(143, 61%, 91%)",
-          borderColor: isDark ? "hsl(142, 70%, 54%)" : "hsl(147, 75%, 33%)",
-        };
-      case "outline":
-        return {
-          backgroundColor: "transparent",
-          borderColor: isDark ? "hsl(142, 70%, 54%)" : "hsl(147, 75%, 33%)",
-        };
-      case "destructive":
-        return {
-          backgroundColor: isDark ? "hsl(8, 55%, 16%)" : "hsl(8, 100%, 97%)",
-          borderColor: isDark ? "hsl(7, 85%, 76%)" : "hsl(6, 74%, 54%)",
-        };
-      default:
-        return {};
-    }
+  const variantStyles = {
+    primary: {
+      bg: theme.primary,
+      border: "transparent",
+      text: theme.primaryForeground,
+    },
+    secondary: {
+      bg: theme.secondaryBg,
+      border: theme.primary,
+      text: theme.secondaryText,
+    },
+    outline: {
+      bg: "transparent",
+      border: theme.primary,
+      text: theme.primary,
+    },
+    destructive: {
+      bg: theme.dangerBg,
+      border: theme.danger,
+      text: theme.dangerText,
+    },
   };
 
-  // Determines text color based on variant
-  const getTextColor = () => {
-    switch (variant) {
-      case "primary":
-        return isDark ? "hsl(150, 35%, 100%)" : "hsl(0, 0%, 100%)";
-      case "secondary":
-        return isDark ? "hsl(138, 30%, 83%)" : "hsl(146, 55%, 24%)";
-      case "outline":
-        return isDark ? "hsl(142, 70%, 54%)" : "hsl(147, 75%, 33%)";
-      case "destructive":
-        return isDark ? "hsl(7, 85%, 76%)" : "hsl(6, 71%, 48%)";
-      default:
-        return "hsl(0, 0%, 100%)";
-    }
-  };
-
-  const styles = getVariantStyles();
-  const textColor = getTextColor();
+  const currentStyle = variantStyles[variant];
 
   return (
     <Pressable
       onPress={onPress}
       disabled={disabled || loading}
-      className={`rounded-xl border-2 py-4 px-6 flex-row justify-center items-center ${disabled || loading ? "opacity-50" : ""} ${className}`}
-      style={[
-        {
-          backgroundColor: styles.backgroundColor,
-          borderColor: styles.borderColor,
-        },
-      ]}
+      className={`flex-row items-center justify-center rounded-xl border-2 px-6 py-4 ${
+        disabled || loading ? "opacity-50" : "active:opacity-80"
+      } ${className}`}
+      style={{
+        backgroundColor: currentStyle.bg,
+        borderColor: currentStyle.border,
+      }}
     >
       {loading ? (
-        <ActivityIndicator color={textColor} />
+        <ActivityIndicator color={currentStyle.text} />
       ) : (
         <Text
           className="text-center text-lg font-bold"
-          style={{ color: textColor }}
+          style={{ color: currentStyle.text }}
         >
           {title}
         </Text>

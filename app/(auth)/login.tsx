@@ -1,7 +1,6 @@
 import { useSignIn, useSignUp } from "@clerk/expo";
 import { useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useColorScheme } from "nativewind";
 import { useCallback, useRef, useState } from "react";
 import {
   Image,
@@ -17,12 +16,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
 import { Input } from "../../components/ui/Input";
+import { useAppTheme } from "../../hooks/useAppTheme";
 
-// Login Screen: Handles phone authentication flow
 export default function LoginScreen() {
   const router = useRouter();
-  const { colorScheme } = useColorScheme();
-  const isDark = colorScheme === "dark";
+  const theme = useAppTheme();
   const insets = useSafeAreaInsets();
 
   const { signIn, isLoaded: isSignInLoaded } = useSignIn();
@@ -34,15 +32,11 @@ export default function LoginScreen() {
 
   const inputRef = useRef<any>(null);
 
-  const bgColor = isDark ? "hsl(150, 31%, 9%)" : "hsl(138, 47%, 97%)";
-  const textColor = isDark ? "hsl(136, 42%, 92%)" : "hsl(146, 52%, 15%)";
-
   const validatePhone = (num: string) => {
     const regex = /^[6-9]\d{9}$/;
     return regex.test(num);
   };
 
-  // Re-focus the input automatically when returning to this screen
   useFocusEffect(
     useCallback(() => {
       const timer = setTimeout(() => {
@@ -68,55 +62,6 @@ export default function LoginScreen() {
     console.log(`📲 DEV OTP FOR ${fullPhoneNumber}: ${fallbackOtp}`);
     console.log(`==========================================\n`);
 
-    // --- CLERK CODE COMMENTED OUT FOR DEV TESTING ---
-    /*
-    try {
-      if (!isSignInLoaded || !isSignUpLoaded) {
-        throw new Error("Clerk is not loaded yet");
-      }
-
-      try {
-        const { supportedFirstFactors } = await signIn.create({
-          identifier: fullPhoneNumber,
-        });
-
-        const phoneFactor: any = supportedFirstFactors?.find(
-          (factor: any) => factor.strategy === "phone_code",
-        );
-
-        if (phoneFactor) {
-          await signIn.prepareFirstFactor({
-            strategy: "phone_code",
-            phoneNumberId: phoneFactor.phoneNumberId,
-          });
-        }
-      } catch (signInErr: any) {
-        if (signInErr.errors?.[0]?.code === "form_identifier_not_found") {
-          await signUp.create({
-            phoneNumber: fullPhoneNumber,
-          });
-          await signUp.preparePhoneNumberVerification({
-            strategy: "phone_code",
-          });
-        } else {
-          throw signInErr;
-        }
-      }
-
-      router.push(`/(auth)/verify-otp?phone=${fullPhoneNumber}` as any);
-    } catch (err: any) {
-      console.error("Clerk Error:", err.errors ? err.errors[0].message : err);
-      console.log("Using fallback terminal OTP due to Clerk failure.");
-
-      router.push(
-        `/(auth)/verify-otp?phone=${fullPhoneNumber}&fallbackOtp=${fallbackOtp}` as any,
-      );
-    } finally {
-      setLoading(false);
-    }
-    */
-
-    // Direct routing for fallback testing immediately to avoid keyboard jumping layout
     router.push(
       `/(auth)/verify-otp?phone=${fullPhoneNumber}&fallbackOtp=${fallbackOtp}` as any,
     );
@@ -124,8 +69,8 @@ export default function LoginScreen() {
   };
 
   return (
-    <View className="flex-1" style={{ backgroundColor: bgColor }}>
-      <StatusBar style={isDark ? "light" : "dark"} />
+    <View className="flex-1" style={{ backgroundColor: theme.bg }}>
+      <StatusBar style={theme.isDark ? "light" : "dark"} />
 
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -135,7 +80,6 @@ export default function LoginScreen() {
           layout={Layout.springify()}
           className="flex-1 justify-between pb-3"
         >
-          {/* Hero Image Section without any overlapping buttons */}
           <View
             className="relative w-full h-[28%] px-6"
             style={{ marginTop: insets.top + 4 }}
@@ -147,20 +91,12 @@ export default function LoginScreen() {
             />
           </View>
 
-          {/* Form Content Section */}
           <Animated.View layout={Layout.springify()} className="px-6">
-            <Text className="text-2xl font-bold" style={{ color: textColor }}>
+            <Text className="text-2xl font-bold" style={{ color: theme.text }}>
               Delicious food,{"\n"}
-              <Text
-                style={{
-                  color: isDark ? "hsl(142, 70%, 54%)" : "hsl(147, 75%, 33%)",
-                }}
-              >
-                crafted for you.
-              </Text>
+              <Text style={{ color: theme.primary }}>crafted for you.</Text>
             </Text>
 
-            {/* Reserved fixed-height space for error message to prevent layout shifts */}
             <View className="min-h-[20px] mb-1 justify-center">
               {error ? (
                 <Animated.View
@@ -169,9 +105,7 @@ export default function LoginScreen() {
                 >
                   <Text
                     className="text-xs font-medium ml-1"
-                    style={{
-                      color: isDark ? "hsl(7, 85%, 76%)" : "hsl(6, 74%, 54%)",
-                    }}
+                    style={{ color: theme.danger }}
                   >
                     {error}
                   </Text>
@@ -197,7 +131,7 @@ export default function LoginScreen() {
                     <Text className="text-lg mr-2">🇮🇳</Text>
                     <Text
                       className="text-sm font-semibold"
-                      style={{ color: textColor }}
+                      style={{ color: theme.text }}
                     >
                       +91
                     </Text>
@@ -214,36 +148,23 @@ export default function LoginScreen() {
               />
             </Card>
 
-            {/* Skip Option cleanly placed right below the action card and constrained to its text width */}
             <Pressable
               onPress={() => router.replace("/(home)" as any)}
               className="mt-2 py-2 self-center px-4"
             >
               <Text
                 className="text-lg font-semibold"
-                style={{
-                  color: isDark ? "hsl(140, 17%, 68%)" : "hsl(146, 26%, 40%)",
-                }}
+                style={{ color: theme.muted }}
               >
-                Skip for now{" "}
-                <Text
-                  style={{
-                    color: isDark ? "hsl(142, 70%, 54%)" : "hsl(147, 75%, 33%)",
-                  }}
-                >
-                  →
-                </Text>
+                Skip for now <Text style={{ color: theme.primary }}>→</Text>
               </Text>
             </Pressable>
           </Animated.View>
 
-          {/* Terms and Privacy Footer */}
           <View className="px-6 items-center pt-1">
             <Text
               className="text-center text-[10px]"
-              style={{
-                color: isDark ? "hsl(140, 17%, 68%)" : "hsl(146, 26%, 40%)",
-              }}
+              style={{ color: theme.muted }}
             >
               By continuing, you agree to our
             </Text>
@@ -251,26 +172,17 @@ export default function LoginScreen() {
               <View className="flex-row items-center justify-center mt-0.5">
                 <Text
                   className="text-[10px] font-bold"
-                  style={{
-                    color: isDark ? "hsl(142, 70%, 54%)" : "hsl(147, 75%, 33%)",
-                  }}
+                  style={{ color: theme.primary }}
                 >
                   Terms of Use
                 </Text>
-                <Text
-                  className="text-[10px]"
-                  style={{
-                    color: isDark ? "hsl(140, 17%, 68%)" : "hsl(146, 26%, 40%)",
-                  }}
-                >
+                <Text className="text-[10px]" style={{ color: theme.muted }}>
                   {" "}
                   &{" "}
                 </Text>
                 <Text
                   className="text-[10px] font-bold"
-                  style={{
-                    color: isDark ? "hsl(142, 70%, 54%)" : "hsl(147, 75%, 33%)",
-                  }}
+                  style={{ color: theme.primary }}
                 >
                   Privacy Policy
                 </Text>
