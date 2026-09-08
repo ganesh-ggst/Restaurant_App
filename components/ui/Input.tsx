@@ -1,5 +1,5 @@
-import { useColorScheme } from "nativewind";
 import { Text, TextInput, View } from "react-native";
+import { useAppTheme } from "../../hooks/useAppTheme";
 
 interface InputProps {
   label?: string;
@@ -37,39 +37,27 @@ export function Input({
   maxLength,
   autoFocus = false,
 }: InputProps) {
-  const { colorScheme } = useColorScheme();
-  const isDark = colorScheme === "dark";
-
-  const textColor = isDark ? "hsl(136, 42%, 92%)" : "hsl(146, 52%, 15%)";
-  const placeholderColor = isDark ? "hsl(140, 17%, 68%)" : "hsl(146, 26%, 40%)";
-  const borderColor = error
-    ? isDark
-      ? "hsl(7, 85%, 76%)"
-      : "hsl(6, 74%, 54%)"
-    : isDark
-      ? "hsl(149, 16%, 24%)"
-      : "hsl(141, 47%, 83%)";
-  const labelColor = isDark ? "hsl(136, 42%, 92%)" : "hsl(146, 52%, 15%)";
+  const theme = useAppTheme();
 
   return (
     <View className="mb-4 w-full">
       {label && (
         <Text
           className="mb-2 text-base font-semibold"
-          style={{ color: labelColor }}
+          style={{ color: theme.text }}
         >
           {label}
         </Text>
       )}
       <View
         className="flex-row items-center rounded-xl border-2 px-4"
-        style={{ borderColor: borderColor }}
+        style={{ borderColor: error ? theme.danger : theme.border }}
       >
         {icon && <View className="mr-3">{icon}</View>}
         {prefix && <View className="mr-2">{prefix}</View>}
         <TextInput
           placeholder={placeholder}
-          placeholderTextColor={placeholderColor}
+          placeholderTextColor={theme.muted}
           value={value}
           onChangeText={onChangeText}
           secureTextEntry={secureTextEntry}
@@ -79,7 +67,7 @@ export function Input({
           maxLength={maxLength}
           autoFocus={autoFocus}
           style={{
-            color: textColor,
+            color: theme.text,
             flex: 1,
             paddingVertical: 16,
             paddingHorizontal: 0,
@@ -91,9 +79,7 @@ export function Input({
       {error && (
         <Text
           className="mt-2 text-sm font-medium"
-          style={{
-            color: isDark ? "hsl(7, 85%, 76%)" : "hsl(6, 74%, 54%)",
-          }}
+          style={{ color: theme.danger }}
         >
           {error}
         </Text>
