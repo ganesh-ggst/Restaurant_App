@@ -1,4 +1,3 @@
-import { useSignIn, useSignUp } from "@clerk/expo";
 import { useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useRef, useState } from "react";
@@ -22,9 +21,6 @@ export default function LoginScreen() {
   const router = useRouter();
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
-
-  const { signIn, isLoaded: isSignInLoaded } = useSignIn();
-  const { signUp, isLoaded: isSignUpLoaded } = useSignUp();
 
   const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
@@ -66,6 +62,12 @@ export default function LoginScreen() {
       `/(auth)/verify-otp?phone=${fullPhoneNumber}&fallbackOtp=${fallbackOtp}` as any,
     );
     setLoading(false);
+  };
+
+  const handleSkip = () => {
+    const guestPhone = "+910000000000";
+    // Passing isGuest=true so the profile knows to show Guest
+    router.replace(`/(home)?phone=${guestPhone}&isGuest=true` as any);
   };
 
   return (
@@ -127,7 +129,10 @@ export default function LoginScreen() {
                 maxLength={10}
                 autoFocus={true}
                 prefix={
-                  <View className="flex-row items-center border-r border-slate-300 dark:border-slate-700 pr-3 mr-1">
+                  <View
+                    className="flex-row items-center border-r pr-3 mr-1"
+                    style={{ borderRightColor: theme.border }}
+                  >
                     <Text className="text-lg mr-2">🇮🇳</Text>
                     <Text
                       className="text-sm font-semibold"
@@ -149,7 +154,7 @@ export default function LoginScreen() {
             </Card>
 
             <Pressable
-              onPress={() => router.replace("/(home)" as any)}
+              onPress={handleSkip}
               className="mt-2 py-2 self-center px-4"
             >
               <Text

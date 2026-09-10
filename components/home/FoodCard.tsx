@@ -1,6 +1,5 @@
 import {
   CheckCircle2,
-  Circle,
   Drumstick,
   Heart,
   Leaf,
@@ -33,63 +32,21 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFavorites } from "../../app/(home)/_layout";
-import { useAppTheme } from "../../constants/theme";
+import { ADD_ONS } from "../../constants/mockData";
+import { useAppTheme } from "../../hooks/useAppTheme";
 
 const { width, height } = Dimensions.get("window");
 const CARD_WIDTH = width * 0.43;
 
-const BEVERAGES = [
-  {
-    id: 1,
-    name: "Lemon Ice Tea",
-    price: 79,
-    isVeg: true,
-    bestseller: true,
-    selected: true,
-  },
-  { id: 2, name: "Peach Ice Tea", price: 89, isVeg: true, selected: false },
-  {
-    id: 3,
-    name: "Cold Pressed Watermelon",
-    price: 99,
-    isVeg: true,
-    selected: false,
-  },
-];
-
-const DESSERTS = [
-  {
-    id: 4,
-    name: "Gulab Jamun (2pc)",
-    price: 59,
-    isVeg: true,
-    selected: false,
-    available: true,
-  },
-  {
-    id: 5,
-    name: "Chocolate Brownie",
-    price: 119,
-    isVeg: false,
-    selected: false,
-    available: false,
-  },
-];
-
 interface FoodCardProps {
   item: any;
   widthOverride?: number;
+  cartQuantity?: number;
+  onAddToCart?: (qty: number, addons: string[], total: number) => void;
+  onDecrement?: () => void;
 }
 
-const StarParticle = ({
-  angle,
-  progress,
-  color,
-}: {
-  angle: number;
-  progress: Animated.SharedValue<number>;
-  color: string;
-}) => {
+const StarParticle = ({ angle, progress, color }: any) => {
   const animatedStyle = useAnimatedStyle(() => {
     const distance = interpolate(
       progress.value,
@@ -114,23 +71,21 @@ const StarParticle = ({
 
   return (
     <Animated.View
-      style={[
-        {
-          position: "absolute",
-          top: "40%",
-          left: "45%",
-          zIndex: -1,
-          pointerEvents: "none",
-        },
-        animatedStyle,
-      ]}
+      className="absolute top-[40%] left-[45%] -z-10 pointer-events-none"
+      style={animatedStyle}
     >
       <Star size={24} color={color} fill={color} />
     </Animated.View>
   );
 };
 
-export default function FoodCard({ item, widthOverride }: FoodCardProps) {
+export default function FoodCard({
+  item,
+  widthOverride,
+  cartQuantity = 0,
+  onAddToCart,
+  onDecrement,
+}: FoodCardProps) {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
   const { favorites, toggleFavorite } = useFavorites();
@@ -139,16 +94,19 @@ export default function FoodCard({ item, widthOverride }: FoodCardProps) {
   const [showCustomization, setShowCustomization] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
 
-  // --- CAROUSEL STATE & DATA ---
+  // Customization State
+  const [customQty, setCustomQty] = useState(1);
+  const [selectedAddons, setSelectedAddons] = useState<string[]>([]);
+
   const [activeImageIndex, setActiveImageIndex] = useState(0);
-  const galleryImages = [
-    item.image,
-    "https://images.unsplash.com/photo-1604908176997-125f25cc6f3d?auto=format&fit=crop&w=800&q=80",
-    "https://images.unsplash.com/photo-1589302168068-964664d93cb0?auto=format&fit=crop&w=800&q=80",
-  ];
+
+  // Use dynamic gallery from item, fallback to main image if not provided
+  const galleryImages =
+    item.gallery && item.gallery.length > 0 ? item.gallery : [item.image];
 
   const isFav = favorites?.includes(item.id);
 
+  // Animation Values
   const cardScale = useSharedValue(1);
   const cardTranslateY = useSharedValue(0);
   const cardRotateY = useSharedValue(0);
@@ -198,17 +156,9 @@ export default function FoodCard({ item, widthOverride }: FoodCardProps) {
 
     particleProgress.value = withDelay(150, withTiming(1, { duration: 500 }));
 
-    cardRotateY.value = withTiming(360, { duration: 500 }, (finished) => {
-      // FIX 1: Open modal if finished successfully
-      if (finished) {
-        runOnJS(setShowDetails)(true);
-      } else {
-        // Reset card silently if interrupted
-        cardRotateY.value = 0;
-        cardZIndex.value = 1;
-        particleProgress.value = 0;
-      }
-      // FIX 2: ALWAYS unlock the card animation state
+    cardRotateY.value = withTiming(360, { duration: 500 }, () => {
+      // Open modal instantly regardless of animation interruption
+      runOnJS(setShowDetails)(true);
       runOnJS(setIsAnimating)(false);
     });
   };
@@ -223,11 +173,35 @@ export default function FoodCard({ item, widthOverride }: FoodCardProps) {
     }, 400);
   };
 
-  // FIX 3: Modals are now directly inside the return statement to prevent scroll-glitching
+  const openCustomization = () => {
+    setCustomQty(1);
+    setSelectedAddons([]);
+    setShowCustomization(true);
+  };
+
+  const toggleAddon = (addonId: string) => {
+    setSelectedAddons((prev) =>
+      prev.includes(addonId)
+        ? prev.filter((id) => id !== addonId)
+        : [...prev, addonId],
+    );
+  };
+
+  const getBasePrice = () => parseInt(item.price.replace(/\D/g, ""), 10);
+
+  const calculateTotal = () => {
+    const base = getBasePrice();
+    const addonsCost = selectedAddons.reduce((sum, id) => {
+      const addon = ADD_ONS.find((a) => a.id === id);
+      return sum + (addon ? addon.price : 0);
+    }, 0);
+    return (base + addonsCost) * customQty;
+  };
+
   return (
     <View
-      style={{ width: widthOverride || CARD_WIDTH, position: "relative" }}
-      className="mb-4"
+      style={{ width: widthOverride || CARD_WIDTH }}
+      className="relative mb-4"
     >
       {[0, 45, 90, 135, 180, 225, 270, 315].map((angle, i) => (
         <StarParticle
@@ -241,15 +215,10 @@ export default function FoodCard({ item, widthOverride }: FoodCardProps) {
       <Pressable onPress={handleCardPress}>
         <Animated.View
           style={[
-            {
-              backgroundColor: theme.card,
-              borderColor: theme.border,
-              borderWidth: 1,
-              borderRadius: 24,
-              overflow: "hidden",
-            },
+            { backgroundColor: theme.card, borderColor: theme.border },
             animatedCardStyle,
           ]}
+          className="border rounded-[24px] overflow-hidden"
         >
           <View className="relative h-36 w-full">
             <Image
@@ -258,7 +227,6 @@ export default function FoodCard({ item, widthOverride }: FoodCardProps) {
               resizeMode="cover"
             />
             <View className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent" />
-
             <View className="absolute top-3 left-3 flex-row items-center rounded-lg bg-white/95 px-1.5 py-1 backdrop-blur-md">
               {item.isVeg ? (
                 <Leaf size={14} color="hsl(146, 80%, 40%)" strokeWidth={3} />
@@ -270,7 +238,6 @@ export default function FoodCard({ item, widthOverride }: FoodCardProps) {
                 />
               )}
             </View>
-
             <Pressable
               onPress={handleHeartPress}
               className="absolute top-3 right-3 rounded-full bg-black/40 p-2 backdrop-blur-md"
@@ -284,10 +251,11 @@ export default function FoodCard({ item, widthOverride }: FoodCardProps) {
                 />
               </Animated.View>
             </Pressable>
-
-            <Text className="absolute bottom-3 left-3 text-lg font-black text-white tracking-tight">
-              {item.offer}
-            </Text>
+            {item.offer && (
+              <Text className="absolute bottom-3 left-3 text-lg font-black text-white tracking-tight">
+                {item.offer}
+              </Text>
+            )}
           </View>
 
           <View className="p-3.5">
@@ -325,63 +293,81 @@ export default function FoodCard({ item, widthOverride }: FoodCardProps) {
                 {item.price}
               </Text>
 
-              <Pressable
-                onPress={(e) => {
-                  e.stopPropagation();
-                  setShowCustomization(true);
-                }}
-                className="rounded-xl px-5 py-2.5 border"
-                style={{
-                  backgroundColor: theme.isDark
-                    ? "rgba(255,255,255,0.05)"
-                    : "rgba(0,0,0,0.03)",
-                  borderColor: theme.border,
-                }}
-              >
-                <Text
-                  className="text-sm font-black uppercase"
-                  style={{ color: theme.primary }}
+              {cartQuantity > 0 ? (
+                <View
+                  className="flex-row items-center rounded-lg border"
+                  style={{
+                    backgroundColor: theme.primary,
+                    borderColor: theme.primary,
+                  }}
                 >
-                  ADD
-                </Text>
-              </Pressable>
+                  <Pressable
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      onDecrement && onDecrement();
+                    }}
+                    className="p-1.5 px-2"
+                  >
+                    <Minus size={16} color="#fff" strokeWidth={3} />
+                  </Pressable>
+                  <Text className="font-black text-white px-1.5">
+                    {cartQuantity}
+                  </Text>
+                  <Pressable
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      openCustomization();
+                    }}
+                    className="p-1.5 px-2"
+                  >
+                    <Plus size={16} color="#fff" strokeWidth={3} />
+                  </Pressable>
+                </View>
+              ) : (
+                <Pressable
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    openCustomization();
+                  }}
+                  className="rounded-xl px-5 py-2.5 border"
+                  style={{
+                    backgroundColor: theme.isDark
+                      ? "rgba(255,255,255,0.05)"
+                      : "rgba(0,0,0,0.03)",
+                    borderColor: theme.border,
+                  }}
+                >
+                  <Text
+                    className="text-sm font-black uppercase"
+                    style={{ color: theme.primary }}
+                  >
+                    ADD
+                  </Text>
+                </Pressable>
+              )}
             </View>
           </View>
         </Animated.View>
       </Pressable>
 
-      {/* --- 1. ITEM DETAILS MODAL INLINED --- */}
+      {/* --- 1. ITEM DETAILS MODAL --- */}
       <Modal
         visible={showDetails}
         transparent
         animationType="slide"
         onRequestClose={handleCloseDetails}
       >
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.6)",
-            justifyContent: "flex-end",
-          }}
-        >
-          <Pressable style={{ flex: 1 }} onPress={handleCloseDetails} />
-
+        <View className="flex-1 justify-end bg-black/60">
+          <Pressable className="flex-1" onPress={handleCloseDetails} />
           <View
-            style={{
-              height: height * 0.85,
-              backgroundColor: theme.bg,
-              borderTopLeftRadius: 32,
-              borderTopRightRadius: 32,
-              overflow: "hidden",
-            }}
+            style={{ height: height * 0.85, backgroundColor: theme.bg }}
+            className="rounded-t-[32px] overflow-hidden"
           >
             <ScrollView
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingBottom: 100 }}
             >
-              <View
-                style={{ height: 280, width: "100%", position: "relative" }}
-              >
+              <View className="h-[280px] w-full relative">
                 <ScrollView
                   horizontal
                   pagingEnabled
@@ -393,262 +379,76 @@ export default function FoodCard({ item, widthOverride }: FoodCardProps) {
                     setActiveImageIndex(newIndex);
                   }}
                 >
-                  {galleryImages.map((img, idx) => (
+                  {galleryImages.map((img: string, idx: number) => (
                     <Image
                       key={idx}
                       source={{ uri: img }}
-                      style={{ height: 280, width: width }}
+                      style={{ width }}
+                      className="h-[280px]"
                       resizeMode="cover"
                     />
                   ))}
                 </ScrollView>
-
-                <View
-                  style={{
-                    position: "absolute",
-                    bottom: 16,
-                    left: 0,
-                    right: 0,
-                    flexDirection: "row",
-                    justifyContent: "center",
-                    pointerEvents: "none",
-                  }}
-                >
-                  {galleryImages.map((_, idx) => (
+                <View className="absolute bottom-4 inset-x-0 flex-row justify-center pointer-events-none">
+                  {galleryImages.map((_: any, idx: number) => (
                     <View
                       key={idx}
                       style={{
                         width: activeImageIndex === idx ? 18 : 6,
-                        height: 6,
-                        borderRadius: 3,
                         backgroundColor:
                           activeImageIndex === idx
                             ? theme.primary
                             : "rgba(255,255,255,0.6)",
-                        marginHorizontal: 4,
                       }}
+                      className="h-1.5 rounded-full mx-1"
                     />
                   ))}
                 </View>
-
                 <Pressable
                   onPress={handleCloseDetails}
-                  style={{
-                    position: "absolute",
-                    top: 16,
-                    right: 16,
-                    backgroundColor: "rgba(0,0,0,0.5)",
-                    padding: 8,
-                    borderRadius: 20,
-                  }}
+                  className="absolute top-4 right-4 bg-black/50 p-2 rounded-full"
                 >
                   <X size={24} color="#fff" />
                 </Pressable>
-
-                <View
-                  style={{
-                    position: "absolute",
-                    top: 16,
-                    left: 16,
-                    backgroundColor: theme.card,
-                    padding: 8,
-                    borderRadius: 12,
-                    alignItems: "center",
-                    shadowColor: "#000",
-                    shadowOpacity: 0.2,
-                    shadowRadius: 8,
-                    elevation: 5,
-                  }}
-                >
-                  <Text
-                    style={{
-                      color: theme.primary,
-                      fontSize: 16,
-                      fontWeight: "900",
-                    }}
-                  >
-                    💪
-                  </Text>
-                  <Text
-                    style={{
-                      color: theme.text,
-                      fontSize: 10,
-                      fontWeight: "800",
-                      marginTop: 2,
-                      textAlign: "center",
-                    }}
-                  >
-                    HIGH{"\n"}PROTEIN
-                  </Text>
-                </View>
               </View>
-
-              <View style={{ padding: 20 }}>
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    marginBottom: 8,
-                  }}
-                >
-                  <View
-                    style={{
-                      padding: 2,
-                      borderWidth: 1,
-                      borderColor: item.isVeg ? "#16A34A" : "#DC2626",
-                      borderRadius: 4,
-                      marginRight: 8,
-                    }}
-                  >
-                    <View
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: 4,
-                        backgroundColor: item.isVeg ? "#16A34A" : "#DC2626",
-                      }}
-                    />
-                  </View>
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      backgroundColor: "rgba(22, 163, 74, 0.1)",
-                      paddingHorizontal: 6,
-                      paddingVertical: 2,
-                      borderRadius: 6,
-                    }}
-                  >
-                    <Star size={12} color="#16A34A" fill="#16A34A" />
-                    <Text
-                      style={{
-                        color: "#16A34A",
-                        fontSize: 12,
-                        fontWeight: "800",
-                        marginLeft: 4,
-                      }}
-                    >
-                      {item.rating} (34)
-                    </Text>
-                  </View>
-                </View>
-
+              <View className="p-5">
                 <Text
-                  style={{
-                    color: theme.text,
-                    fontSize: 24,
-                    fontWeight: "900",
-                    marginBottom: 8,
-                    lineHeight: 32,
-                  }}
+                  style={{ color: theme.text }}
+                  className="text-2xl font-black mb-2"
                 >
                   {item.name}
                 </Text>
-
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    marginBottom: 16,
-                  }}
-                >
-                  <Text
-                    style={{
-                      color: theme.text,
-                      fontSize: 20,
-                      fontWeight: "900",
-                      marginRight: 8,
-                    }}
-                  >
-                    {item.price}
-                  </Text>
-                  <Text
-                    style={{
-                      color: theme.muted,
-                      fontSize: 16,
-                      fontWeight: "600",
-                      textDecorationLine: "line-through",
-                    }}
-                  >
-                    ₹399
-                  </Text>
-                </View>
-
                 <Text
-                  style={{
-                    color: theme.muted,
-                    fontSize: 12,
-                    fontWeight: "700",
-                    marginBottom: 16,
-                  }}
+                  style={{ color: theme.text }}
+                  className="text-xl font-black mb-4"
                 >
-                  27g protein • 376 kcal
+                  {item.price}
                 </Text>
-
-                <View
-                  style={{
-                    height: 1,
-                    backgroundColor: theme.border,
-                    marginBottom: 16,
-                  }}
-                />
-
                 <Text
-                  style={{
-                    color: theme.text,
-                    fontSize: 15,
-                    fontWeight: "500",
-                    lineHeight: 24,
-                    letterSpacing: 0.2,
-                  }}
+                  style={{ color: theme.text }}
+                  className="text-[15px] font-medium leading-6"
                 >
-                  A nutrient-dense fusion of soft paneer, superfood quinoa, and
-                  vibrant vegetables—crafted to deliver 80g of wholesome
-                  vegetarian protein for complete nourishment and sustained
-                  energy. Perfectly balanced with our house-special dressing.
+                  {item.description}
                 </Text>
               </View>
             </ScrollView>
-
             <View
               style={{
-                position: "absolute",
-                bottom: 0,
-                left: 0,
-                right: 0,
                 backgroundColor: theme.card,
-                paddingHorizontal: 20,
-                paddingTop: 16,
-                paddingBottom: Platform.OS === "ios" ? insets.bottom : 20,
-                borderTopWidth: 1,
                 borderTopColor: theme.border,
-                shadowColor: "#000",
-                shadowOffset: { width: 0, height: -4 },
-                shadowOpacity: 0.05,
-                shadowRadius: 12,
-                elevation: 10,
+                paddingBottom: Platform.OS === "ios" ? insets.bottom : 20,
               }}
+              className="absolute bottom-0 inset-x-0 px-5 pt-4 border-t"
             >
               <Pressable
                 onPress={() => {
                   handleCloseDetails();
-                  setTimeout(() => setShowCustomization(true), 350);
+                  setTimeout(() => openCustomization(), 350);
                 }}
-                style={{
-                  backgroundColor: theme.primary,
-                  paddingVertical: 14,
-                  borderRadius: 12,
-                  alignItems: "center",
-                }}
+                style={{ backgroundColor: theme.primary }}
+                className="py-3.5 rounded-xl items-center"
               >
-                <Text
-                  style={{
-                    color: "#fff",
-                    fontSize: 15,
-                    fontWeight: "900",
-                    letterSpacing: 0.5,
-                  }}
-                >
+                <Text className="text-white text-[15px] font-black tracking-wide">
                   ADD CUSTOMISABLE
                 </Text>
               </Pressable>
@@ -657,61 +457,36 @@ export default function FoodCard({ item, widthOverride }: FoodCardProps) {
         </View>
       </Modal>
 
-      {/* --- 2. CUSTOMIZATION MODAL INLINED --- */}
+      {/* --- 2. CUSTOMIZATION MODAL --- */}
       <Modal
         visible={showCustomization}
         transparent
         animationType="slide"
         onRequestClose={() => setShowCustomization(false)}
       >
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.6)",
-            justifyContent: "flex-end",
-          }}
-        >
+        <View className="flex-1 justify-end bg-black/60">
           <Pressable
-            style={{ flex: 1 }}
+            className="flex-1"
             onPress={() => setShowCustomization(false)}
           />
-
           <View
-            style={{
-              height: height * 0.9,
-              backgroundColor: theme.bg,
-              borderTopLeftRadius: 24,
-              borderTopRightRadius: 24,
-              overflow: "hidden",
-            }}
+            style={{ height: height * 0.85, backgroundColor: theme.bg }}
+            className="rounded-t-[24px] overflow-hidden"
           >
             <View
               style={{
-                flexDirection: "row",
-                alignItems: "center",
-                padding: 16,
                 backgroundColor: theme.card,
-                borderBottomWidth: 1,
                 borderBottomColor: theme.border,
-                zIndex: 10,
               }}
+              className="flex-row items-center p-4 border-b z-10"
             >
               <Image
                 source={{ uri: item.image }}
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 20,
-                  marginRight: 12,
-                }}
+                className="w-10 h-10 rounded-full mr-3"
               />
               <Text
-                style={{
-                  flex: 1,
-                  color: theme.text,
-                  fontSize: 16,
-                  fontWeight: "800",
-                }}
+                style={{ color: theme.text }}
+                className="flex-1 text-base font-extrabold"
                 numberOfLines={1}
               >
                 {item.name}
@@ -722,9 +497,8 @@ export default function FoodCard({ item, widthOverride }: FoodCardProps) {
                   backgroundColor: theme.isDark
                     ? "rgba(255,255,255,0.1)"
                     : "rgba(0,0,0,0.05)",
-                  padding: 8,
-                  borderRadius: 20,
                 }}
+                className="p-2 rounded-full"
               >
                 <X size={20} color={theme.text} />
               </Pressable>
@@ -734,310 +508,147 @@ export default function FoodCard({ item, widthOverride }: FoodCardProps) {
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingBottom: 140 }}
             >
-              <View style={{ padding: 20, backgroundColor: theme.bg }}>
+              <View style={{ backgroundColor: theme.bg }} className="p-5">
                 <Text
-                  style={{
-                    color: theme.text,
-                    fontSize: 18,
-                    fontWeight: "900",
-                    marginBottom: 4,
-                  }}
+                  style={{ color: theme.text }}
+                  className="text-lg font-black mb-4"
                 >
-                  Choose Your Beverages
+                  Select Quantity
                 </Text>
-                <Text
-                  style={{
-                    color: theme.muted,
-                    fontSize: 13,
-                    fontWeight: "600",
-                    marginBottom: 16,
-                  }}
-                >
-                  Select upto 3
-                </Text>
-
-                <View
-                  style={{
-                    backgroundColor: theme.card,
-                    borderRadius: 20,
-                    borderWidth: 1,
-                    borderColor: theme.border,
-                    overflow: "hidden",
-                  }}
-                >
-                  {BEVERAGES.map((bev, index) => (
+                <View className="flex-row items-center">
+                  <View
+                    style={{
+                      backgroundColor: theme.card,
+                      borderColor: theme.border,
+                    }}
+                    className="flex-row items-center rounded-xl border"
+                  >
                     <Pressable
-                      key={bev.id}
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        padding: 16,
-                        borderBottomWidth:
-                          index === BEVERAGES.length - 1 ? 0 : 1,
-                        borderBottomColor: theme.border,
-                      }}
+                      onPress={() => setCustomQty((q) => Math.max(1, q - 1))}
+                      className="p-3"
                     >
-                      <View
-                        style={{
-                          padding: 2,
-                          borderWidth: 1,
-                          borderColor: bev.isVeg ? "#16A34A" : "#DC2626",
-                          borderRadius: 4,
-                          marginRight: 12,
-                        }}
-                      >
-                        <View
-                          style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: 4,
-                            backgroundColor: bev.isVeg ? "#16A34A" : "#DC2626",
-                          }}
-                        />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        {bev.bestseller && (
-                          <Text
-                            style={{
-                              color: "#DC2626",
-                              fontSize: 10,
-                              fontWeight: "800",
-                              marginBottom: 2,
-                            }}
-                          >
-                            Bestseller
-                          </Text>
-                        )}
-                        <Text
-                          style={{
-                            color: theme.text,
-                            fontSize: 15,
-                            fontWeight: "700",
-                          }}
-                        >
-                          {bev.name}
-                        </Text>
-                      </View>
-                      <Text
-                        style={{
-                          color: theme.muted,
-                          fontSize: 14,
-                          fontWeight: "600",
-                          marginRight: 12,
-                        }}
-                      >
-                        + ₹{bev.price}
-                      </Text>
-                      {bev.selected ? (
-                        <CheckCircle2
-                          size={24}
-                          color={theme.primary}
-                          fill="rgba(22, 163, 74, 0.1)"
-                        />
-                      ) : (
-                        <Circle size={24} color={theme.muted} />
-                      )}
+                      <Minus
+                        size={20}
+                        color={customQty > 1 ? theme.primary : theme.muted}
+                        strokeWidth={3}
+                      />
                     </Pressable>
-                  ))}
+                    <Text
+                      style={{ color: theme.text }}
+                      className="text-lg font-black px-4"
+                    >
+                      {customQty}
+                    </Text>
+                    <Pressable
+                      onPress={() => setCustomQty((q) => Math.min(3, q + 1))}
+                      className="p-3"
+                    >
+                      <Plus
+                        size={20}
+                        color={customQty < 3 ? theme.primary : theme.muted}
+                        strokeWidth={3}
+                      />
+                    </Pressable>
+                  </View>
+                  {customQty === 3 && (
+                    <Text className="ml-4 text-xs font-bold text-red-500">
+                      Max 3 allowed
+                    </Text>
+                  )}
                 </View>
               </View>
 
-              <View
-                style={{
-                  paddingHorizontal: 20,
-                  paddingBottom: 20,
-                  backgroundColor: theme.bg,
-                }}
-              >
+              <View style={{ backgroundColor: theme.bg }} className="px-5 pb-5">
                 <Text
-                  style={{
-                    color: theme.text,
-                    fontSize: 18,
-                    fontWeight: "900",
-                    marginBottom: 4,
-                  }}
+                  style={{ color: theme.text }}
+                  className="text-lg font-black mb-1"
                 >
-                  Choose Your Dessert
+                  Add-ons (Optional)
                 </Text>
                 <Text
-                  style={{
-                    color: theme.muted,
-                    fontSize: 13,
-                    fontWeight: "600",
-                    marginBottom: 16,
-                  }}
+                  style={{ color: theme.muted }}
+                  className="text-[13px] font-semibold mb-4"
                 >
-                  Select upto 1
+                  Choose as many as you like
                 </Text>
 
                 <View
                   style={{
                     backgroundColor: theme.card,
-                    borderRadius: 20,
-                    borderWidth: 1,
                     borderColor: theme.border,
-                    overflow: "hidden",
                   }}
+                  className="rounded-[20px] border overflow-hidden"
                 >
-                  {DESSERTS.map((des, index) => (
-                    <View
-                      key={des.id}
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        padding: 16,
-                        borderBottomWidth:
-                          index === DESSERTS.length - 1 ? 0 : 1,
-                        borderBottomColor: theme.border,
-                        opacity: des.available ? 1 : 0.5,
-                      }}
-                    >
-                      <View
+                  {ADD_ONS.map((addon, index) => {
+                    const isSelected = selectedAddons.includes(addon.id);
+                    return (
+                      <Pressable
+                        key={addon.id}
+                        onPress={() => toggleAddon(addon.id)}
                         style={{
-                          padding: 2,
-                          borderWidth: 1,
-                          borderColor: des.isVeg ? "#16A34A" : "#DC2626",
-                          borderRadius: 4,
-                          marginRight: 12,
+                          borderBottomWidth:
+                            index === ADD_ONS.length - 1 ? 0 : 1,
+                          borderBottomColor: theme.border,
                         }}
+                        className="flex-row items-center p-4"
                       >
                         <View
                           style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: 4,
-                            backgroundColor: des.isVeg ? "#16A34A" : "#DC2626",
+                            borderColor: isSelected
+                              ? theme.primary
+                              : theme.muted,
+                            backgroundColor: isSelected
+                              ? theme.primary
+                              : "transparent",
                           }}
-                        />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text
-                          style={{
-                            color: theme.text,
-                            fontSize: 15,
-                            fontWeight: "700",
-                          }}
+                          className="w-5 h-5 rounded border-2 items-center justify-center mr-3"
                         >
-                          {des.name}
-                        </Text>
-                        {!des.available && (
-                          <Text
-                            style={{
-                              color: "#D97706",
-                              fontSize: 12,
-                              fontWeight: "600",
-                              marginTop: 4,
-                            }}
-                          >
-                            Unavailable at the moment
-                          </Text>
-                        )}
-                      </View>
-                      {des.available && (
+                          {isSelected && (
+                            <CheckCircle2 size={14} color="#fff" />
+                          )}
+                        </View>
                         <Text
-                          style={{
-                            color: theme.muted,
-                            fontSize: 14,
-                            fontWeight: "600",
-                            marginRight: 12,
-                          }}
+                          style={{ color: theme.text }}
+                          className="flex-1 text-[15px] font-bold"
                         >
-                          + ₹{des.price}
+                          {addon.name}
                         </Text>
-                      )}
-                      {des.available && (
-                        <Circle size={24} color={theme.muted} />
-                      )}
-                    </View>
-                  ))}
+                        <Text
+                          style={{ color: theme.muted }}
+                          className="text-sm font-semibold"
+                        >
+                          + ₹{addon.price}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
                 </View>
               </View>
             </ScrollView>
 
             <View
               style={{
-                position: "absolute",
-                bottom: 0,
-                left: 0,
-                right: 0,
                 backgroundColor: theme.card,
-                flexDirection: "row",
-                alignItems: "center",
-                paddingHorizontal: 20,
-                paddingTop: 16,
-                paddingBottom: Platform.OS === "ios" ? insets.bottom : 20,
-                borderTopWidth: 1,
                 borderTopColor: theme.border,
-                shadowColor: "#000",
-                shadowOffset: { width: 0, height: -4 },
-                shadowOpacity: 0.05,
-                shadowRadius: 12,
-                elevation: 10,
+                paddingBottom: Platform.OS === "ios" ? insets.bottom : 20,
               }}
+              className="absolute bottom-0 inset-x-0 px-5 pt-4 border-t"
             >
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  backgroundColor: theme.bg,
-                  borderRadius: 14,
-                  borderWidth: 1,
-                  borderColor: theme.border,
-                  marginRight: 12,
-                }}
-              >
-                <Pressable style={{ padding: 12 }}>
-                  <Minus size={18} color={theme.primary} strokeWidth={3} />
-                </Pressable>
-                <Text
-                  style={{
-                    color: theme.text,
-                    fontSize: 16,
-                    fontWeight: "900",
-                    paddingHorizontal: 6,
-                  }}
-                >
-                  1
-                </Text>
-                <Pressable style={{ padding: 12 }}>
-                  <Plus size={18} color={theme.primary} strokeWidth={3} />
-                </Pressable>
-              </View>
-
               <Pressable
-                onPress={() => setShowCustomization(false)}
-                style={{
-                  flex: 1,
-                  backgroundColor: theme.primary,
-                  paddingVertical: 14,
-                  borderRadius: 12,
-                  alignItems: "center",
-                  flexDirection: "row",
-                  justifyContent: "center",
+                onPress={() => {
+                  if (onAddToCart)
+                    onAddToCart(customQty, selectedAddons, calculateTotal());
+                  setShowCustomization(false);
                 }}
+                style={{ backgroundColor: theme.primary }}
+                className="py-3.5 rounded-xl items-center flex-row justify-center"
               >
-                <Text
-                  style={{
-                    color: "#fff",
-                    fontSize: 15,
-                    fontWeight: "900",
-                    letterSpacing: 0.5,
-                  }}
-                >
+                <Text className="text-white text-[15px] font-black tracking-wide">
                   Add Item
                 </Text>
-                <View
-                  style={{
-                    width: 1,
-                    height: 14,
-                    backgroundColor: "rgba(255,255,255,0.4)",
-                    marginHorizontal: 12,
-                  }}
-                />
-                <Text
-                  style={{ color: "#fff", fontSize: 15, fontWeight: "900" }}
-                >
-                  ₹308
+                <View className="w-[1px] h-3.5 bg-white/40 mx-3" />
+                <Text className="text-white text-[15px] font-black">
+                  ₹{calculateTotal()}
                 </Text>
               </Pressable>
             </View>

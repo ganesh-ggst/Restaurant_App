@@ -1,6 +1,12 @@
 import { BlurView } from "expo-blur";
 import { Tabs } from "expo-router";
-import { Compass, Home, ScrollText, Tag } from "lucide-react-native";
+import {
+  ChevronRightCircle,
+  Compass,
+  Home,
+  ScrollText,
+  Tag,
+} from "lucide-react-native";
 import { useColorScheme } from "nativewind";
 import { createContext, useContext, useState } from "react";
 import {
@@ -12,9 +18,16 @@ import {
   View,
 } from "react-native";
 import Animated, {
+  FadeIn,
+  FadeOut,
   useAnimatedStyle,
   withSpring,
 } from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import { DeliveryCartModal } from "../../components/home/DeliveryCartModal";
+import { MOCK_ADDRESSES, MOCK_BRANCHES } from "../../constants/mockData";
+import { useAppTheme } from "../../hooks/useAppTheme";
 
 // --- GLOBAL STATES ---
 export const OrderContext = createContext<any>(null);
@@ -139,7 +152,6 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
               });
 
               if (!isFocused && !event.defaultPrevented) {
-                // FIX: Clean parameters safely when physically tapping the bottom tabs
                 if (route.name === "search") {
                   navigation.navigate(route.name, { category: undefined });
                 } else if (route.name === "offers") {
@@ -225,8 +237,26 @@ const styles = StyleSheet.create({
 });
 
 export default function HomeLayout() {
+  const theme = useAppTheme();
+  const insets = useSafeAreaInsets();
+
   const [mode, setMode] = useState("Delivery");
   const [favorites, setFavorites] = useState<number[]>([]);
+
+  // GLOBAL CART & ORDER STATES
+  const [carts, setCarts] = useState<{ [key: string]: any[] }>({
+    Delivery: [],
+    "Dine-in/Takeaway": [],
+  });
+  const [activeAddress, setActiveAddress] = useState(MOCK_ADDRESSES[0]);
+  const [activeBranch, setActiveBranch] = useState(MOCK_BRANCHES[0]);
+  const [showCartModal, setShowCartModal] = useState(false);
+
+  const activeCart = carts[mode] || [];
+  const activeCartTotalItems = activeCart.reduce(
+    (sum: number, item: any) => sum + item.quantity,
+    0,
+  );
 
   const toggleFavorite = (id: number) => {
     setFavorites((prev) =>
@@ -234,27 +264,133 @@ export default function HomeLayout() {
     );
   };
 
+  const handleAddToCart = (
+    item: any,
+    quantity: number,
+    addons: string[],
+    totalAmount: number,
+  ) => {
+    setCarts((prev) => {
+      const currentCart = prev[mode] || [];
+      const existing = currentCart.find((c) => c.id === item.id);
+
+      let newModeCart;
+      if (existing) {
+        newModeCart = currentCart.map((c) =>
+          c.id === item.id
+            ? {
+                ...c,
+                quantity: c.quantity + quantity,
+                addons,
+                total: c.total + totalAmount,
+              }
+            : c,
+        );
+      } else {
+        newModeCart = [
+          ...currentCart,
+          { ...item, quantity, addons, total: totalAmount },
+        ];
+      }
+      return { ...prev, [mode]: newModeCart };
+    });
+  };
+
+  const handleDecrementCartItem = (itemId: number) => {
+    setCarts((prev) => {
+      const currentCart = prev[mode] || [];
+      const existing = currentCart.find((c) => c.id === itemId);
+
+      let newModeCart;
+      if (existing && existing.quantity > 1) {
+        newModeCart = currentCart.map((c) =>
+          c.id === itemId ? { ...c, quantity: c.quantity - 1 } : c,
+        );
+      } else {
+        newModeCart = currentCart.filter((c) => c.id !== itemId);
+        if (newModeCart.length === 0) setShowCartModal(false);
+      }
+      return { ...prev, [mode]: newModeCart };
+    });
+  };
+
   return (
     <FavoritesContext.Provider value={{ favorites, toggleFavorite }}>
-      <OrderContext.Provider value={{ mode, setMode }}>
-        <Tabs
-          tabBar={(props) => <CustomTabBar {...props} />}
-          screenOptions={{ headerShown: false }}
-        >
-          <Tabs.Screen name="index" options={{ title: "Home" }} />
-          {/* New Offers Tab Added */}
-          <Tabs.Screen name="offers" options={{ title: "Offers" }} />
-          <Tabs.Screen name="search" options={{ title: "Menu" }} />
-          <Tabs.Screen name="orders" options={{ title: "Orders" }} />
-          <Tabs.Screen
-            name="profile"
-            options={{ href: null, title: "My Profile" }}
+      <OrderContext.Provider
+        value={{
+          mode,
+          setMode,
+          carts,
+          setCarts,
+          activeAddress,
+          setActiveAddress,
+          activeBranch,
+          setActiveBranch,
+          handleAddToCart,
+          handleDecrementCartItem,
+        }}
+      >
+        <View className="flex-1" style={{ backgroundColor: theme.bg }}>
+          <Tabs
+            tabBar={(props) => <CustomTabBar {...props} />}
+            screenOptions={{ headerShown: false }}
+          >
+            <Tabs.Screen name="index" options={{ title: "Home" }} />
+            <Tabs.Screen name="offers" options={{ title: "Offers" }} />
+            <Tabs.Screen name="search" options={{ title: "Menu" }} />
+            <Tabs.Screen name="orders" options={{ title: "Orders" }} />
+            <Tabs.Screen
+              name="profile"
+              options={{ href: null, title: "My Profile" }}
+            />
+            <Tabs.Screen
+              name="favorites"
+              options={{ href: null, title: "Favorites" }}
+            />
+          </Tabs>
+
+          {/* GLOBAL VIEW CART BAR */}
+          {activeCartTotalItems > 0 && mode === "Delivery" && (
+            <Animated.View
+              entering={FadeIn.duration(300)}
+              exiting={FadeOut.duration(200)}
+              className="absolute bottom-[110px] left-4 right-4 z-50"
+            >
+              <Pressable
+                onPress={() => setShowCartModal(true)}
+                className="flex-row items-center justify-between rounded-[20px] px-5 py-4 shadow-lg"
+                style={{ backgroundColor: theme.primary }}
+              >
+                <Text className="text-white font-black text-lg tracking-tight">
+                  {activeCartTotalItems} Item
+                  {activeCartTotalItems > 1 ? "s" : ""} added
+                </Text>
+                <View className="flex-row items-center">
+                  <Text className="text-white font-black text-lg tracking-tight mr-1.5">
+                    View Cart
+                  </Text>
+                  <ChevronRightCircle
+                    size={22}
+                    color="#fff"
+                    strokeWidth={2.5}
+                  />
+                </View>
+              </Pressable>
+            </Animated.View>
+          )}
+
+          {/* GLOBAL CART MODAL */}
+          <DeliveryCartModal
+            visible={showCartModal}
+            onClose={() => setShowCartModal(false)}
+            cart={activeCart}
+            onIncrement={handleAddToCart}
+            onDecrement={handleDecrementCartItem}
+            theme={theme}
+            insets={insets}
+            activeAddress={activeAddress}
           />
-          <Tabs.Screen
-            name="favorites"
-            options={{ href: null, title: "Favorites" }}
-          />
-        </Tabs>
+        </View>
       </OrderContext.Provider>
     </FavoritesContext.Provider>
   );

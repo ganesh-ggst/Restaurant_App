@@ -13,6 +13,9 @@ CLAUDE.md
 .env
 .idea
 
+# Backend
+/backend/
+
 # Native
 .kotlin/
 *.orig.*
