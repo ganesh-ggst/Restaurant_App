@@ -1,7 +1,5 @@
-import { useSession, useSignIn, useSignUp } from "@clerk/expo";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useColorScheme } from "nativewind";
 import { useEffect, useRef, useState } from "react";
 import {
   Keyboard,
@@ -13,28 +11,20 @@ import {
   View,
 } from "react-native";
 import Animated, { FadeIn, FadeOut, Layout } from "react-native-reanimated";
-import {
-  SafeAreaView,
-  useSafeAreaInsets,
-} from "react-native-safe-area-context";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Button } from "../../components/ui/Button";
-import { getUserByPhone, initDB } from "../../lib/db";
+import { MOCK_USER } from "../../constants/mockData";
+import { useAppTheme } from "../../hooks/useAppTheme";
 
 export default function VerifyOtpScreen() {
   const router = useRouter();
+  const theme = useAppTheme();
+
   const { phone, fallbackOtp } = useLocalSearchParams<{
     phone: string;
     fallbackOtp?: string;
   }>();
-
-  const { colorScheme } = useColorScheme();
-  const isDark = colorScheme === "dark";
-  const insets = useSafeAreaInsets();
-
-  const { setActive } = useSession();
-  const { signIn, isLoaded: isSignInLoaded } = useSignIn();
-  const { signUp, isLoaded: isSignUpLoaded } = useSignUp();
 
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
@@ -45,100 +35,36 @@ export default function VerifyOtpScreen() {
 
   const inputRef = useRef<TextInput>(null);
 
-  const bgColor = isDark ? "hsl(150, 31%, 9%)" : "hsl(138, 47%, 97%)";
-  const textColor = isDark ? "hsl(136, 42%, 92%)" : "hsl(146, 52%, 15%)";
-  const boxBgColor = isDark ? "hsl(149, 16%, 24%)" : "hsl(141, 47%, 83%)";
-  const activeBorderColor = isDark
-    ? "hsl(142, 70%, 54%)"
-    : "hsl(147, 75%, 33%)";
-
-  useEffect(() => {
-    // Initialize DB table on load just in case
-    initDB();
-  }, []);
-
   useEffect(() => {
     if (code.length === 6) {
       handleVerifyCode(code);
     }
   }, [code]);
 
-  const handleVerifyCode = async (verificationCode: string) => {
+  const handleVerifyCode = (verificationCode: string) => {
     setLoading(true);
     setError("");
 
-    if (activeFallback) {
-      if (verificationCode === activeFallback) {
-        Keyboard.dismiss();
-
-        try {
-          // ==========================================
-          // DB ROUTING LOGIC: EXISTING VS NEW USER
-          // ==========================================
-          const existingUser = await getUserByPhone(phone);
-
-          if (existingUser) {
-            // User exists! Send straight to home and pass phone so home can query DB
-            router.replace(`/(home)?phone=${phone}` as any);
-          } else {
-            // New user! Route to basic details to collect name
-            router.replace(`/(auth)/basic-details?phone=${phone}` as any);
-          }
-          // ==========================================
-        } catch (dbErr) {
-          console.error("DB check failed:", dbErr);
-          setError("Network error. Please try again.");
-          setTimeout(() => inputRef.current?.focus(), 100);
-        } finally {
-          setLoading(false);
-        }
-        return;
-      } else {
-        setError("Invalid code. Please try again.");
-        setLoading(false);
-        setTimeout(() => inputRef.current?.focus(), 100);
-        return;
-      }
-    }
-
-    // --- CLERK CODE COMMENTED OUT FOR DEV TESTING ---
-    /*
-    try {
-      if (!isSignInLoaded || !isSignUpLoaded) throw new Error("Clerk not loaded");
-
-      if (signIn.status === "needs_first_factor") {
-        const signInAttempt = await signIn.attemptFirstFactor({ strategy: "phone_code", code: verificationCode });
-        if (signInAttempt.status === "complete") {
-          Keyboard.dismiss();
-          await setActive({ session: signInAttempt.createdSessionId });
-          
-          // Add DB Check here when using Clerk in production
-          const existingUser = await getUserByPhone(phone);
-          if (existingUser) {
-            router.replace(`/(home)?phone=${phone}` as any);
-          } else {
-            router.replace(`/(auth)/basic-details?phone=${phone}` as any);
-          }
-        } else {
-          setError("Invalid code.");
-        }
-      } else if (signUp.status === "missing_requirements" || signUp.status === "unverified") {
-        const signUpAttempt = await signUp.attemptPhoneNumberVerification({ code: verificationCode });
-        if (signUpAttempt.status === "complete") {
-          Keyboard.dismiss();
-          await setActive({ session: signUpAttempt.createdSessionId });
-          router.replace(`/(auth)/basic-details?phone=${phone}` as any);
-        } else {
-          setError("Invalid code.");
-        }
-      }
-    } catch (err: any) {
-      setError(err.errors?.[0]?.message || "Invalid OTP code.");
-    } finally {
+    if (activeFallback && verificationCode === activeFallback) {
+      Keyboard.dismiss();
       setLoading(false);
+
+      // Check if user exists in the MOCK_USER array with role === "user"
+      const isExistingUser = MOCK_USER.some(
+        (u: any) => u.phone_number === phone && u.role === "user",
+      );
+
+      if (isExistingUser) {
+        router.replace(`/(home)?phone=${phone}` as any);
+      } else {
+        router.replace(`/(auth)/basic-details?phone=${phone}` as any);
+      }
+      return;
     }
-    */
+
+    setError("Invalid code. Please try again.");
     setLoading(false);
+    setTimeout(() => inputRef.current?.focus(), 100);
   };
 
   const handleResendCode = () => {
@@ -159,8 +85,8 @@ export default function VerifyOtpScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1" style={{ backgroundColor: bgColor }}>
-      <StatusBar style={isDark ? "light" : "dark"} />
+    <SafeAreaView className="flex-1" style={{ backgroundColor: theme.bg }}>
+      <StatusBar style={theme.isDark ? "light" : "dark"} />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         className="flex-1"
@@ -176,7 +102,7 @@ export default function VerifyOtpScreen() {
                 className="p-2 -ml-2"
                 hitSlop={20}
               >
-                <Text className="text-2xl" style={{ color: textColor }}>
+                <Text className="text-2xl" style={{ color: theme.text }}>
                   ←
                 </Text>
               </Pressable>
@@ -184,18 +110,13 @@ export default function VerifyOtpScreen() {
             <View className="mb-8">
               <Text
                 className="text-2xl font-bold mb-2"
-                style={{ color: textColor }}
+                style={{ color: theme.text }}
               >
                 Verify your number
               </Text>
-              <Text
-                className="text-sm"
-                style={{
-                  color: isDark ? "hsl(140, 17%, 68%)" : "hsl(146, 26%, 40%)",
-                }}
-              >
+              <Text className="text-sm" style={{ color: theme.muted }}>
                 Enter the 6-digit code we sent to{"\n"}
-                <Text className="font-bold" style={{ color: textColor }}>
+                <Text className="font-bold" style={{ color: theme.text }}>
                   {phone}
                 </Text>
               </Text>
@@ -208,9 +129,7 @@ export default function VerifyOtpScreen() {
                 >
                   <Text
                     className="text-sm font-medium"
-                    style={{
-                      color: isDark ? "hsl(7, 85%, 76%)" : "hsl(6, 74%, 54%)",
-                    }}
+                    style={{ color: theme.danger }}
                   >
                     {error}
                   </Text>
@@ -229,13 +148,13 @@ export default function VerifyOtpScreen() {
                     key={index}
                     className="w-12 h-14 rounded-xl items-center justify-center border-2"
                     style={{
-                      backgroundColor: boxBgColor,
-                      borderColor: isActive ? activeBorderColor : "transparent",
+                      backgroundColor: theme.card,
+                      borderColor: isActive ? theme.primary : theme.border,
                     }}
                   >
                     <Text
                       className="text-2xl font-bold"
-                      style={{ color: textColor }}
+                      style={{ color: theme.text }}
                     >
                       {digit}
                     </Text>
@@ -268,9 +187,7 @@ export default function VerifyOtpScreen() {
               <Pressable onPress={handleResendCode} className="px-4 py-2">
                 <Text
                   className="text-sm font-semibold"
-                  style={{
-                    color: isDark ? "hsl(142, 70%, 54%)" : "hsl(147, 75%, 33%)",
-                  }}
+                  style={{ color: theme.primary }}
                 >
                   Didn't receive the code? Resend
                 </Text>

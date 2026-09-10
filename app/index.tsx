@@ -1,13 +1,5 @@
-import { useRouter } from "expo-router";
-import { useEffect } from "react";
+import { Redirect } from "expo-router";
 
 export default function RootRedirect() {
-  const router = useRouter();
-
-  useEffect(() => {
-    // This will be handled by the RootLayoutNav component
-    router.replace("(auth)/login" as any);
-  }, []);
-
-  return null;
+  return <Redirect href="/(auth)/login" />;
 }
