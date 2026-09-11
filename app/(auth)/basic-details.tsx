@@ -16,6 +16,7 @@ import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
 import { Input } from "../../components/ui/Input";
 import { useAppTheme } from "../../hooks/useAppTheme";
+import { api } from "../../services/api";
 
 export default function BasicDetailsScreen() {
   const router = useRouter();
@@ -26,16 +27,22 @@ export default function BasicDetailsScreen() {
   const [lastName, setLastName] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleSaveDetails = () => {
+  const handleSaveDetails = async () => {
     Keyboard.dismiss();
     setLoading(true);
 
-    setTimeout(() => {
-      setLoading(false);
+    try {
+      // Send data to Backend API
+      await api.completeProfile(phone, firstName.trim(), lastName.trim());
+
       router.replace(
         `/(home)?phone=${phone}&name=${encodeURIComponent(firstName.trim())}&lastName=${encodeURIComponent(lastName.trim())}` as any,
       );
-    }, 300);
+    } catch (error) {
+      console.error("Failed to save profile", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

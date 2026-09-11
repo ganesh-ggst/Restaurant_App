@@ -56,6 +56,52 @@ export const MOCK_USER = [
   },
 ];
 
+export const MOCK_ORDERS = [
+  {
+    id: "ORD-9823",
+    date: "Today, 1:45 PM",
+    status: "Preparing",
+    total: "₹429",
+    isActive: true,
+    items: [
+      {
+        id: 1,
+        quantity: 1,
+        name: "Special Chicken Dum Biryani",
+        price: "₹319",
+      },
+      { id: 4, quantity: 2, name: "Garlic Naan", price: "₹55" },
+    ],
+  },
+  {
+    id: "ORD-9710",
+    date: "Aug 12, 8:30 PM",
+    status: "Delivered",
+    total: "₹1,127",
+    isActive: false,
+    items: [
+      { id: 3, quantity: 2, name: "Paneer Butter Masala", price: "₹289" },
+      { id: 2, quantity: 1, name: "Tandoori Platter Full", price: "₹549" },
+    ],
+  },
+  {
+    id: "ORD-9654",
+    date: "Aug 02, 1:15 PM",
+    status: "Delivered",
+    total: "₹418",
+    isActive: false,
+    items: [
+      {
+        id: 1,
+        quantity: 1,
+        name: "Special Chicken Dum Biryani",
+        price: "₹319",
+      },
+      { id: 5, quantity: 1, name: "Gulab Jamun", price: "₹99" },
+    ],
+  },
+];
+
 export const FEATURED_CONTENT = {
   type: "video",
 
