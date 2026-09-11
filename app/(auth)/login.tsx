@@ -16,6 +16,7 @@ import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
 import { Input } from "../../components/ui/Input";
 import { useAppTheme } from "../../hooks/useAppTheme";
+import { api } from "../../services/api";
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -52,21 +53,22 @@ export default function LoginScreen() {
     setError("");
 
     const fullPhoneNumber = `+91${phone}`;
-    const fallbackOtp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    console.log(`\n==========================================`);
-    console.log(`📲 DEV OTP FOR ${fullPhoneNumber}: ${fallbackOtp}`);
-    console.log(`==========================================\n`);
+    try {
+      // 1. Tell backend to send OTP. The frontend doesn't know what it is.
+      await api.sendOtp(fullPhoneNumber);
 
-    router.push(
-      `/(auth)/verify-otp?phone=${fullPhoneNumber}&fallbackOtp=${fallbackOtp}` as any,
-    );
-    setLoading(false);
+      // 2. Route to verification screen with ONLY the phone number
+      router.push(`/(auth)/verify-otp?phone=${fullPhoneNumber}` as any);
+    } catch (err) {
+      setError("Failed to send OTP. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSkip = () => {
     const guestPhone = "+910000000000";
-    // Passing isGuest=true so the profile knows to show Guest
     router.replace(`/(home)?phone=${guestPhone}&isGuest=true` as any);
   };
 

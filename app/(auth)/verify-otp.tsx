@@ -14,24 +14,19 @@ import Animated, { FadeIn, FadeOut, Layout } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Button } from "../../components/ui/Button";
-import { MOCK_USER } from "../../constants/mockData";
 import { useAppTheme } from "../../hooks/useAppTheme";
+import { api } from "../../services/api";
 
 export default function VerifyOtpScreen() {
   const router = useRouter();
   const theme = useAppTheme();
 
-  const { phone, fallbackOtp } = useLocalSearchParams<{
-    phone: string;
-    fallbackOtp?: string;
-  }>();
+  // Only receiving the phone number from the previous screen
+  const { phone } = useLocalSearchParams<{ phone: string }>();
 
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
-  const [activeFallback, setActiveFallback] = useState<string | undefined>(
-    fallbackOtp,
-  );
 
   const inputRef = useRef<TextInput>(null);
 
@@ -41,41 +36,57 @@ export default function VerifyOtpScreen() {
     }
   }, [code]);
 
-  const handleVerifyCode = (verificationCode: string) => {
+  const handleVerifyCode = async (verificationCode: string) => {
     setLoading(true);
     setError("");
+    Keyboard.dismiss();
 
-    if (activeFallback && verificationCode === activeFallback) {
-      Keyboard.dismiss();
-      setLoading(false);
+    try {
+      // 2. Validate OTP & Get JWT + Role entirely from Backend
+      const response: any = await api.verifyOtp(phone, verificationCode);
 
-      // Check if user exists in the MOCK_USER array with role === "user"
-      const isExistingUser = MOCK_USER.some(
-        (u: any) => u.phone_number === phone && u.role === "user",
-      );
+      // ✅ Authentication Success
+      const { token, user } = response;
 
-      if (isExistingUser) {
-        router.replace(`/(home)?phone=${phone}` as any);
-      } else {
+      // TODO: Save JWT token to SecureStore/AsyncStorage here
+      console.log("[AUTH] Received JWT:", token);
+
+      // 3. Routing Logic based on Status and Role
+      if (user.isNewUser) {
+        // Force new users to complete their profile
         router.replace(`/(auth)/basic-details?phone=${phone}` as any);
+      } else {
+        // Existing User: Route based on Role
+        switch (user.role) {
+          case "admin":
+            console.log("Routing to Admin Dash (Coming Soon)");
+            break;
+          case "manager":
+            console.log("Routing to Manager Dash (Coming Soon)");
+            break;
+          case "waiter":
+            console.log("Routing to Waiter Dash (Coming Soon)");
+            break;
+          case "user":
+          default:
+            router.replace(`/(home)?phone=${phone}` as any);
+            break;
+        }
       }
-      return;
+    } catch (err: any) {
+      setError(err.message || "Invalid code. Please try again.");
+      setTimeout(() => inputRef.current?.focus(), 100);
+    } finally {
+      setLoading(false);
     }
-
-    setError("Invalid code. Please try again.");
-    setLoading(false);
-    setTimeout(() => inputRef.current?.focus(), 100);
   };
 
-  const handleResendCode = () => {
-    const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
-    console.log(`\n==========================================`);
-    console.log(`📲 DEV OTP FOR ${phone}: ${newOtp} (RESENT)`);
-    console.log(`==========================================\n`);
-
-    setActiveFallback(newOtp);
+  const handleResendCode = async () => {
     setCode("");
     setError("");
+
+    // Call backend to resend. The frontend handles no generation.
+    await api.sendOtp(phone);
     inputRef.current?.focus();
   };
 
