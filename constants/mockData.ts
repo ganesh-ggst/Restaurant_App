@@ -1,9 +1,12 @@
 import {
+  Bike,
   Croissant,
   Flame,
   IceCreamBowl,
+  ShoppingBag,
   Soup,
   Utensils,
+  UtensilsCrossed,
 } from "lucide-react-native";
 
 export const RESTAURANT_NAME = "Foodie Verse";
@@ -53,6 +56,55 @@ export const MOCK_USER = [
     role: "waiter",
     createdAt: "2026-09-09T06:14:29.139Z",
     updatedAt: "2026-09-09T06:14:29.139Z",
+  },
+];
+
+export const CELEBRATION_EMOJIS = ["🎉", "🌸", "⭐", "🎊", "💸", "🎈", "🎀"];
+
+export const TAX_DETAILS = {
+  deliveryDistance: "2.4 km",
+  baseDeliveryFee: 35,
+  packagingCharge: 15,
+  platformFee: 5,
+  gstRate: 0.05, // 5% GST
+};
+
+export const STORE_DETAILS = {
+  waiter: {
+    name: "Rahul Sharma",
+    rating: 4.8,
+    eta: "2 mins",
+  },
+  wifi: {
+    network: "FoodieVerse_5G",
+    password: "foodie@dine",
+  },
+};
+
+export const ORDER_MODES = [
+  {
+    id: "Delivery",
+    title: "Delivery",
+    subtitle: "To your door",
+    icon: Bike,
+    color: "#3B82F6",
+    bg: "rgba(59, 130, 246, 0.15)",
+  },
+  {
+    id: "Dine-in",
+    title: "Dine-in",
+    subtitle: "Eat at store",
+    icon: UtensilsCrossed,
+    color: "#EA580C",
+    bg: "rgba(234, 88, 12, 0.15)",
+  },
+  {
+    id: "Takeaway",
+    title: "Takeaway",
+    subtitle: "Pick up order",
+    icon: ShoppingBag,
+    color: "#059669",
+    bg: "rgba(5, 150, 105, 0.15)",
   },
 ];
 
@@ -253,15 +305,6 @@ export const AVAILABLE_COUPONS = [
   },
 ];
 
-// --- ADD THIS TO THE BOTTOM OF YOUR mockData.ts ---
-export const TAX_DETAILS = {
-  packagingCharge: 23.81,
-  platformFee: 17.98,
-  gstRate: 0.05, // 5% Standard Restaurant GST
-  deliveryDistance: "2.1 kms",
-  baseDeliveryFee: 38,
-};
-
 export const ALL_OFFERS = [
   {
     id: 1,
@@ -345,6 +388,7 @@ export const FOOD_ITEMS = [
     description:
       "Soft paneer cubes cooked in a rich, creamy tomato gravy with butter.",
     gallery: [
+      "https://images.unsplash.com/photo-1645177628172-a94c1f96e6db?auto=format&fit=crop&w=800&q=80",
       "https://images.unsplash.com/photo-1645177628172-a94c1f96e6db?auto=format&fit=crop&w=800&q=80",
     ],
     category: "Curries", // <-- Added category

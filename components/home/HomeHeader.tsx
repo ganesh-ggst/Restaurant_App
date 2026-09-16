@@ -10,6 +10,7 @@ import {
   Search,
   ShoppingBag,
   Store,
+  UtensilsCrossed,
   Wifi,
 } from "lucide-react-native";
 import { memo, useEffect, useState } from "react";
@@ -49,6 +50,12 @@ export const HomeHeader = memo(
     theme,
     orderMode,
     setOrderMode,
+    onOpenScanner,
+    onCallWaiter,
+    onRequestWater,
+    onRequestWifi,
+    onRequestBill,
+    onOrderTakeaway,
     searchQuery,
     setSearchQuery,
     isListening,
@@ -57,13 +64,15 @@ export const HomeHeader = memo(
     setIsVegOnly,
     player,
     router,
+    activeTable,
+    timeLeft,
+    confirmedOrdersLength = 0,
+    isTimerRunning = false,
   }: any) => {
     const [placeholderIndex, setPlaceholderIndex] = useState(0);
     const placeholderOpacity = useSharedValue(1);
-
     const [greetingIndex, setGreetingIndex] = useState(0);
     const greetingOpacity = useSharedValue(1);
-
     const titleScale = useSharedValue(1);
     const micPulse = useSharedValue(1);
 
@@ -128,6 +137,10 @@ export const HomeHeader = memo(
     const animatedMicStyle = useAnimatedStyle(() => ({
       transform: [{ scale: micPulse.value }],
     }));
+
+    const formattedTime = timeLeft
+      ? `${Math.floor(timeLeft / 60)}:${(timeLeft % 60).toString().padStart(2, "0")}`
+      : null;
 
     const renderOffer = ({ item }: any) => (
       <Pressable
@@ -217,39 +230,45 @@ export const HomeHeader = memo(
           </Animated.View>
 
           <Pressable
-            onPress={() =>
-              setOrderMode(
-                orderMode === "Delivery" ? "Dine-in/Takeaway" : "Delivery",
-              )
-            }
+            onPress={() => {
+              if (activeTable && (isTimerRunning || confirmedOrdersLength > 0))
+                return;
+              setOrderMode();
+            }}
             className="flex-row items-center justify-center rounded-xl px-3 py-1.5 border shadow-sm"
             style={{
-              backgroundColor:
-                orderMode === "Delivery" ? theme.primary : theme.card,
-              borderColor:
-                orderMode === "Delivery" ? theme.primary : theme.border,
+              backgroundColor: theme.primary,
+              borderColor: theme.primary,
+              opacity:
+                activeTable && (isTimerRunning || confirmedOrdersLength > 0)
+                  ? 0.5
+                  : 1,
             }}
           >
-            {orderMode === "Delivery" ? (
-              <Bike
+            {orderMode === "Takeaway" ? (
+              <ShoppingBag
+                size={16}
+                color="#fff"
+                strokeWidth={2.5}
+                style={{ marginRight: 6 }}
+              />
+            ) : orderMode === "Dine-in" ? (
+              <Store
                 size={16}
                 color="#fff"
                 strokeWidth={2.5}
                 style={{ marginRight: 6 }}
               />
             ) : (
-              <Store
+              <Bike
                 size={16}
-                color={theme.muted}
+                color="#fff"
                 strokeWidth={2.5}
                 style={{ marginRight: 6 }}
               />
             )}
-            <Text
-              className="font-black text-xs uppercase tracking-wider"
-              style={{ color: orderMode === "Delivery" ? "#fff" : theme.muted }}
-            >
-              {orderMode === "Delivery" ? "Delivery" : "Dine-In"}
+            <Text className="font-black text-xs uppercase tracking-wider text-white">
+              {orderMode}
             </Text>
           </Pressable>
         </View>
@@ -354,7 +373,8 @@ export const HomeHeader = memo(
           </View>
         </View>
 
-        {orderMode === "Delivery" && !searchQuery ? (
+        {(orderMode === "Delivery" || orderMode === "Takeaway") &&
+        !searchQuery ? (
           <Animated.View
             entering={FadeIn.duration(300)}
             exiting={FadeOut.duration(200)}
@@ -433,41 +453,92 @@ export const HomeHeader = memo(
           </Animated.View>
         ) : null}
 
-        {orderMode !== "Delivery" && !searchQuery ? (
+        {/* STORE UI: Show ONLY for Dine-In */}
+        {orderMode === "Dine-in" && !searchQuery ? (
           <Animated.View
             entering={FadeIn.duration(300)}
             exiting={FadeOut.duration(200)}
           >
             <View className="px-4 mb-6">
-              <Pressable
-                className="w-full rounded-[24px] overflow-hidden shadow-sm border p-6 flex-row items-center justify-between"
-                style={{
-                  backgroundColor: theme.primary,
-                  borderColor: theme.border,
-                }}
-              >
-                <View className="flex-1">
-                  <View className="flex-row items-center mb-2">
-                    <View className="bg-white/20 px-2 py-1 rounded-md mr-2">
-                      <Text className="text-[10px] font-black text-white uppercase tracking-wider">
-                        Step 1
+              {activeTable ? (
+                <View
+                  className="w-full rounded-[24px] shadow-sm border p-6 flex-row items-center justify-between"
+                  style={{
+                    backgroundColor: theme.primary,
+                    borderColor: theme.border,
+                  }}
+                >
+                  <View className="flex-1">
+                    <View className="flex-row items-center mb-2">
+                      <View className="bg-white/20 px-2 py-1 rounded-md mr-2">
+                        <Text className="text-[10px] font-black text-white uppercase tracking-wider">
+                          Connected
+                        </Text>
+                      </View>
+                      <Text className="text-sm font-bold text-white/90 uppercase tracking-widest">
+                        Table {activeTable}{" "}
+                        {formattedTime ? ` • ${formattedTime}` : ""}
                       </Text>
                     </View>
-                    <Text className="text-sm font-bold text-white/90 uppercase tracking-widest">
-                      Order to Table
+                    <Text className="text-2xl font-black text-white tracking-tight leading-tight">
+                      Ready to Order!
+                    </Text>
+                    <Text className="text-sm font-semibold text-white/80 mt-1 mb-3">
+                      Your food will be served directly to your table.
+                    </Text>
+
+                    {/* FIX: Hide the Change Table button entirely if order is active */}
+                    {!(isTimerRunning || confirmedOrdersLength > 0) && (
+                      <Pressable
+                        onPress={onOpenScanner}
+                        className="bg-white/20 self-start px-4 py-2 rounded-xl"
+                      >
+                        <Text className="text-white font-bold text-xs">
+                          Change Table
+                        </Text>
+                      </Pressable>
+                    )}
+                  </View>
+                  <View className="h-16 w-16 bg-white rounded-2xl items-center justify-center shadow-lg transform rotate-3 ml-2">
+                    <UtensilsCrossed
+                      size={32}
+                      color={theme.primary}
+                      strokeWidth={2}
+                    />
+                  </View>
+                </View>
+              ) : (
+                <Pressable
+                  onPress={onOpenScanner}
+                  className="w-full rounded-[24px] overflow-hidden shadow-sm border p-6 flex-row items-center justify-between"
+                  style={{
+                    backgroundColor: theme.primary,
+                    borderColor: theme.border,
+                  }}
+                >
+                  <View className="flex-1">
+                    <View className="flex-row items-center mb-2">
+                      <View className="bg-white/20 px-2 py-1 rounded-md mr-2">
+                        <Text className="text-[10px] font-black text-white uppercase tracking-wider">
+                          Step 1
+                        </Text>
+                      </View>
+                      <Text className="text-sm font-bold text-white/90 uppercase tracking-widest">
+                        Order to Table
+                      </Text>
+                    </View>
+                    <Text className="text-2xl font-black text-white tracking-tight leading-tight">
+                      Scan Table QR
+                    </Text>
+                    <Text className="text-sm font-semibold text-white/80 mt-1">
+                      Open digital menu instantly.
                     </Text>
                   </View>
-                  <Text className="text-2xl font-black text-white tracking-tight leading-tight">
-                    Scan Table QR
-                  </Text>
-                  <Text className="text-sm font-semibold text-white/80 mt-1">
-                    Open digital menu instantly.
-                  </Text>
-                </View>
-                <View className="h-16 w-16 bg-white rounded-2xl items-center justify-center shadow-lg transform rotate-3">
-                  <ScanLine size={32} color={theme.primary} strokeWidth={2} />
-                </View>
-              </Pressable>
+                  <View className="h-16 w-16 bg-white rounded-2xl items-center justify-center shadow-lg transform rotate-3 ml-2">
+                    <ScanLine size={32} color={theme.primary} strokeWidth={2} />
+                  </View>
+                </Pressable>
+              )}
             </View>
 
             <View className="px-4 mb-10">
@@ -478,7 +549,7 @@ export const HomeHeader = memo(
                 In-Store Services
               </Text>
               <View className="flex-row justify-between">
-                <Pressable className="items-center">
+                <Pressable className="items-center" onPress={onCallWaiter}>
                   <View
                     className="h-[72px] w-[72px] items-center justify-center rounded-[24px] shadow-sm border mb-2"
                     style={{
@@ -499,7 +570,8 @@ export const HomeHeader = memo(
                     Call Waiter
                   </Text>
                 </Pressable>
-                <Pressable className="items-center">
+
+                <Pressable className="items-center" onPress={onRequestWater}>
                   <View
                     className="h-[72px] w-[72px] items-center justify-center rounded-[24px] shadow-sm border mb-2"
                     style={{
@@ -520,7 +592,8 @@ export const HomeHeader = memo(
                     Water
                   </Text>
                 </Pressable>
-                <Pressable className="items-center">
+
+                <Pressable className="items-center" onPress={onRequestWifi}>
                   <View
                     className="h-[72px] w-[72px] items-center justify-center rounded-[24px] shadow-sm border mb-2"
                     style={{
@@ -537,7 +610,8 @@ export const HomeHeader = memo(
                     Free Wi-Fi
                   </Text>
                 </Pressable>
-                <Pressable className="items-center">
+
+                <Pressable className="items-center" onPress={onRequestBill}>
                   <View
                     className="h-[72px] w-[72px] items-center justify-center rounded-[24px] shadow-sm border mb-2"
                     style={{
@@ -563,6 +637,7 @@ export const HomeHeader = memo(
 
             <View className="px-4 mb-8">
               <Pressable
+                onPress={onOrderTakeaway}
                 className="w-full rounded-[20px] shadow-sm border p-5 flex-row items-center justify-between"
                 style={{
                   backgroundColor: theme.card,
@@ -571,22 +646,20 @@ export const HomeHeader = memo(
               >
                 <View className="flex-row items-center">
                   <View
-                    className="h-12 w-12 rounded-full items-center justify-center border mr-4"
+                    className="h-12 w-12 rounded-full items-center justify-center mb-0"
                     style={{
-                      backgroundColor: theme.isDark
-                        ? "rgba(255,255,255,0.05)"
-                        : "rgba(0,0,0,0.03)",
-                      borderColor: theme.border,
+                      backgroundColor: "rgba(5, 150, 105, 0.15)",
+                      marginRight: 16,
                     }}
                   >
-                    <ShoppingBag size={22} color={theme.text} strokeWidth={2} />
+                    <ShoppingBag size={22} color="#059669" strokeWidth={2} />
                   </View>
                   <View>
                     <Text
                       className="text-lg font-black"
                       style={{ color: theme.text }}
                     >
-                      Order Takeaway
+                      Track Your Order
                     </Text>
                     <Text
                       className="text-xs font-semibold"

@@ -39,9 +39,11 @@ import Animated, {
 
 import {
   AVAILABLE_COUPONS,
+  CELEBRATION_EMOJIS,
   CROSS_SELL_ITEMS,
   DELIVERY_OPTIONS,
   MOCK_ADDRESSES,
+  MOCK_BRANCHES,
   RESTAURANT_NAME,
   TAX_DETAILS,
   TIP_OPTIONS,
@@ -74,14 +76,24 @@ const CelebrationParticle = ({ progress, index, total }: any) => {
     };
   });
 
-  const emojis = ["🎉", "🌸", "⭐", "🎊", "💸", "🎈", "🎀"];
   return (
     <Animated.View
       style={[{ position: "absolute", zIndex: 9999 }, animatedStyle]}
     >
-      <Text style={{ fontSize: 32 }}>{emojis[index % emojis.length]}</Text>
+      <Text style={{ fontSize: 32 }}>
+        {CELEBRATION_EMOJIS[index % CELEBRATION_EMOJIS.length]}
+      </Text>
     </Animated.View>
   );
+};
+
+const getNumericPrice = (priceString: any) => {
+  if (typeof priceString === "number") return priceString;
+  return parseInt(String(priceString).replace(/\D/g, ""), 10) || 0;
+};
+
+const formatPrice = (price: number) => {
+  return Number.isInteger(price) ? price : price.toFixed(2);
 };
 
 export const DeliveryCartModal = memo(
@@ -94,7 +106,11 @@ export const DeliveryCartModal = memo(
     theme,
     insets,
     activeAddress,
+    setActiveAddress,
+    orderMode = "Delivery",
   }: any) => {
+    const isDelivery = orderMode === "Delivery";
+
     // Address State
     const [showAddressModal, setShowAddressModal] = useState(false);
     const [currentAddress, setCurrentAddress] = useState(
@@ -105,7 +121,7 @@ export const DeliveryCartModal = memo(
       if (activeAddress) setCurrentAddress(activeAddress);
     }, [activeAddress]);
 
-    const [activeTab, setActiveTab] = useState("Delivery");
+    const [activeTab, setActiveTab] = useState("Instructions");
     const [selectedDelivery, setSelectedDelivery] = useState(
       DELIVERY_OPTIONS[1].id,
     );
@@ -121,40 +137,40 @@ export const DeliveryCartModal = memo(
     const [couponInput, setCouponInput] = useState("");
     const [couponError, setCouponError] = useState("");
 
-    // BILL DETAILS STATES - Default to closed
+    // BILL DETAILS STATES
     const [isBillExpanded, setIsBillExpanded] = useState(false);
     const [showInlineTip, setShowInlineTip] = useState(false);
     const [activePopover, setActivePopover] = useState<
       "delivery" | "gst" | null
     >(null);
 
+    // FIX: Add state to completely unmount particles when not celebrating
+    const [isCelebrating, setIsCelebrating] = useState(false);
     const celebrationProgress = useSharedValue(0);
 
-    // Reset accordion to closed when modal opens
+    const TABS = isDelivery
+      ? ["Delivery", "Tip", "Instructions"]
+      : ["Instructions"];
+
     useEffect(() => {
       if (visible) {
         setIsBillExpanded(false);
+        setActiveTab(isDelivery ? "Delivery" : "Instructions");
       }
-    }, [visible]);
+    }, [visible, isDelivery]);
 
-    // RESET STATE IF CART EMPTIES
     useEffect(() => {
       if (!cart || cart.length === 0) {
         setTipAmount(0);
         setCustomTipInput("");
         setIsCustomTip(false);
-        setIsBillExpanded(false); // Reset dropdown to closed
-        setSelectedDelivery(DELIVERY_OPTIONS[1].id); // Reset delivery to Standard
+        setIsBillExpanded(false);
+        setSelectedDelivery(DELIVERY_OPTIONS[1].id);
       }
     }, [cart]);
 
     if (!visible) return null;
 
-    // Helper to format exact prices and preserve paise decimals without forcing .00 on integers
-    const formatPrice = (price: number) =>
-      Number.isInteger(price) ? price : price.toFixed(2);
-
-    // --- SAFE CLOSE HANDLER TO PREVENT DISTURBANCES ---
     const handleClose = () => {
       Keyboard.dismiss();
       setActivePopover(null);
@@ -162,60 +178,68 @@ export const DeliveryCartModal = memo(
       onClose();
     };
 
-    // --- SMART BILLING MATHEMATICS ---
     const cartTotal = cart.reduce(
-      (sum: number, item: any) => sum + item.total,
+      (sum: number, item: any) =>
+        sum + (item.total || getNumericPrice(item.price) * item.quantity),
       0,
     );
     const originalItemTotal = cartTotal + Math.floor(cartTotal * 0.2);
 
-    // ₹99 FREE DELIVERY & SELECTED DELIVERY OPTION LOGIC
-    const isFreeDeliveryEligible = cartTotal >= 99;
-    const baseDeliveryFee = TAX_DETAILS.baseDeliveryFee;
+    const isFreeDeliveryEligible = !isDelivery || cartTotal >= 99;
+    const baseDeliveryFee = isDelivery ? TAX_DETAILS.baseDeliveryFee : 0;
     const standardFee = isFreeDeliveryEligible ? 0 : baseDeliveryFee;
 
     const selectedOption = DELIVERY_OPTIONS.find(
       (o) => o.id === selectedDelivery,
     );
-    const optionPrice = selectedOption ? selectedOption.price : 0;
+    const optionPrice = isDelivery && selectedOption ? selectedOption.price : 0;
 
-    // Calculate actual delivery fee taking into account base delivery fee and option offset
-    const actualDeliveryFee = Math.max(0, standardFee + optionPrice);
+    const actualDeliveryFee = isDelivery
+      ? Math.max(0, standardFee + optionPrice)
+      : 0;
     const isFreeDelivery = actualDeliveryFee === 0;
 
-    // Eco discount applied when order was already eligible for free delivery
     const ecoDiscount =
-      isFreeDeliveryEligible && optionPrice < 0 ? Math.abs(optionPrice) : 0;
+      isDelivery && isFreeDeliveryEligible && optionPrice < 0
+        ? Math.abs(optionPrice)
+        : 0;
     const discount = (appliedCoupon ? appliedCoupon.discount : 0) + ecoDiscount;
 
-    // Backend simulated GST and Fees
-    const packagingCharge = TAX_DETAILS.packagingCharge;
+    const packagingCharge =
+      orderMode === "Dine-in" ? 0 : TAX_DETAILS.packagingCharge;
     const platformFee = TAX_DETAILS.platformFee;
     const gstAmount = cartTotal * TAX_DETAILS.gstRate;
     const totalTaxesAndCharges = packagingCharge + platformFee + gstAmount;
 
-    // Final calculations
     const finalPayable =
       cartTotal +
       actualDeliveryFee +
       totalTaxesAndCharges +
-      tipAmount -
+      (isDelivery ? tipAmount : 0) -
       discount;
 
     const totalSavings =
       originalItemTotal -
       cartTotal +
       discount +
-      (isFreeDeliveryEligible ? baseDeliveryFee : 0) +
-      (!isFreeDeliveryEligible && optionPrice < 0 ? Math.abs(optionPrice) : 0);
+      (isDelivery && isFreeDeliveryEligible ? baseDeliveryFee : 0) +
+      (isDelivery && !isFreeDeliveryEligible && optionPrice < 0
+        ? Math.abs(optionPrice)
+        : 0);
 
     const originalPayable = finalPayable + totalSavings;
 
+    // FIX: Safely trigger celebration and cleanly unmount after it finishes
     const triggerCelebration = () => {
+      celebrationProgress.value = 0; // Reset
+      setIsCelebrating(true);
       celebrationProgress.value = withSequence(
         withTiming(1, { duration: 3000 }),
         withTiming(0, { duration: 0 }),
       );
+      setTimeout(() => {
+        setIsCelebrating(false);
+      }, 3100);
     };
 
     const handleApplyCoupon = (coupon: any) => {
@@ -248,9 +272,6 @@ export const DeliveryCartModal = memo(
       setCouponError("");
     };
 
-    const getNumericPrice = (priceString: string) =>
-      parseInt(priceString.replace(/\D/g, ""), 10);
-
     const handleSaveInstructions = () => {
       Keyboard.dismiss();
       setInstructionStatus("Instructions saved securely!");
@@ -267,24 +288,27 @@ export const DeliveryCartModal = memo(
         <View
           style={{ backgroundColor: theme.bg, paddingTop: insets.top, flex: 1 }}
         >
-          <View
-            style={{
-              position: "absolute",
-              top: height * 0.35,
-              left: width * 0.45,
-              zIndex: 9999,
-            }}
-            pointerEvents="none"
-          >
-            {Array.from({ length: 45 }).map((_, i) => (
-              <CelebrationParticle
-                key={i}
-                index={i}
-                total={45}
-                progress={celebrationProgress}
-              />
-            ))}
-          </View>
+          {/* FIX: Emojis ONLY mount to screen while actively celebrating */}
+          {isCelebrating && (
+            <View
+              style={{
+                position: "absolute",
+                top: height * 0.35,
+                left: width * 0.45,
+                zIndex: 9999,
+              }}
+              pointerEvents="none"
+            >
+              {Array.from({ length: 45 }).map((_, i) => (
+                <CelebrationParticle
+                  key={i}
+                  index={i}
+                  total={45}
+                  progress={celebrationProgress}
+                />
+              ))}
+            </View>
+          )}
 
           <View
             style={{
@@ -293,7 +317,6 @@ export const DeliveryCartModal = memo(
             }}
             className="flex-row items-center px-4 py-4 border-b z-10 shadow-sm"
           >
-            {/* Added hitSlop to ensure taps slightly off-center still close the modal and don't trigger the address selector */}
             <Pressable
               onPress={handleClose}
               className="mr-3 p-1"
@@ -330,7 +353,9 @@ export const DeliveryCartModal = memo(
                   className="text-xs font-bold mx-1.5 max-w-[200px]"
                   numberOfLines={1}
                 >
-                  {currentAddress?.type} | {currentAddress?.address}
+                  {isDelivery
+                    ? `${currentAddress?.type} | ${currentAddress?.address}`
+                    : `Pickup from ${currentAddress?.name || "Counter"}`}
                 </Text>
                 <ChevronDown size={14} color={theme.primary} />
               </View>
@@ -350,7 +375,7 @@ export const DeliveryCartModal = memo(
               >
                 <Sparkles size={16} color="#059669" />
                 <Text className="text-emerald-700 font-bold ml-2">
-                  ₹{discount} saved! On this order
+                  ₹{formatPrice(discount)} saved! On this order
                 </Text>
               </Animated.View>
             )}
@@ -364,122 +389,123 @@ export const DeliveryCartModal = memo(
                 }}
                 className="rounded-[24px] border p-4 mb-6 shadow-sm"
               >
-                {cart.map((item: any, index: number) => (
-                  <View
-                    key={`${item.id}-${index}`}
-                    style={{
-                      borderBottomWidth: index === cart.length - 1 ? 0 : 1,
-                      borderBottomColor: theme.border,
-                    }}
-                    className="py-4 flex-row items-start justify-between"
-                  >
-                    <View className="flex-1 mr-4">
-                      <View className="flex-row items-start">
-                        <View
-                          style={{
-                            borderColor: item.isVeg ? "#16A34A" : "#DC2626",
-                          }}
-                          className="p-[2px] border rounded mr-2 mt-1"
-                        >
+                {cart.map((item: any, index: number) => {
+                  const itemPriceNumber = getNumericPrice(item.price);
+                  const itemTotal =
+                    item.total || itemPriceNumber * item.quantity;
+
+                  return (
+                    <View
+                      key={`${item.id}-${index}`}
+                      style={{
+                        borderBottomWidth: index === cart.length - 1 ? 0 : 1,
+                        borderBottomColor: theme.border,
+                      }}
+                      className="py-4 flex-row items-start justify-between"
+                    >
+                      <View className="flex-1 mr-4">
+                        <View className="flex-row items-start">
                           <View
                             style={{
-                              backgroundColor: item.isVeg
-                                ? "#16A34A"
-                                : "#DC2626",
+                              borderColor: item.isVeg ? "#16A34A" : "#DC2626",
                             }}
-                            className="w-1.5 h-1.5 rounded-full"
-                          />
-                        </View>
-                        <View>
-                          <Text
-                            style={{ color: theme.text }}
-                            className="text-base font-bold"
+                            className="p-[2px] border rounded mr-2 mt-1"
                           >
-                            {item.name}
-                          </Text>
-                          <Text
-                            style={{ color: theme.muted }}
-                            className="text-xs font-semibold mt-1"
-                          >
-                            {item.price}
-                          </Text>
-                          {item.addons?.length > 0 && (
+                            <View
+                              style={{
+                                backgroundColor: item.isVeg
+                                  ? "#16A34A"
+                                  : "#DC2626",
+                              }}
+                              className="w-1.5 h-1.5 rounded-full"
+                            />
+                          </View>
+                          <View>
+                            <Text
+                              style={{ color: theme.text }}
+                              className="text-base font-bold"
+                            >
+                              {item.name}
+                            </Text>
                             <Text
                               style={{ color: theme.muted }}
-                              className="text-xs mt-1"
+                              className="text-xs font-semibold mt-1"
                             >
-                              Customized
+                              ₹{formatPrice(itemPriceNumber)}
                             </Text>
-                          )}
+                            {item.addons?.length > 0 && (
+                              <Text
+                                style={{ color: theme.muted }}
+                                className="text-xs mt-1"
+                              >
+                                Customized
+                              </Text>
+                            )}
+                          </View>
                         </View>
                       </View>
-                    </View>
 
-                    <View className="items-end">
-                      <View
-                        style={{
-                          backgroundColor: theme.isDark
-                            ? "rgba(255,255,255,0.05)"
-                            : "#f3f4f6",
-                          borderColor: theme.border,
-                        }}
-                        className="flex-row items-center rounded-lg border"
-                      >
-                        <Pressable
-                          onPress={() => {
-                            if (item.quantity > 1) {
-                              const unitPrice = item.total / item.quantity;
-                              onIncrement(
-                                item,
-                                -1,
-                                item.addons || [],
-                                -unitPrice,
-                              );
-                            } else {
-                              onDecrement(item.id);
-                            }
+                      <View className="items-end">
+                        <View
+                          style={{
+                            backgroundColor: theme.isDark
+                              ? "rgba(255,255,255,0.05)"
+                              : "#f3f4f6",
+                            borderColor: theme.border,
                           }}
-                          className="p-2"
+                          className="flex-row items-center rounded-lg border"
                         >
-                          <Minus
-                            size={16}
-                            color={theme.primary}
-                            strokeWidth={3}
-                          />
-                        </Pressable>
+                          <Pressable
+                            onPress={() => {
+                              if (item.quantity > 1) {
+                                const unitPrice = itemTotal / item.quantity;
+                                onIncrement(
+                                  item,
+                                  -1,
+                                  item.addons || [],
+                                  -unitPrice,
+                                );
+                              } else {
+                                onDecrement(item.id);
+                              }
+                            }}
+                            className="p-2"
+                          >
+                            <Minus
+                              size={16}
+                              color={theme.primary}
+                              strokeWidth={3}
+                            />
+                          </Pressable>
+                          <Text
+                            style={{ color: theme.text }}
+                            className="font-black px-2"
+                          >
+                            {item.quantity}
+                          </Text>
+                          <Pressable
+                            onPress={() =>
+                              onIncrement(item, 1, item.addons, itemPriceNumber)
+                            }
+                            className="p-2"
+                          >
+                            <Plus
+                              size={16}
+                              color={theme.primary}
+                              strokeWidth={3}
+                            />
+                          </Pressable>
+                        </View>
                         <Text
                           style={{ color: theme.text }}
-                          className="font-black px-2"
+                          className="text-sm font-black mt-2"
                         >
-                          {item.quantity}
+                          ₹{formatPrice(itemTotal)}
                         </Text>
-                        <Pressable
-                          onPress={() =>
-                            onIncrement(
-                              item,
-                              1,
-                              item.addons,
-                              getNumericPrice(item.price),
-                            )
-                          }
-                          className="p-2"
-                        >
-                          <Plus
-                            size={16}
-                            color={theme.primary}
-                            strokeWidth={3}
-                          />
-                        </Pressable>
                       </View>
-                      <Text
-                        style={{ color: theme.text }}
-                        className="text-sm font-black mt-2"
-                      >
-                        ₹{item.total}
-                      </Text>
                     </View>
-                  </View>
-                ))}
+                  );
+                })}
 
                 <View
                   className="flex-row items-center justify-between mt-2 pt-4 border-t"
@@ -779,7 +805,7 @@ export const DeliveryCartModal = memo(
                   }}
                   className="px-3 py-3 border-b flex-row items-center justify-between"
                 >
-                  {["Delivery", "Tip", "Instructions"].map((tab) => {
+                  {TABS.map((tab) => {
                     const isActive = activeTab === tab;
                     return (
                       <Pressable
@@ -806,7 +832,7 @@ export const DeliveryCartModal = memo(
                   })}
                 </View>
 
-                {activeTab === "Delivery" && (
+                {activeTab === "Delivery" && isDelivery && (
                   <View>
                     {DELIVERY_OPTIONS.map((opt, index) => {
                       const isSelected = selectedDelivery === opt.id;
@@ -843,7 +869,7 @@ export const DeliveryCartModal = memo(
                                   style={{ color: theme.text }}
                                   className="font-semibold text-xs ml-2"
                                 >
-                                  | Pay ₹{opt.price} extra
+                                  | Pay ₹{formatPrice(opt.price)} extra
                                 </Text>
                               )}
                               {opt.price < 0 && (
@@ -851,7 +877,7 @@ export const DeliveryCartModal = memo(
                                   style={{ color: theme.primary }}
                                   className="font-semibold text-xs ml-2"
                                 >
-                                  | Save ₹{Math.abs(opt.price)}
+                                  | Save ₹{formatPrice(Math.abs(opt.price))}
                                 </Text>
                               )}
                             </View>
@@ -876,7 +902,7 @@ export const DeliveryCartModal = memo(
                   </View>
                 )}
 
-                {activeTab === "Tip" && (
+                {activeTab === "Tip" && isDelivery && (
                   <View className="p-5">
                     <Text
                       style={{ color: theme.text }}
@@ -1052,7 +1078,7 @@ export const DeliveryCartModal = memo(
                     >
                       <TextInput
                         multiline
-                        placeholder="e.g. Leave at the door, don't ring the bell..."
+                        placeholder="e.g. Extra spicy, specific packaging requests..."
                         placeholderTextColor={theme.muted}
                         value={instructions}
                         onChangeText={setInstructions}
@@ -1143,7 +1169,7 @@ export const DeliveryCartModal = memo(
                 )}
 
                 {/* Displayed directly below Header when Collapsed */}
-                {!isBillExpanded && isFreeDeliveryEligible && (
+                {!isBillExpanded && isFreeDeliveryEligible && isDelivery && (
                   <View
                     className="bg-gray-100 rounded-xl px-4 py-2.5 mb-2 mt-2 relative"
                     style={{
@@ -1170,7 +1196,7 @@ export const DeliveryCartModal = memo(
                 )}
 
                 {/* Displayed directly below Header when Collapsed */}
-                {!isBillExpanded && !isFreeDeliveryEligible && (
+                {!isBillExpanded && !isFreeDeliveryEligible && isDelivery && (
                   <View className="mb-2 mt-2 px-1">
                     <Text
                       style={{ color: theme.primary }}
@@ -1218,155 +1244,160 @@ export const DeliveryCartModal = memo(
                       </View>
                     </View>
 
-                    {/* Delivery Fee Clickable Hover Row */}
-                    <View
-                      style={{
-                        zIndex: activePopover === "delivery" ? 100 : 1,
-                        elevation: activePopover === "delivery" ? 10 : 0,
-                      }}
-                    >
-                      {activePopover === "delivery" && (
-                        <>
-                          <Pressable
-                            onPress={() => setActivePopover(null)}
-                            style={{
-                              position: "absolute",
-                              width: width * 3,
-                              height: height * 3,
-                              top: -height,
-                              left: -width,
-                              zIndex: 40,
-                            }}
-                          />
-                          <Animated.View
-                            entering={FadeIn.duration(200)}
-                            exiting={FadeOut.duration(200)}
-                            className="absolute bottom-[100%] mb-2 left-0 right-0 rounded-[16px] p-4 shadow-xl border"
-                            style={{
-                              backgroundColor: theme.bg,
-                              borderColor: theme.border,
-                              zIndex: 101,
-                              elevation: 15,
-                            }}
-                          >
-                            <Text
-                              style={{ color: theme.text }}
-                              className="font-black text-[14px] mb-3"
-                            >
-                              Delivery fee breakup for this order
-                            </Text>
-                            <View className="flex-row justify-between items-center">
-                              <Text
-                                style={{ color: theme.muted }}
-                                className="font-semibold text-[13px]"
-                              >
-                                {selectedOption?.title || "Standard Fee"}
-                              </Text>
-                              <View className="flex-row items-center">
-                                {isFreeDeliveryEligible && (
-                                  <Text
-                                    style={{ color: theme.muted }}
-                                    className="font-semibold line-through mr-2 text-[13px]"
-                                  >
-                                    ₹{formatPrice(TAX_DETAILS.baseDeliveryFee)}
-                                  </Text>
-                                )}
-                                <Text
-                                  className={
-                                    isFreeDelivery
-                                      ? "text-emerald-600 font-bold text-[13px]"
-                                      : "font-bold text-[13px]"
-                                  }
-                                  style={
-                                    !isFreeDelivery ? { color: theme.text } : {}
-                                  }
-                                >
-                                  {isFreeDelivery
-                                    ? "FREE"
-                                    : `₹${formatPrice(actualDeliveryFee)}`}
-                                </Text>
-                              </View>
-                            </View>
-                            <View
-                              className="absolute -bottom-2 left-8 w-4 h-4 rotate-45 border-b border-r"
+                    {/* Delivery Fee Clickable Hover Row (Only Delivery) */}
+                    {isDelivery && (
+                      <View
+                        style={{
+                          zIndex: activePopover === "delivery" ? 100 : 1,
+                          elevation: activePopover === "delivery" ? 10 : 0,
+                        }}
+                      >
+                        {activePopover === "delivery" && (
+                          <>
+                            <Pressable
+                              onPress={() => setActivePopover(null)}
+                              style={{
+                                position: "absolute",
+                                width: width * 3,
+                                height: height * 3,
+                                top: -height,
+                                left: -width,
+                                zIndex: 40,
+                              }}
+                            />
+                            <Animated.View
+                              entering={FadeIn.duration(200)}
+                              exiting={FadeOut.duration(200)}
+                              className="absolute bottom-[100%] mb-2 left-0 right-0 rounded-[16px] p-4 shadow-xl border"
                               style={{
                                 backgroundColor: theme.bg,
                                 borderColor: theme.border,
+                                zIndex: 101,
+                                elevation: 15,
                               }}
-                            />
-                          </Animated.View>
-                        </>
-                      )}
-
-                      <Pressable
-                        onPress={() =>
-                          setActivePopover(
-                            activePopover === "delivery" ? null : "delivery",
-                          )
-                        }
-                        className="mb-4 relative"
-                      >
-                        <View className="flex-row justify-between mb-1">
-                          <View
-                            style={{
-                              borderBottomWidth: 1,
-                              borderStyle: "dashed",
-                              borderColor: theme.primary,
-                              alignSelf: "flex-start",
-                              paddingBottom: 1,
-                            }}
-                          >
-                            <Text
-                              style={{ color: theme.muted, lineHeight: 18 }}
-                              className="font-semibold text-[14px]"
                             >
-                              Delivery Fee | {TAX_DETAILS.deliveryDistance}
-                            </Text>
-                          </View>
-
-                          <View className="flex-row">
-                            {isFreeDeliveryEligible && (
                               <Text
-                                style={{ color: theme.muted }}
-                                className="font-semibold line-through mr-2"
+                                style={{ color: theme.text }}
+                                className="font-black text-[14px] mb-3"
                               >
-                                ₹{formatPrice(TAX_DETAILS.baseDeliveryFee)}
+                                Delivery fee breakup for this order
                               </Text>
-                            )}
-                            <Text
-                              className={
-                                isFreeDelivery
-                                  ? "text-emerald-600 font-bold"
-                                  : "font-semibold"
-                              }
-                              style={
-                                !isFreeDelivery ? { color: theme.text } : {}
-                              }
-                            >
-                              {isFreeDelivery
-                                ? "FREE"
-                                : `₹${formatPrice(actualDeliveryFee)}`}
-                            </Text>
-                          </View>
-                        </View>
-                        {isFreeDeliveryEligible ? (
-                          <Text
-                            style={{ color: theme.muted }}
-                            className="font-semibold text-[12px] mt-0.5"
-                          >
-                            FREE Delivery on your order!
-                          </Text>
-                        ) : (
-                          <Text
-                            style={{ color: theme.primary }}
-                            className="font-semibold text-[12px] mt-0.5"
-                          >
-                            Add ₹{formatPrice(99 - cartTotal)} more to get FREE
-                            Delivery!
-                          </Text>
+                              <View className="flex-row justify-between items-center">
+                                <Text
+                                  style={{ color: theme.muted }}
+                                  className="font-semibold text-[13px]"
+                                >
+                                  {selectedOption?.title || "Standard Fee"}
+                                </Text>
+                                <View className="flex-row items-center">
+                                  {isFreeDeliveryEligible && (
+                                    <Text
+                                      style={{ color: theme.muted }}
+                                      className="font-semibold line-through mr-2 text-[13px]"
+                                    >
+                                      ₹
+                                      {formatPrice(TAX_DETAILS.baseDeliveryFee)}
+                                    </Text>
+                                  )}
+                                  <Text
+                                    className={
+                                      isFreeDelivery
+                                        ? "text-emerald-600 font-bold text-[13px]"
+                                        : "font-bold text-[13px]"
+                                    }
+                                    style={
+                                      !isFreeDelivery
+                                        ? { color: theme.text }
+                                        : {}
+                                    }
+                                  >
+                                    {isFreeDelivery
+                                      ? "FREE"
+                                      : `₹${formatPrice(actualDeliveryFee)}`}
+                                  </Text>
+                                </View>
+                              </View>
+                              <View
+                                className="absolute -bottom-2 left-8 w-4 h-4 rotate-45 border-b border-r"
+                                style={{
+                                  backgroundColor: theme.bg,
+                                  borderColor: theme.border,
+                                }}
+                              />
+                            </Animated.View>
+                          </>
                         )}
-                      </Pressable>
-                    </View>
+
+                        <Pressable
+                          onPress={() =>
+                            setActivePopover(
+                              activePopover === "delivery" ? null : "delivery",
+                            )
+                          }
+                          className="mb-4 relative"
+                        >
+                          <View className="flex-row justify-between mb-1">
+                            <View
+                              style={{
+                                borderBottomWidth: 1,
+                                borderStyle: "dashed",
+                                borderColor: theme.primary,
+                                alignSelf: "flex-start",
+                                paddingBottom: 1,
+                              }}
+                            >
+                              <Text
+                                style={{ color: theme.muted, lineHeight: 18 }}
+                                className="font-semibold text-[14px]"
+                              >
+                                Delivery Fee | {TAX_DETAILS.deliveryDistance}
+                              </Text>
+                            </View>
+
+                            <View className="flex-row">
+                              {isFreeDeliveryEligible && (
+                                <Text
+                                  style={{ color: theme.muted }}
+                                  className="font-semibold line-through mr-2"
+                                >
+                                  ₹{formatPrice(TAX_DETAILS.baseDeliveryFee)}
+                                </Text>
+                              )}
+                              <Text
+                                className={
+                                  isFreeDelivery
+                                    ? "text-emerald-600 font-bold"
+                                    : "font-semibold"
+                                }
+                                style={
+                                  !isFreeDelivery ? { color: theme.text } : {}
+                                }
+                              >
+                                {isFreeDelivery
+                                  ? "FREE"
+                                  : `₹${formatPrice(actualDeliveryFee)}`}
+                              </Text>
+                            </View>
+                          </View>
+                          {isFreeDeliveryEligible ? (
+                            <Text
+                              style={{ color: theme.muted }}
+                              className="font-semibold text-[12px] mt-0.5"
+                            >
+                              FREE Delivery on your order!
+                            </Text>
+                          ) : (
+                            <Text
+                              style={{ color: theme.primary }}
+                              className="font-semibold text-[12px] mt-0.5"
+                            >
+                              Add ₹{formatPrice(99 - cartTotal)} more to get
+                              FREE Delivery!
+                            </Text>
+                          )}
+                        </Pressable>
+                      </View>
+                    )}
 
                     {/* Extra Discount */}
                     {discount > 0 && (
@@ -1383,77 +1414,79 @@ export const DeliveryCartModal = memo(
                       </View>
                     )}
 
-                    {/* Dynamic Delivery Tip (Inline Selector without Custom) */}
-                    <View className="mb-4 mt-2">
-                      <View className="flex-row justify-between items-center">
-                        <Text
-                          style={{ color: theme.muted }}
-                          className="font-semibold text-[14px]"
-                        >
-                          Delivery Tip
-                        </Text>
-                        {tipAmount > 0 ? (
-                          <View className="flex-row items-center">
-                            <Text
-                              style={{ color: theme.text }}
-                              className="font-semibold mr-3"
-                            >
-                              ₹{formatPrice(tipAmount)}
-                            </Text>
-                            <Pressable
-                              onPress={() => {
-                                setTipAmount(0);
-                                setCustomTipInput("");
-                                setIsCustomTip(false);
-                              }}
-                            >
-                              <Text className="text-red-500 font-bold text-[13px]">
-                                Remove
-                              </Text>
-                            </Pressable>
-                          </View>
-                        ) : (
-                          <Pressable
-                            onPress={() => setShowInlineTip(!showInlineTip)}
+                    {/* Dynamic Delivery Tip (Only Delivery) */}
+                    {isDelivery && (
+                      <View className="mb-4 mt-2">
+                        <View className="flex-row justify-between items-center">
+                          <Text
+                            style={{ color: theme.muted }}
+                            className="font-semibold text-[14px]"
                           >
-                            <Text className="text-orange-600 font-bold text-[14px]">
-                              Add tip
-                            </Text>
-                          </Pressable>
-                        )}
-                      </View>
-
-                      {showInlineTip && tipAmount === 0 && (
-                        <Animated.View
-                          entering={FadeIn.duration(200)}
-                          className="flex-row items-center justify-between mt-3"
-                        >
-                          {TIP_OPTIONS.map((amt, idx) => (
-                            <Pressable
-                              key={amt}
-                              onPress={() => {
-                                setTipAmount(amt);
-                                setShowInlineTip(false);
-                              }}
-                              style={{
-                                borderColor: theme.border,
-                                backgroundColor: theme.bg,
-                              }}
-                              className={`flex-1 border rounded-xl py-2 items-center ${
-                                idx < TIP_OPTIONS.length - 1 ? "mr-2" : ""
-                              }`}
-                            >
+                            Delivery Tip
+                          </Text>
+                          {tipAmount > 0 ? (
+                            <View className="flex-row items-center">
                               <Text
                                 style={{ color: theme.text }}
-                                className="font-bold"
+                                className="font-semibold mr-3"
                               >
-                                ₹{amt}
+                                ₹{formatPrice(tipAmount)}
+                              </Text>
+                              <Pressable
+                                onPress={() => {
+                                  setTipAmount(0);
+                                  setCustomTipInput("");
+                                  setIsCustomTip(false);
+                                }}
+                              >
+                                <Text className="text-red-500 font-bold text-[13px]">
+                                  Remove
+                                </Text>
+                              </Pressable>
+                            </View>
+                          ) : (
+                            <Pressable
+                              onPress={() => setShowInlineTip(!showInlineTip)}
+                            >
+                              <Text className="text-orange-600 font-bold text-[14px]">
+                                Add tip
                               </Text>
                             </Pressable>
-                          ))}
-                        </Animated.View>
-                      )}
-                    </View>
+                          )}
+                        </View>
+
+                        {showInlineTip && tipAmount === 0 && (
+                          <Animated.View
+                            entering={FadeIn.duration(200)}
+                            className="flex-row items-center justify-between mt-3"
+                          >
+                            {TIP_OPTIONS.map((amt, idx) => (
+                              <Pressable
+                                key={amt}
+                                onPress={() => {
+                                  setTipAmount(amt);
+                                  setShowInlineTip(false);
+                                }}
+                                style={{
+                                  borderColor: theme.border,
+                                  backgroundColor: theme.bg,
+                                }}
+                                className={`flex-1 border rounded-xl py-2 items-center ${
+                                  idx < TIP_OPTIONS.length - 1 ? "mr-2" : ""
+                                }`}
+                              >
+                                <Text
+                                  style={{ color: theme.text }}
+                                  className="font-bold"
+                                >
+                                  ₹{amt}
+                                </Text>
+                              </Pressable>
+                            ))}
+                          </Animated.View>
+                        )}
+                      </View>
+                    )}
 
                     {/* GST & Other Charges Clickable Hover Row */}
                     <View
@@ -1493,20 +1526,22 @@ export const DeliveryCartModal = memo(
                               GST & Other Charges
                             </Text>
 
-                            <View className="flex-row justify-between mb-3">
-                              <Text
-                                style={{ color: theme.muted }}
-                                className="text-[13px] font-semibold"
-                              >
-                                Restaurant Packaging
-                              </Text>
-                              <Text
-                                style={{ color: theme.text }}
-                                className="text-[13px] font-bold"
-                              >
-                                ₹{formatPrice(packagingCharge)}
-                              </Text>
-                            </View>
+                            {packagingCharge > 0 && (
+                              <View className="flex-row justify-between mb-3">
+                                <Text
+                                  style={{ color: theme.muted }}
+                                  className="text-[13px] font-semibold"
+                                >
+                                  Restaurant Packaging
+                                </Text>
+                                <Text
+                                  style={{ color: theme.text }}
+                                  className="text-[13px] font-bold"
+                                >
+                                  ₹{formatPrice(packagingCharge)}
+                                </Text>
+                              </View>
+                            )}
 
                             <View className="flex-row justify-between mb-1">
                               <Text
@@ -1633,7 +1668,7 @@ export const DeliveryCartModal = memo(
                   className="text-[13px] leading-5"
                   style={{ color: theme.muted, opacity: 0.8 }}
                 >
-                  Please double-check your order and address details. Orders are
+                  Please double-check your order and details. Orders are
                   non-refundable once placed.
                 </Text>
               </View>
@@ -1677,17 +1712,16 @@ export const DeliveryCartModal = memo(
             </Pressable>
           </View>
 
-          {/* =========================================
-              MODALS / OVERLAYS 
-              ========================================= */}
-
           <Modal
             visible={showAddressModal}
             transparent={true}
             animationType="fade"
             onRequestClose={() => setShowAddressModal(false)}
           >
-            <View className="flex-1 justify-end bg-black/60">
+            <View
+              className="absolute inset-0 justify-end bg-black/60"
+              style={{ zIndex: 99999, elevation: 99999 }}
+            >
               <Pressable
                 className="flex-1"
                 onPress={() => setShowAddressModal(false)}
@@ -1701,7 +1735,7 @@ export const DeliveryCartModal = memo(
                     className="text-xl font-black tracking-tight"
                     style={{ color: theme.text }}
                   >
-                    Choose Delivery Address
+                    {isDelivery ? "Choose Delivery Address" : "Choose Branch"}
                   </Text>
                   <Pressable
                     onPress={() => setShowAddressModal(false)}
@@ -1711,45 +1745,50 @@ export const DeliveryCartModal = memo(
                   </Pressable>
                 </View>
                 <View>
-                  {MOCK_ADDRESSES.map((item: any) => {
-                    const isActive = currentAddress.id === item.id;
-                    return (
-                      <Pressable
-                        key={item.id}
-                        onPress={() => {
-                          setCurrentAddress(item);
-                          setShowAddressModal(false);
-                        }}
-                        className="flex-row items-center p-4 mb-3 rounded-2xl border"
-                        style={{
-                          backgroundColor: theme.card,
-                          borderColor: isActive ? theme.primary : theme.border,
-                        }}
-                      >
-                        <MapPin
-                          size={24}
-                          color={isActive ? theme.primary : theme.muted}
-                        />
-                        <View className="ml-4 flex-1">
-                          <Text
-                            className="text-base font-bold"
-                            style={{ color: theme.text }}
-                          >
-                            {item.type}
-                          </Text>
-                          <Text
-                            className="text-sm font-semibold mt-1"
-                            style={{ color: theme.muted }}
-                          >
-                            {item.address}
-                          </Text>
-                        </View>
-                        {isActive && (
-                          <CheckCircle2 size={24} color={theme.primary} />
-                        )}
-                      </Pressable>
-                    );
-                  })}
+                  {((isDelivery ? MOCK_ADDRESSES : MOCK_BRANCHES) as any[]).map(
+                    (item: any) => {
+                      const isActive = currentAddress.id === item.id;
+                      return (
+                        <Pressable
+                          key={item.id}
+                          onPress={() => {
+                            setCurrentAddress(item);
+                            if (setActiveAddress) setActiveAddress(item);
+                            setShowAddressModal(false);
+                          }}
+                          className="flex-row items-center p-4 mb-3 rounded-2xl border"
+                          style={{
+                            backgroundColor: theme.card,
+                            borderColor: isActive
+                              ? theme.primary
+                              : theme.border,
+                          }}
+                        >
+                          <MapPin
+                            size={24}
+                            color={isActive ? theme.primary : theme.muted}
+                          />
+                          <View className="ml-4 flex-1">
+                            <Text
+                              className="text-base font-bold"
+                              style={{ color: theme.text }}
+                            >
+                              {isDelivery ? item.type : item.name}
+                            </Text>
+                            <Text
+                              className="text-sm font-semibold mt-1"
+                              style={{ color: theme.muted }}
+                            >
+                              {item.address}
+                            </Text>
+                          </View>
+                          {isActive && (
+                            <CheckCircle2 size={24} color={theme.primary} />
+                          )}
+                        </Pressable>
+                      );
+                    },
+                  )}
                 </View>
               </View>
             </View>
