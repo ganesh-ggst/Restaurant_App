@@ -29,7 +29,6 @@ export default function SearchScreen() {
   const [activeCategory, setActiveCategory] = useState("All");
   const [isVegOnly, setIsVegOnly] = useState(false);
 
-  // Hook up global cart logic
   const {
     mode: orderMode,
     carts,
@@ -38,7 +37,6 @@ export default function SearchScreen() {
   } = useOrderMode();
   const activeCart = carts[orderMode] || [];
 
-  // Calculate items to dynamically pad the bottom (prevents View Cart from hiding cards)
   const activeCartTotalItems = activeCart.reduce(
     (sum: number, item: any) => sum + item.quantity,
     0,
@@ -138,7 +136,6 @@ export default function SearchScreen() {
       </View>
 
       <ScrollView
-        // Dynamic bottom padding prevents the floating cart from covering cards
         contentContainerStyle={{
           paddingBottom: activeCartTotalItems > 0 ? 180 : 120,
         }}

@@ -36,43 +36,20 @@ import {
 import Animated, { SlideInRight, SlideOutRight } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { MOCK_ADDRESSES, MOCK_USER } from "../../constants/mockData";
+import {
+  MOCK_ADDRESSES,
+  MOCK_NOTIFICATIONS,
+  MOCK_USER,
+} from "../../constants/mockData";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { api } from "../../services/api";
 import { useOrderMode } from "./_layout";
-
-// Dummy Notifications
-const MOCK_NOTIFICATIONS = [
-  {
-    id: 1,
-    title: "Order Delivered! 📦",
-    desc: "Your Biryani has arrived safely. Enjoy your meal!",
-    time: "2h ago",
-    read: false,
-  },
-  {
-    id: 2,
-    title: "Exclusive 50% OFF 🎉",
-    desc: "Check out the Offers tab for a massive weekend discount.",
-    time: "5h ago",
-    read: true,
-  },
-  {
-    id: 3,
-    title: "Security Alert",
-    desc: "New login detected from an unrecognized device.",
-    time: "1d ago",
-    read: true,
-  },
-];
 
 const themeOptions = [
   { label: "Light Mode", value: "light", icon: Sun },
   { label: "Dark Mode", value: "dark", icon: Moon },
   { label: "System Default", value: "system", icon: Smartphone },
 ];
-
-// --- STABLE EXTERNAL COMPONENTS ---
 
 const SettingsRow = ({
   icon: Icon,
@@ -150,7 +127,6 @@ export default function ProfileScreen() {
     MOCK_ADDRESSES as any,
   );
 
-  // Forms State
   const [editFirstName, setEditFirstName] = useState(
     userData?.first_name || "",
   );
@@ -158,7 +134,6 @@ export default function ProfileScreen() {
   const [newAddressType, setNewAddressType] = useState("");
   const [newAddressText, setNewAddressText] = useState("");
 
-  // --- CUSTOM IPHONE-STYLE STACK NAVIGATION ---
   const [stack, setStack] = useState<string[]>([]);
   const [showThemeModal, setShowThemeModal] = useState(false);
 
@@ -175,7 +150,6 @@ export default function ProfileScreen() {
 
   const popScreen = () => setStack((prev) => prev.slice(0, -1));
 
-  // Android Hardware Back Button Support
   useEffect(() => {
     const onBackPress = () => {
       if (stack.length > 0) {
@@ -224,8 +198,6 @@ export default function ProfileScreen() {
 
   const displayFirstName = userData?.first_name || "Guest";
   const displayPhone = userData?.phone_number || "+91 0000000000";
-
-  // --- ACTIONS ---
 
   const handleLogout = () => {
     Alert.alert("Sign Out", "Are you sure you want to sign out?", [
@@ -291,7 +263,6 @@ export default function ProfileScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
-      {/* --- BASE PROFILE SCREEN --- */}
       <ScrollView
         contentContainerStyle={{
           flexGrow: 1,
@@ -418,11 +389,6 @@ export default function ProfileScreen() {
         </View>
       </ScrollView>
 
-      {/* =========================================
-          CUSTOM REANIMATED SCREENS (IPHONE STYLE)
-          ========================================= */}
-
-      {/* PERSONAL INFO SCREEN */}
       <AnimatedStackScreen
         isVisible={stack.includes("personal")}
         title="Personal Info"
@@ -522,7 +488,6 @@ export default function ProfileScreen() {
         </ScrollView>
       </AnimatedStackScreen>
 
-      {/* MANAGE ADDRESSES SCREEN */}
       <AnimatedStackScreen
         isVisible={stack.includes("addresses")}
         title="Manage Addresses"
@@ -587,7 +552,6 @@ export default function ProfileScreen() {
         </ScrollView>
       </AnimatedStackScreen>
 
-      {/* ADD NEW ADDRESS SCREEN */}
       <AnimatedStackScreen
         isVisible={stack.includes("add_address")}
         title="Add New Address"
@@ -664,7 +628,6 @@ export default function ProfileScreen() {
         </ScrollView>
       </AnimatedStackScreen>
 
-      {/* SECURITY SCREEN */}
       <AnimatedStackScreen
         isVisible={stack.includes("security")}
         title="Security Settings"
@@ -689,7 +652,6 @@ export default function ProfileScreen() {
         </ScrollView>
       </AnimatedStackScreen>
 
-      {/* NOTIFICATIONS SCREEN */}
       <AnimatedStackScreen
         isVisible={stack.includes("notifications")}
         title="Notifications"
@@ -731,7 +693,6 @@ export default function ProfileScreen() {
         </ScrollView>
       </AnimatedStackScreen>
 
-      {/* THEME SELECTION MODAL */}
       <Modal
         visible={showThemeModal}
         transparent={true}

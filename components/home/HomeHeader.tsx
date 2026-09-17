@@ -56,6 +56,7 @@ export const HomeHeader = memo(
     onRequestWifi,
     onRequestBill,
     onOrderTakeaway,
+    onLeaveTable,
     searchQuery,
     setSearchQuery,
     isListening,
@@ -230,19 +231,11 @@ export const HomeHeader = memo(
           </Animated.View>
 
           <Pressable
-            onPress={() => {
-              if (activeTable && (isTimerRunning || confirmedOrdersLength > 0))
-                return;
-              setOrderMode();
-            }}
+            onPress={() => setOrderMode()}
             className="flex-row items-center justify-center rounded-xl px-3 py-1.5 border shadow-sm"
             style={{
               backgroundColor: theme.primary,
               borderColor: theme.primary,
-              opacity:
-                activeTable && (isTimerRunning || confirmedOrdersLength > 0)
-                  ? 0.5
-                  : 1,
             }}
           >
             {orderMode === "Takeaway" ? (
@@ -487,16 +480,26 @@ export const HomeHeader = memo(
                       Your food will be served directly to your table.
                     </Text>
 
-                    {/* FIX: Hide the Change Table button entirely if order is active */}
+                    {/* FIX: Re-structured this view so both buttons display cleanly side by side! */}
                     {!(isTimerRunning || confirmedOrdersLength > 0) && (
-                      <Pressable
-                        onPress={onOpenScanner}
-                        className="bg-white/20 self-start px-4 py-2 rounded-xl"
-                      >
-                        <Text className="text-white font-bold text-xs">
-                          Change Table
-                        </Text>
-                      </Pressable>
+                      <View className="flex-row">
+                        <Pressable
+                          onPress={onOpenScanner}
+                          className="bg-white/20 px-4 py-2 rounded-xl mr-2"
+                        >
+                          <Text className="text-white font-bold text-xs">
+                            Change Table
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={onLeaveTable}
+                          className="bg-white/20 px-4 py-2 rounded-xl"
+                        >
+                          <Text className="text-white font-bold text-xs">
+                            Leave Table
+                          </Text>
+                        </Pressable>
+                      </View>
                     )}
                   </View>
                   <View className="h-16 w-16 bg-white rounded-2xl items-center justify-center shadow-lg transform rotate-3 ml-2">

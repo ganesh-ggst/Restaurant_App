@@ -94,19 +94,16 @@ export default function FoodCard({
   const [showCustomization, setShowCustomization] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
 
-  // Customization State
   const [customQty, setCustomQty] = useState(1);
   const [selectedAddons, setSelectedAddons] = useState<string[]>([]);
 
   const [activeImageIndex, setActiveImageIndex] = useState(0);
 
-  // Use dynamic gallery from item, fallback to main image if not provided
   const galleryImages =
     item.gallery && item.gallery.length > 0 ? item.gallery : [item.image];
 
   const isFav = favorites?.includes(item.id);
 
-  // Animation Values
   const cardScale = useSharedValue(1);
   const cardTranslateY = useSharedValue(0);
   const cardRotateY = useSharedValue(0);
@@ -157,7 +154,6 @@ export default function FoodCard({
     particleProgress.value = withDelay(150, withTiming(1, { duration: 500 }));
 
     cardRotateY.value = withTiming(360, { duration: 500 }, () => {
-      // Open modal instantly regardless of animation interruption
       runOnJS(setShowDetails)(true);
       runOnJS(setIsAnimating)(false);
     });

@@ -55,10 +55,8 @@ export default function LoginScreen() {
     const fullPhoneNumber = `+91${phone}`;
 
     try {
-      // 1. Tell backend to send OTP. The frontend doesn't know what it is.
       await api.sendOtp(fullPhoneNumber);
 
-      // 2. Route to verification screen with ONLY the phone number
       router.push(`/(auth)/verify-otp?phone=${fullPhoneNumber}` as any);
     } catch (err) {
       setError("Failed to send OTP. Please try again.");

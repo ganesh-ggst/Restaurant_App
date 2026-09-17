@@ -32,7 +32,6 @@ export default function BasicDetailsScreen() {
     setLoading(true);
 
     try {
-      // Send data to Backend API
       await api.completeProfile(phone, firstName.trim(), lastName.trim());
 
       router.replace(
