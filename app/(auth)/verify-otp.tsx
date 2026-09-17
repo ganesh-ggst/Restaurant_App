@@ -21,7 +21,6 @@ export default function VerifyOtpScreen() {
   const router = useRouter();
   const theme = useAppTheme();
 
-  // Only receiving the phone number from the previous screen
   const { phone } = useLocalSearchParams<{ phone: string }>();
 
   const [code, setCode] = useState("");
@@ -42,21 +41,15 @@ export default function VerifyOtpScreen() {
     Keyboard.dismiss();
 
     try {
-      // 2. Validate OTP & Get JWT + Role entirely from Backend
       const response: any = await api.verifyOtp(phone, verificationCode);
 
-      // ✅ Authentication Success
       const { token, user } = response;
 
-      // TODO: Save JWT token to SecureStore/AsyncStorage here
       console.log("[AUTH] Received JWT:", token);
 
-      // 3. Routing Logic based on Status and Role
       if (user.isNewUser) {
-        // Force new users to complete their profile
         router.replace(`/(auth)/basic-details?phone=${phone}` as any);
       } else {
-        // Existing User: Route based on Role
         switch (user.role) {
           case "admin":
             console.log("Routing to Admin Dash (Coming Soon)");
@@ -85,7 +78,6 @@ export default function VerifyOtpScreen() {
     setCode("");
     setError("");
 
-    // Call backend to resend. The frontend handles no generation.
     await api.sendOtp(phone);
     inputRef.current?.focus();
   };

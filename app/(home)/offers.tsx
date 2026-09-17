@@ -16,13 +16,11 @@ import FoodCard from "../../components/home/FoodCard";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { useOrderMode } from "./_layout";
 
-// EVERYTHING IS NOW IMPORTED FROM YOUR GLOBAL MOCK DATA!
 import { ALL_OFFERS, FOOD_ITEMS } from "../../constants/mockData";
 
 export default function OffersScreen() {
   const router = useRouter();
 
-  // USING YOUR GLOBAL THEME HOOK!
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
 
@@ -36,7 +34,6 @@ export default function OffersScreen() {
   } = useOrderMode();
   const activeCart = carts[orderMode] || [];
 
-  // Calculate total items to adjust bottom padding dynamically
   const activeCartTotalItems = activeCart.reduce(
     (sum: number, item: any) => sum + item.quantity,
     0,
@@ -89,7 +86,6 @@ export default function OffersScreen() {
       </View>
 
       <ScrollView
-        // Dynamically adjust padding based on cart items just like index.tsx
         contentContainerStyle={{
           paddingHorizontal: 16,
           paddingBottom: activeCartTotalItems > 0 ? 180 : 120,

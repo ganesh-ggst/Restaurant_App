@@ -111,7 +111,6 @@ export const DeliveryCartModal = memo(
   }: any) => {
     const isDelivery = orderMode === "Delivery";
 
-    // Address State
     const [showAddressModal, setShowAddressModal] = useState(false);
     const [currentAddress, setCurrentAddress] = useState(
       activeAddress || MOCK_ADDRESSES[0],
@@ -137,14 +136,12 @@ export const DeliveryCartModal = memo(
     const [couponInput, setCouponInput] = useState("");
     const [couponError, setCouponError] = useState("");
 
-    // BILL DETAILS STATES
     const [isBillExpanded, setIsBillExpanded] = useState(false);
     const [showInlineTip, setShowInlineTip] = useState(false);
     const [activePopover, setActivePopover] = useState<
       "delivery" | "gst" | null
     >(null);
 
-    // FIX: Add state to completely unmount particles when not celebrating
     const [isCelebrating, setIsCelebrating] = useState(false);
     const celebrationProgress = useSharedValue(0);
 
@@ -229,7 +226,6 @@ export const DeliveryCartModal = memo(
 
     const originalPayable = finalPayable + totalSavings;
 
-    // FIX: Safely trigger celebration and cleanly unmount after it finishes
     const triggerCelebration = () => {
       celebrationProgress.value = 0; // Reset
       setIsCelebrating(true);

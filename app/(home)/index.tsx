@@ -66,7 +66,6 @@ export default function HomeScreen() {
 
   const [permission, requestPermission] = useCameraPermissions();
 
-  // FIX: Successfully pulls the exposed global context variables perfectly
   const {
     mode: orderMode,
     setMode: setGlobalOrderMode,
@@ -83,6 +82,8 @@ export default function HomeScreen() {
     confirmedOrders,
     setConfirmedOrders,
     dineInCartState,
+    setDineInCartState,
+    setPendingOrderSnapshot,
   } = useOrderMode();
 
   const [isVegOnly, setIsVegOnly] = useState(false);
@@ -108,7 +109,6 @@ export default function HomeScreen() {
 
   const availableModes = ORDER_MODES.filter((m) => m.id !== orderMode);
 
-  // Checks if the user is locked into this restaurant/table because of an active order
   const isOrderLocked =
     confirmedOrders.length > 0 || dineInCartState === "waiting";
 
@@ -419,6 +419,10 @@ export default function HomeScreen() {
               onOpenScanner={() => {
                 setTableNumber("");
                 setShowDineInCheckInModal(true);
+              }}
+              onLeaveTable={() => {
+                setActiveTable(null);
+                setGlobalOrderMode(lastMode || "Delivery");
               }}
               onCallWaiter={() => handleServiceRequest("waiter")}
               onRequestWater={() => handleServiceRequest("water")}
@@ -1053,6 +1057,8 @@ export default function HomeScreen() {
                     setActiveServiceModal(null);
                     setActiveTable(null);
                     setConfirmedOrders([]);
+                    if (setDineInCartState) setDineInCartState("idle");
+                    if (setPendingOrderSnapshot) setPendingOrderSnapshot([]);
                     setGlobalOrderMode("Delivery");
                   }}
                   className="w-full h-14 mt-4 rounded-2xl items-center justify-center shadow-sm"

@@ -36,7 +36,6 @@ import ViewCartButton from "../../components/home/ViewCartButton";
 import { MOCK_ADDRESSES, MOCK_BRANCHES } from "../../constants/mockData";
 import { useAppTheme } from "../../hooks/useAppTheme";
 
-// --- GLOBAL STATES ---
 export const OrderContext = createContext<any>(null);
 export function useOrderMode() {
   return useContext(OrderContext);
@@ -259,7 +258,6 @@ export default function HomeLayout() {
   const [mode, setMode] = useState("Delivery");
   const [favorites, setFavorites] = useState<number[]>([]);
 
-  // CART & CORE STATES
   const [carts, setCarts] = useState<{ [key: string]: any[] }>({
     Delivery: [],
     "Dine-in/Takeaway": [],
@@ -268,7 +266,6 @@ export default function HomeLayout() {
   const [activeBranch, setActiveBranch] = useState(MOCK_BRANCHES[0]);
   const [showCartModal, setShowCartModal] = useState(false);
 
-  // GLOBALLY MANAGED DINE-IN STATES
   const [activeTable, setActiveTable] = useState<string | null>(null);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [confirmedOrders, setConfirmedOrders] = useState<any[]>([]);
@@ -358,7 +355,6 @@ export default function HomeLayout() {
     });
   };
 
-  // BACKGROUND TIMERS
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
     if (
@@ -369,13 +365,14 @@ export default function HomeLayout() {
       if (timeLeft === null) setTimeLeft(15 * 60);
 
       interval = setInterval(() => {
-        // FIX: Added explicit Type to prev to prevent TS Error
         setTimeLeft((prev: number | null) => {
           if (prev !== null && prev <= 1) {
             clearInterval(interval);
             setActiveTable(null);
             setMode("Delivery");
             setShowTimeoutModal(true);
+            setDineInCartState("idle");
+            setPendingOrderSnapshot([]);
             return null;
           }
           return prev ? prev - 1 : null;
@@ -391,7 +388,6 @@ export default function HomeLayout() {
     let timer: ReturnType<typeof setInterval>;
     if (dineInCartState === "waiting" && orderCountdown > 0) {
       timer = setInterval(() => {
-        // FIX: Added explicit Type to prev to prevent TS Error
         setOrderCountdown((prev: number) => prev - 1);
       }, 1000);
     } else if (dineInCartState === "waiting" && orderCountdown === 0) {
@@ -407,7 +403,6 @@ export default function HomeLayout() {
     return () => clearInterval(timer);
   }, [dineInCartState, orderCountdown, pendingOrderSnapshot]);
 
-  // ACTIONS
   const handleConfirmOrder = () => {
     setPendingOrderSnapshot((prev) => [...prev, ...activeCart]);
     setDineInCartState("waiting");
@@ -458,7 +453,9 @@ export default function HomeLayout() {
           timeLeft,
           confirmedOrders,
           setConfirmedOrders,
-          dineInCartState, // Exposed to index.tsx so header knows when to lock!
+          dineInCartState,
+          setDineInCartState,
+          setPendingOrderSnapshot,
         }}
       >
         <View className="flex-1" style={{ backgroundColor: theme.bg }}>
@@ -836,54 +833,6 @@ export default function HomeLayout() {
                     </Pressable>
                   )}
                 </ScrollView>
-              </Pressable>
-            </Pressable>
-          </Modal>
-
-          {/* GLOBAL TIMEOUT MODAL */}
-          <Modal
-            visible={showTimeoutModal}
-            transparent
-            animationType="fade"
-            onRequestClose={() => setShowTimeoutModal(false)}
-          >
-            <Pressable
-              className="flex-1 justify-center items-center bg-black/60 px-6"
-              onPress={() => setShowTimeoutModal(false)}
-            >
-              <Pressable
-                className="w-full rounded-[32px] p-6 items-center shadow-lg"
-                style={{ backgroundColor: theme.bg }}
-                onPress={(e) => e.stopPropagation()}
-              >
-                <View
-                  className="w-20 h-20 rounded-full items-center justify-center mb-4"
-                  style={{ backgroundColor: "rgba(239, 68, 68, 0.15)" }}
-                >
-                  <Timer size={40} color="#EF4444" />
-                </View>
-                <Text
-                  className="text-2xl font-black mb-2"
-                  style={{ color: theme.text }}
-                >
-                  Session Expired
-                </Text>
-                <Text
-                  className="text-base text-center font-semibold mb-6"
-                  style={{ color: theme.muted }}
-                >
-                  Your table was released due to 15 minutes of inactivity.
-                  Please scan a table again when you are ready to order.
-                </Text>
-                <Pressable
-                  onPress={() => setShowTimeoutModal(false)}
-                  className="w-full h-14 rounded-2xl items-center justify-center shadow-sm"
-                  style={{ backgroundColor: theme.primary }}
-                >
-                  <Text className="text-white font-black text-lg tracking-wide">
-                    Understood
-                  </Text>
-                </Pressable>
               </Pressable>
             </Pressable>
           </Modal>

@@ -9,7 +9,6 @@ export default function ViewCartButton({
   onPress,
   theme,
 }: any) {
-  // Show if cart has items OR if Dine-in is actively waiting/processing
   const shouldShow =
     activeCartTotalItems > 0 ||
     (orderMode === "Dine-in" && dineInCartState !== "idle");
@@ -21,8 +20,8 @@ export default function ViewCartButton({
   const isRejected = orderMode === "Dine-in" && dineInCartState === "rejected";
 
   let bgColor = theme.primary;
-  if (isWaiting) bgColor = "#F59E0B"; // Orange
-  if (isRejected) bgColor = "#EF4444"; // Red
+  if (isWaiting) bgColor = "#F59E0B";
+  if (isRejected) bgColor = "#EF4444";
 
   return (
     <View className="absolute left-4 right-4 z-50" style={{ bottom: 110 }}>

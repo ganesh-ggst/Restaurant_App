@@ -66,8 +66,78 @@ export const TAX_DETAILS = {
   baseDeliveryFee: 35,
   packagingCharge: 15,
   platformFee: 5,
-  gstRate: 0.05, // 5% GST
+  gstRate: 0.05,
 };
+
+export const ENHANCED_MOCK_ORDERS = [
+  {
+    id: "ORD-9823",
+    date: "Today, 1:45 PM",
+    status: "Preparing",
+    total: "₹429",
+    isActive: true,
+    items: [
+      {
+        id: 1,
+        quantity: 1,
+        name: "Special Chicken Dum Biryani",
+        price: "₹319",
+      },
+      { id: 4, quantity: 2, name: "Garlic Naan", price: "₹55" },
+    ],
+  },
+  {
+    id: "ORD-9710",
+    date: "Aug 12, 8:30 PM",
+    status: "Delivered",
+    total: "₹1,127",
+    isActive: false,
+    items: [
+      { id: 3, quantity: 2, name: "Paneer Butter Masala", price: "₹289" },
+      { id: 2, quantity: 1, name: "Tandoori Platter Full", price: "₹549" },
+    ],
+  },
+  {
+    id: "ORD-9654",
+    date: "Aug 02, 1:15 PM",
+    status: "Delivered",
+    total: "₹418",
+    isActive: false,
+    items: [
+      {
+        id: 1,
+        quantity: 1,
+        name: "Special Chicken Dum Biryani",
+        price: "₹319",
+      },
+      { id: 5, quantity: 1, name: "Gulab Jamun", price: "₹99" },
+    ],
+  },
+];
+
+export const MOCK_NOTIFICATIONS = [
+  {
+    id: 1,
+    title: "Order Delivered! 📦",
+    desc: "Your Biryani has arrived safely. Enjoy your meal!",
+    time: "2h ago",
+    read: false,
+  },
+  {
+    id: 2,
+    title: "Exclusive 50% OFF 🎉",
+    desc: "Check out the Offers tab for a massive weekend discount.",
+    time: "5h ago",
+    read: true,
+  },
+  {
+    id: 3,
+    title: "Security Alert",
+    desc: "New login detected from an unrecognized device.",
+    time: "1d ago",
+    read: true,
+  },
+];
 
 export const STORE_DETAILS = {
   waiter: {
@@ -356,7 +426,7 @@ export const FOOD_ITEMS = [
     gallery: [
       "https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?auto=format&fit=crop&w=800&q=80",
     ],
-    category: "Biryani", // <-- Added category
+    category: "Biryani",
   },
   {
     id: 2,
@@ -373,7 +443,7 @@ export const FOOD_ITEMS = [
     gallery: [
       "https://images.unsplash.com/photo-1544025162-8315ea011505?auto=format&fit=crop&w=800&q=80",
     ],
-    category: "Grills", // <-- Added category
+    category: "Grills",
   },
   {
     id: 3,
@@ -391,7 +461,7 @@ export const FOOD_ITEMS = [
       "https://images.unsplash.com/photo-1645177628172-a94c1f96e6db?auto=format&fit=crop&w=800&q=80",
       "https://images.unsplash.com/photo-1645177628172-a94c1f96e6db?auto=format&fit=crop&w=800&q=80",
     ],
-    category: "Curries", // <-- Added category
+    category: "Curries",
   },
   {
     id: 4,
@@ -408,7 +478,7 @@ export const FOOD_ITEMS = [
     gallery: [
       "https://images.unsplash.com/photo-1604908176997-125f25cc6f3d?auto=format&fit=crop&w=800&q=80",
     ],
-    category: "Breads", // <-- Added category
+    category: "Breads",
   },
   {
     id: 5,
@@ -425,6 +495,6 @@ export const FOOD_ITEMS = [
     gallery: [
       "https://images.unsplash.com/photo-1596803822253-625d8122a613?auto=format&fit=crop&w=800&q=80",
     ],
-    category: "Desserts", // <-- Added category
+    category: "Desserts",
   },
 ];

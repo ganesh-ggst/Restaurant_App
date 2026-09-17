@@ -29,60 +29,15 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { FOOD_ITEMS, TAX_DETAILS } from "../../constants/mockData";
+import {
+  ENHANCED_MOCK_ORDERS,
+  FOOD_ITEMS,
+  TAX_DETAILS,
+} from "../../constants/mockData";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { useOrderMode } from "./_layout";
 
 const { width, height } = Dimensions.get("window");
-
-// --- ENHANCED MOCK ORDERS DATA ---
-const ENHANCED_MOCK_ORDERS = [
-  {
-    id: "ORD-9823",
-    date: "Today, 1:45 PM",
-    status: "Preparing",
-    total: "₹429", // Now ignored, dynamically calculated
-    isActive: true,
-    items: [
-      {
-        id: 1,
-        quantity: 1,
-        name: "Special Chicken Dum Biryani",
-        price: "₹319",
-      },
-      { id: 4, quantity: 2, name: "Garlic Naan", price: "₹55" },
-    ],
-  },
-  {
-    id: "ORD-9710",
-    date: "Aug 12, 8:30 PM",
-    status: "Delivered",
-    total: "₹1,127", // Now ignored, dynamically calculated
-    isActive: false,
-    items: [
-      { id: 3, quantity: 2, name: "Paneer Butter Masala", price: "₹289" },
-      { id: 2, quantity: 1, name: "Tandoori Platter Full", price: "₹549" },
-    ],
-  },
-  {
-    id: "ORD-9654",
-    date: "Aug 02, 1:15 PM",
-    status: "Delivered",
-    total: "₹418", // Now ignored, dynamically calculated
-    isActive: false,
-    items: [
-      {
-        id: 1,
-        quantity: 1,
-        name: "Special Chicken Dum Biryani",
-        price: "₹319",
-      },
-      { id: 5, quantity: 1, name: "Gulab Jamun", price: "₹99" },
-    ],
-  },
-];
-
-// --- UNIVERSAL MATH & FORMATTING HELPERS ---
 
 const formatPrice = (price: number) => price.toFixed(2);
 
@@ -100,27 +55,23 @@ const calculateOrderTotals = (order: any) => {
     };
   }
 
-  // 1. Calculate item total (Base Price * Quantity)
   const itemTotal = order.items.reduce((sum: number, item: any) => {
     const basePrice = parseFloat(item.price.replace(/[^\d.]/g, "")) || 0;
     return sum + basePrice * item.quantity;
   }, 0);
 
-  // 2. Delivery logic
   const isFreeDelivery = itemTotal >= 99;
   const actualDeliveryFee = isFreeDelivery
     ? 0
     : TAX_DETAILS?.baseDeliveryFee || 40;
 
-  // 3. Taxes & Fees
   const packagingCharge = TAX_DETAILS?.packagingCharge || 15;
   const platformFee = TAX_DETAILS?.platformFee || 5;
-  const gstRate = TAX_DETAILS?.gstRate || 0.05; // Default 5%
+  const gstRate = TAX_DETAILS?.gstRate || 0.05;
 
   const gstAmount = itemTotal * gstRate;
   const totalTaxesAndCharges = packagingCharge + platformFee + gstAmount;
 
-  // 4. Final Grand Total
   const finalPayable = itemTotal + actualDeliveryFee + totalTaxesAndCharges;
 
   return {
@@ -134,8 +85,6 @@ const calculateOrderTotals = (order: any) => {
     finalPayable,
   };
 };
-
-// --- STABLE EXTERNAL UI COMPONENTS ---
 
 const OrderItemsList = ({ order, theme }: any) => {
   if (!order) return null;
@@ -256,7 +205,6 @@ const BillDetailsAccordion = ({ order, theme }: any) => {
             </Text>
           </View>
 
-          {/* Delivery Fee Hover Row */}
           <View
             style={{
               zIndex: activePopover === "delivery" ? 100 : 1,
@@ -395,7 +343,6 @@ const BillDetailsAccordion = ({ order, theme }: any) => {
             </Pressable>
           </View>
 
-          {/* GST & Other Charges Hover Row */}
           <View
             style={{
               zIndex: activePopover === "gst" ? 100 : 1,
@@ -545,7 +492,6 @@ export default function OrdersScreen() {
 
   const [activeTab, setActiveTab] = useState("Active");
 
-  // Modals state
   const [trackingOrder, setTrackingOrder] = useState<any>(null);
   const [detailsOrder, setDetailsOrder] = useState<any>(null);
 
@@ -596,7 +542,6 @@ export default function OrdersScreen() {
     <View
       style={{ flex: 1, backgroundColor: theme.bg, paddingTop: insets.top }}
     >
-      {/* UNIVERSAL HEADER */}
       <View className="flex-row justify-between items-center px-4 py-3 z-10">
         <Text className="text-3xl font-black" style={{ color: theme.text }}>
           Your Orders
@@ -620,7 +565,6 @@ export default function OrdersScreen() {
         </View>
       </View>
 
-      {/* CUSTOM 2-WAY TAB SWITCH */}
       <View className="px-4 mb-4">
         <View
           className="flex-row rounded-2xl p-1 border"
@@ -781,9 +725,6 @@ export default function OrdersScreen() {
         )}
       </ScrollView>
 
-      {/* ========================================================================= */}
-      {/* MODAL 1: ACTIVE ORDER TRACKING (COMPREHENSIVE) */}
-      {/* ========================================================================= */}
       <Modal
         visible={!!trackingOrder}
         transparent={true}
@@ -928,9 +869,6 @@ export default function OrdersScreen() {
         </View>
       </Modal>
 
-      {/* ========================================================================= */}
-      {/* MODAL 2: PAST ORDER DETAILS */}
-      {/* ========================================================================= */}
       <Modal
         visible={!!detailsOrder}
         transparent={true}
