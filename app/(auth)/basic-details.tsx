@@ -34,9 +34,8 @@ export default function BasicDetailsScreen() {
     try {
       await api.completeProfile(phone, firstName.trim(), lastName.trim());
 
-      router.replace(
-        `/(home)?phone=${phone}&name=${encodeURIComponent(firstName.trim())}&lastName=${encodeURIComponent(lastName.trim())}` as any,
-      );
+      // TEMPORARILY ROUTING TO MANAGER FOR DEVELOPMENT
+      router.replace(`/(manager)?phone=${phone}` as any);
     } catch (error) {
       console.error("Failed to save profile", error);
     } finally {
