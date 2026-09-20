@@ -5,6 +5,7 @@ interface CardProps {
   children: React.ReactNode;
   className?: string;
   variant?: "default" | "elevated" | "subtle";
+  style?: any;
 }
 
 export function Card({

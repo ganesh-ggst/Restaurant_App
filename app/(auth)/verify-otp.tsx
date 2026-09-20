@@ -14,6 +14,7 @@ import Animated, { FadeIn, FadeOut, Layout } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Button } from "../../components/ui/Button";
+import { MANAGER_MOCK_DATA } from "../../constants/managerMockData";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { api } from "../../services/api";
 
@@ -22,6 +23,7 @@ export default function VerifyOtpScreen() {
   const theme = useAppTheme();
 
   const { phone } = useLocalSearchParams<{ phone: string }>();
+  const normalizedPhone = phone?.replace(/\s/g, "+") || "";
 
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
@@ -41,28 +43,57 @@ export default function VerifyOtpScreen() {
     Keyboard.dismiss();
 
     try {
-      const response: any = await api.verifyOtp(phone, verificationCode);
+      const response: any = await api.verifyOtp(
+        normalizedPhone,
+        verificationCode,
+      );
 
       const { token, user } = response;
 
       console.log("[AUTH] Received JWT:", token);
 
+      // --- BYPASS FOR MANAGER MOCK DATA TESTING ---
+      const testManager = MANAGER_MOCK_DATA.managers.find(
+        (m) => m.phone === normalizedPhone,
+      );
+
+      if (testManager) {
+        if (testManager.managerType === "floor") {
+          router.replace(
+            `/(manager)/floor?phone=${encodeURIComponent(normalizedPhone)}` as any,
+          );
+        } else if (testManager.managerType === "operations") {
+          router.replace(
+            `/(manager)/operations?phone=${encodeURIComponent(normalizedPhone)}` as any,
+          );
+        }
+        return;
+      }
+      // ---------------------------------------------
+
       if (user.isNewUser) {
-        router.replace(`/(auth)/basic-details?phone=${phone}` as any);
+        router.replace(
+          `/(auth)/basic-details?phone=${encodeURIComponent(normalizedPhone)}` as any,
+        );
       } else {
         switch (user.role) {
           case "admin":
             console.log("Routing to Admin Dash (Coming Soon)");
             break;
           case "manager":
-            console.log("Routing to Manager Dash (Coming Soon)");
+            // Fallback for real API until managerType is added to backend
+            router.replace(
+              `/(manager)/floor?phone=${encodeURIComponent(normalizedPhone)}` as any,
+            );
             break;
           case "waiter":
             console.log("Routing to Waiter Dash (Coming Soon)");
             break;
           case "user":
           default:
-            router.replace(`/(home)?phone=${phone}` as any);
+            router.replace(
+              `/(manager)/floor?phone=${encodeURIComponent(normalizedPhone)}` as any,
+            );
             break;
         }
       }
@@ -78,7 +109,7 @@ export default function VerifyOtpScreen() {
     setCode("");
     setError("");
 
-    await api.sendOtp(phone);
+    await api.sendOtp(normalizedPhone);
     inputRef.current?.focus();
   };
 
@@ -120,7 +151,7 @@ export default function VerifyOtpScreen() {
               <Text className="text-sm" style={{ color: theme.muted }}>
                 Enter the 6-digit code we sent to{"\n"}
                 <Text className="font-bold" style={{ color: theme.text }}>
-                  {phone}
+                  {normalizedPhone}
                 </Text>
               </Text>
             </View>
