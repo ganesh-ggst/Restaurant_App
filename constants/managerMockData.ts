@@ -1,12 +1,62 @@
 export const MANAGER_PHONES = {
-  // Dine-in Floor Managers
   floor_1: "+919999999991",
   floor_2: "+919999999992",
-  // Delivery/Takeaway Operations Manager
   ops_1: "+919999999996",
 };
 
-export const MANAGER_MOCK_DATA = {
+// --- TYPESCRIPT INTERFACES ---
+export interface AddOnOption {
+  id: string;
+  name: string;
+  price: number;
+  isAvailable: boolean;
+}
+
+export interface AddOnGroup {
+  id: string;
+  name: string;
+  isActive?: boolean;
+  options: AddOnOption[];
+}
+
+export interface FoodItem {
+  id: string;
+  name: string;
+  categoryId: string;
+  price: number;
+  offerPrice?: number;
+  coupon?: string;
+  isAvailable: boolean;
+  addOns: AddOnGroup[];
+  crossSellItems: string[];
+}
+
+export interface CrossSellList {
+  id: string;
+  categoryName: string;
+  triggerCategoryId: string;
+  items: string[];
+}
+
+export interface Category {
+  id: string;
+  name: string;
+  icon: string;
+  isActive: boolean;
+}
+
+// --- MOCK DATA ---
+export const MANAGER_MOCK_DATA: {
+  managers: any[];
+  waiters: any[];
+  tables: any[];
+  storeDetails: any;
+  categories: Category[];
+  addOns: any[];
+  crossSellItems: CrossSellList[];
+  foodItems: FoodItem[];
+  availableCoupons: any[];
+} = {
   managers: [
     {
       id: "m1",
@@ -37,15 +87,13 @@ export const MANAGER_MOCK_DATA = {
     },
   ],
 
-  // ==========================================
-  // DINE-IN / FLOOR MANAGER DATA
-  // ==========================================
   waiters: [
     { id: "w1", name: "Raju", managerId: "m1", status: "available" },
     { id: "w2", name: "Ramesh", managerId: "m1", status: "busy" },
     { id: "w3", name: "Suresh", managerId: "m2", status: "available" },
     { id: "w4", name: "Mahesh", managerId: "m2", status: "available" },
   ],
+
   tables: [
     {
       id: "T1",
@@ -81,16 +129,13 @@ export const MANAGER_MOCK_DATA = {
     },
   ],
 
-  // ==========================================
-  // DELIVERY / TAKEAWAY OPERATIONS DATA
-  // ==========================================
   storeDetails: {
     restaurantName: "Foodie Verse",
     wifi: { ssid: "FoodieVerse_Guest", password: "SpicyBiryani!" },
     taxDetails: { gstPercentage: 5, serviceCharge: 0 },
     celebrationEmojis: ["🎉", "🎊", "🎂", "🥳"],
     greetingPhrases: [
-      "How are you eating today?",
+      "How are eating today?",
       "Hungry for Biryani?",
       "Welcome back!",
     ],
@@ -107,41 +152,168 @@ export const MANAGER_MOCK_DATA = {
       "Banjara Hills, Hyderabad",
     ],
   },
+
   categories: [
     { id: "c1", name: "Biryani", icon: "🍲", isActive: true },
-    { id: "c2", name: "Grills", icon: "🍢", isActive: true },
-    { id: "c3", name: "Breads", icon: "🥖", isActive: true },
+    { id: "c2", name: "Grills & Starters", icon: "🍢", isActive: true },
+    { id: "c3", name: "Beverages", icon: "🥤", isActive: true },
+    { id: "c4", name: "Ice Creams & Desserts", icon: "🍦", isActive: true },
   ],
+
+  addOns: [
+    { id: "a1", name: "Extra Cheese", price: 30, isAvailable: true },
+    { id: "a2", name: "Extra Dip", price: 20, isAvailable: true },
+    { id: "a3", name: "Large Portion", price: 75, isAvailable: true },
+  ],
+
+  // --- CROSS SELLS (Linked to Categories) ---
+  crossSellItems: [
+    {
+      id: "cs1",
+      categoryName: "Popular Starters",
+      triggerCategoryId: "c1", // Triggered when a user views/adds Biryani
+      items: ["fi6", "fi3"], // Recommends standalone starters: Chicken 65 Full & Tandoori Chicken
+    },
+    {
+      id: "cs2",
+      categoryName: "More Sweet Treats",
+      triggerCategoryId: "c4", // Triggered by Desserts
+      items: ["fi4", "fi5"],
+    },
+  ],
+
+  // --- FOOD ITEMS (Containing Item-Specific Add-Ons) ---
   foodItems: [
     {
       id: "fi1",
       name: "Chicken Dum Biryani",
       categoryId: "c1",
       price: 299,
+      offerPrice: 249,
+      coupon: "SAVE50",
       isAvailable: true,
-      crossSellItems: ["a1", "a2"],
+      addOns: [
+        {
+          id: "g1",
+          name: "Beverage Add-ons",
+          isActive: true,
+          options: [
+            {
+              id: "o1",
+              name: "Thums Up (250ml)",
+              price: 40,
+              isAvailable: true,
+            },
+          ],
+        },
+        {
+          id: "g2",
+          name: "Biryani Extras",
+          isActive: true,
+          options: [
+            { id: "o2", name: "Boiled Egg", price: 15, isAvailable: true },
+            { id: "o3", name: "Extra Raita", price: 20, isAvailable: true },
+          ],
+        },
+      ],
+      crossSellItems: [],
     },
     {
       id: "fi2",
       name: "Mutton Mandi",
       categoryId: "c1",
       price: 499,
+      offerPrice: 449,
+      coupon: "MANDI50",
       isAvailable: false,
-      crossSellItems: ["a1"],
+      addOns: [
+        {
+          id: "g3",
+          name: "Mandi Add Ons",
+          isActive: true,
+          options: [
+            { id: "o4", name: "Extra Mayo Dip", price: 30, isAvailable: true },
+            { id: "o5", name: "Fried Onions", price: 25, isAvailable: true },
+          ],
+        },
+      ],
+      crossSellItems: [],
     },
     {
       id: "fi3",
       name: "Tandoori Chicken",
-      categoryId: "c2",
+      categoryId: "c2", // Grills & Starters
       price: 349,
+      offerPrice: 349,
+      coupon: "",
       isAvailable: true,
+      addOns: [],
+      crossSellItems: [],
+    },
+    {
+      id: "fi6",
+      name: "Chicken 65 Full",
+      categoryId: "c2", // Grills & Starters
+      price: 269,
+      offerPrice: 249,
+      coupon: "",
+      isAvailable: true,
+      addOns: [],
+      crossSellItems: [],
+    },
+    {
+      id: "fi4",
+      name: "Choco Lava Cake",
+      categoryId: "c4", // Desserts
+      price: 130,
+      offerPrice: 110,
+      coupon: "",
+      isAvailable: true,
+      addOns: [
+        {
+          id: "g4",
+          name: "Toppings",
+          isActive: true,
+          options: [
+            {
+              id: "o6",
+              name: "Extra Chocolate Syrup",
+              price: 20,
+              isAvailable: true,
+            },
+          ],
+        },
+      ],
+      crossSellItems: [],
+    },
+    {
+      id: "fi5",
+      name: "Vanilla Scoop",
+      categoryId: "c4", // Desserts
+      price: 80,
+      offerPrice: 70,
+      coupon: "",
+      isAvailable: true,
+      addOns: [
+        {
+          id: "g5",
+          name: "Sprinkles & Nuts",
+          isActive: true,
+          options: [
+            {
+              id: "o7",
+              name: "Rainbow Sprinkles",
+              price: 15,
+              isAvailable: true,
+            },
+            { id: "o8", name: "Roasted Almonds", price: 25, isAvailable: true },
+          ],
+        },
+      ],
       crossSellItems: [],
     },
   ],
-  addOns: [
-    { id: "a1", name: "Extra Raita", price: 20, isAvailable: true },
-    { id: "a2", name: "Thumbs Up 250ml", price: 40, isAvailable: true },
-  ],
+
   availableCoupons: [
     {
       id: "coup1",

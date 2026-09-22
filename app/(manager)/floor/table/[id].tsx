@@ -6,18 +6,19 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Button } from "../../../../components/ui/Button";
 import { Card } from "../../../../components/ui/Card";
+import { ErrorScreen } from "../../../../components/ui/ErrorScreen";
+import { SectionTitle } from "../../../../components/ui/SectionTitle";
 import { MANAGER_MOCK_DATA } from "../../../../constants/managerMockData";
 import { useAppTheme } from "../../../../hooks/useAppTheme";
+import { useCurrentManager } from "../../../../hooks/useCurrentManager";
 
 export default function TableDetailsScreen() {
   const router = useRouter();
   const theme = useAppTheme();
-  const { id, phone } = useLocalSearchParams<{ id: string; phone: string }>();
 
-  const normalizedPhone = phone?.replace(/\s/g, "+") || "";
-  const currentManager = MANAGER_MOCK_DATA.managers.find(
-    (m) => m.phone === normalizedPhone,
-  );
+  // Extract id from params, let the hook handle the phone parsing and manager lookup
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const { currentManager } = useCurrentManager();
 
   const [table, setTable] = useState(
     MANAGER_MOCK_DATA.tables.find((t) => t.id === id),
@@ -26,30 +27,10 @@ export default function TableDetailsScreen() {
   // Security Check: Does the table exist AND does it belong to this logged-in manager?
   if (!table || !currentManager || table.managerId !== currentManager.id) {
     return (
-      <SafeAreaView
-        className="flex-1 justify-center items-center px-6"
-        style={{ backgroundColor: theme.bg }}
-      >
-        <Text className="text-6xl mb-4">🛑</Text>
-        <Text
-          className="text-xl font-bold mb-2 text-center"
-          style={{ color: theme.text }}
-        >
-          Access Denied
-        </Text>
-        <Text
-          className="text-sm text-center mb-6"
-          style={{ color: theme.muted }}
-        >
-          You do not have permission to view or manage Table{" "}
-          {table?.number || id}.
-        </Text>
-        <Button
-          title="Go Back to Dashboard"
-          onPress={() => router.back()}
-          className="w-full py-3"
-        />
-      </SafeAreaView>
+      <ErrorScreen
+        message="Access Denied"
+        description={`You do not have permission to view or manage Table ${table?.number || id}.`}
+      />
     );
   }
 
@@ -94,12 +75,7 @@ export default function TableDetailsScreen() {
 
       <ScrollView className="flex-1 px-6 pt-4 pb-8">
         <Card variant="default" className="p-4 mb-6 rounded-3xl border-0">
-          <Text
-            className="text-sm font-bold mb-2"
-            style={{ color: theme.muted }}
-          >
-            CURRENT STATUS
-          </Text>
+          <SectionTitle text="CURRENT STATUS" />
           <View className="flex-row justify-between items-center">
             <Text
               className="text-xl font-black capitalize"
@@ -119,12 +95,10 @@ export default function TableDetailsScreen() {
         </Card>
 
         <Card variant="default" className="p-4 mb-6 rounded-3xl border-0">
-          <Text
-            className="text-sm font-bold mb-3"
-            style={{ color: theme.muted }}
-          >
-            ACTIVE CUSTOMERS ({table.activeCustomers.length})
-          </Text>
+          <SectionTitle
+            text={`ACTIVE CUSTOMERS (${table.activeCustomers.length})`}
+            className="mb-3"
+          />
           {table.activeCustomers.length > 0 ? (
             table.activeCustomers.map((customer, index) => (
               <View

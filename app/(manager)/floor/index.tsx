@@ -1,8 +1,9 @@
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { useCurrentManager } from "@/hooks/useCurrentManager";
 import { Card } from "../../../components/ui/Card";
 import { MANAGER_MOCK_DATA } from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
@@ -10,13 +11,14 @@ import { useAppTheme } from "../../../hooks/useAppTheme";
 export default function ManagerDashboard() {
   const theme = useAppTheme();
   const router = useRouter();
+  const { currentManager, normalizedPhone, isOperations } = useCurrentManager();
 
-  const { phone } = useLocalSearchParams<{ phone: string }>();
-  const normalizedPhone = phone?.replace(/\s/g, "+") || "";
+  // const { phone } = useLocalSearchParams<{ phone: string }>();
+  // const normalizedPhone = phone?.replace(/\s/g, "+") || "";
 
-  const currentManager = MANAGER_MOCK_DATA.managers.find(
-    (m) => m.phone === normalizedPhone,
-  );
+  // const currentManager = MANAGER_MOCK_DATA.managers.find(
+  //   (m) => m.phone === normalizedPhone,
+  // );
 
   if (!currentManager) {
     return (
