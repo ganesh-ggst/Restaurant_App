@@ -1,26 +1,28 @@
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { useCurrentManager } from "@/hooks/useCurrentManager";
 import { Card } from "../../../components/ui/Card";
-import { MANAGER_MOCK_DATA } from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 
 export default function ManagerNotificationsScreen() {
   const router = useRouter();
   const theme = useAppTheme();
 
-  const { phone } = useLocalSearchParams<{ phone: string }>();
-  const normalizedPhone = phone?.replace(/\s/g, "+") || "";
+  // const { phone } = useLocalSearchParams<{ phone: string }>();
+  // const normalizedPhone = phone?.replace(/\s/g, "+") || "";
+
+  const { currentManager, normalizedPhone, isOperations } = useCurrentManager();
 
   const [notifications, setNotifications] = useState<any[]>([]);
 
   useEffect(() => {
-    const currentManager = MANAGER_MOCK_DATA.managers.find(
-      (m) => m.phone === normalizedPhone,
-    );
+    // const currentManager = MANAGER_MOCK_DATA.managers.find(
+    //   (m) => m.phone === normalizedPhone,
+    // );
     if (currentManager) {
       // Dynamically generate mock notifications ONLY for this manager's assigned tables
       const t1 = currentManager.assignedTables[0].replace("T", "");

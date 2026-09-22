@@ -1,4 +1,4 @@
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useState } from "react";
 import { Pressable, ScrollView, Switch, Text, View } from "react-native";
@@ -7,17 +7,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Card } from "../../../components/ui/Card";
 import { MANAGER_MOCK_DATA } from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
+import { useCurrentManager } from "../../../hooks/useCurrentManager";
 
 export default function OperationsDashboard() {
   const theme = useAppTheme();
   const router = useRouter();
 
-  const { phone } = useLocalSearchParams<{ phone: string }>();
-  const normalizedPhone = phone?.replace(/\s/g, "+") || "";
-
-  const currentManager = MANAGER_MOCK_DATA.managers.find(
-    (m) => m.phone === normalizedPhone,
-  );
+  const { currentManager } = useCurrentManager();
 
   const [foodItems, setFoodItems] = useState(MANAGER_MOCK_DATA.foodItems);
 
@@ -47,34 +43,32 @@ export default function OperationsDashboard() {
     <SafeAreaView className="flex-1" style={{ backgroundColor: theme.bg }}>
       <StatusBar style={theme.isDark ? "light" : "dark"} />
 
+      <View className="flex-row justify-between items-center px-6 mb-4 mt-2">
+        <View>
+          <Text className="text-3xl font-black" style={{ color: theme.text }}>
+            Operations ⚙️
+          </Text>
+          <Text
+            className="text-sm font-medium mt-1"
+            style={{ color: theme.muted }}
+          >
+            Manage menu & store settings
+          </Text>
+        </View>
+
+        <Pressable
+          onPress={() => alert("Profile & Sign Out coming soon!")}
+          className="p-3 rounded-full"
+          style={{ backgroundColor: theme.card }}
+        >
+          <Text className="text-lg">👤</Text>
+        </Pressable>
+      </View>
+
       <ScrollView
         className="flex-1 px-6 pt-2 pb-10"
         showsVerticalScrollIndicator={false}
       >
-        {/* Header */}
-        <View className="flex-row justify-between items-center mb-8 mt-2">
-          <View>
-            <Text className="text-3xl font-black" style={{ color: theme.text }}>
-              Operations ⚙️
-            </Text>
-            <Text
-              className="text-sm font-medium mt-1"
-              style={{ color: theme.muted }}
-            >
-              Manage menu & store settings
-            </Text>
-          </View>
-
-          <Pressable
-            onPress={() => alert("Profile & Sign Out coming soon!")}
-            className="p-3 rounded-full"
-            style={{ backgroundColor: theme.card }}
-          >
-            <Text className="text-lg">👤</Text>
-          </Pressable>
-        </View>
-
-        {/* Quick Stats Row */}
         <View className="flex-row justify-between mb-6">
           <Card
             variant="default"
@@ -129,7 +123,6 @@ export default function OperationsDashboard() {
           </Card>
         </View>
 
-        {/* Store Overview Card */}
         <Text className="text-xl font-bold mb-3" style={{ color: theme.text }}>
           Store Details
         </Text>
@@ -175,12 +168,13 @@ export default function OperationsDashboard() {
           </View>
         </Card>
 
-        {/* Categories Horizontal Scroll */}
         <View className="flex-row justify-between items-end mb-3">
           <Text className="text-xl font-bold" style={{ color: theme.text }}>
             Categories
           </Text>
-          <Pressable onPress={() => alert("Navigate to detailed categories")}>
+          <Pressable
+            onPress={() => router.push("/(manager)/operations/categories")}
+          >
             <Text
               className="text-sm font-bold"
               style={{ color: theme.primary }}
@@ -215,7 +209,6 @@ export default function OperationsDashboard() {
           <View className="w-6" />
         </ScrollView>
 
-        {/* Quick Inventory / Out of stock toggles */}
         <View className="flex-row justify-between items-end mb-3">
           <Text className="text-xl font-bold" style={{ color: theme.text }}>
             Quick Inventory
@@ -228,7 +221,12 @@ export default function OperationsDashboard() {
             variant="default"
             className="p-4 mb-3 rounded-2xl border-0 flex-row justify-between items-center"
           >
-            <View className="flex-1 mr-3">
+            <Pressable
+              className="flex-1 mr-3 justify-center py-1"
+              onPress={() =>
+                router.push(`/(manager)/operations/item/${item.id}` as any)
+              }
+            >
               <Text
                 className="text-base font-bold mb-1"
                 style={{ color: theme.text }}
@@ -241,9 +239,8 @@ export default function OperationsDashboard() {
               >
                 ₹{item.price}
               </Text>
-            </View>
+            </Pressable>
 
-            {/* items-end anchors the switch to the far right edge of the card */}
             <View className="items-end">
               <Switch
                 value={item.isAvailable}
@@ -252,7 +249,6 @@ export default function OperationsDashboard() {
                 ios_backgroundColor={theme.border}
                 thumbColor={"#ffffff"}
               />
-              {/* Fixed width container (w-28) ensures text length difference never shifts the switch */}
               <View className="w-30 items-center mt-1">
                 <Text
                   className="text-[8px] font-bold uppercase text-center"
