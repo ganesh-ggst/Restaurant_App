@@ -33,16 +33,19 @@ export default function CategoryDetailScreen() {
   const [stockFilter, setStockFilter] = useState<
     "all" | "inStock" | "outOfStock"
   >("all");
+  const [dietaryFilter, setDietaryFilter] = useState<"all" | "veg" | "non-veg">(
+    "all",
+  );
 
   useFocusEffect(
     useCallback(() => {
-      // Load standard items for this category
+      // 1. Load standard menu items for this category
       const items = MANAGER_MOCK_DATA.foodItems.filter(
         (item) => item.categoryId === id,
       );
       setCategoryItems(items);
 
-      // Load cross-sell items associated with this category with explicit string typing
+      // 2. Load cross-sell items associated with this category
       const csList = MANAGER_MOCK_DATA.crossSellItems.find(
         (cs) => cs.triggerCategoryId === id,
       );
@@ -72,13 +75,16 @@ export default function CategoryDetailScreen() {
     ]);
   };
 
+  // --- SEPARATE ROUTING LOGIC ---
   const handleCreateNewItem = () => {
+    // Routes to the Menu Item Editor
     router.push(`/(manager)/operations/item/new?categoryId=${id}` as any);
   };
 
   const handleAddCrossSellItem = () => {
+    // Routes to the entirely separate Upsell Editor
     router.push(
-      `/(manager)/operations/item/new?categoryId=${id}&isUpsell=true` as any,
+      `/(manager)/operations/upsell/new?triggerCategoryId=${id}` as any,
     );
   };
 
@@ -88,7 +94,7 @@ export default function CategoryDetailScreen() {
     isUpsell: boolean = false,
   ) => {
     Alert.alert(
-      "Delete Menu Item",
+      "Delete Item",
       `Are you sure you want to delete "${itemName}"?`,
       [
         { text: "Cancel", style: "cancel" },
@@ -105,23 +111,33 @@ export default function CategoryDetailScreen() {
                   MANAGER_MOCK_DATA.crossSellItems[csListIndex].items.filter(
                     (i: string) => i !== itemId,
                   );
-                setCrossSellItems([
-                  ...MANAGER_MOCK_DATA.crossSellItems[csListIndex].items
-                    .map((i: string) =>
-                      MANAGER_MOCK_DATA.foodItems.find((f) => f.id === i),
-                    )
-                    .filter(Boolean),
-                ]);
               }
+            }
+
+            // Fully delete the item from global foodItems catalog
+            MANAGER_MOCK_DATA.foodItems = MANAGER_MOCK_DATA.foodItems.filter(
+              (item) => item.id !== itemId,
+            );
+
+            // Refresh local states
+            setCategoryItems([
+              ...MANAGER_MOCK_DATA.foodItems.filter(
+                (item) => item.categoryId === id,
+              ),
+            ]);
+
+            const csList = MANAGER_MOCK_DATA.crossSellItems.find(
+              (cs) => cs.triggerCategoryId === id,
+            );
+            if (csList && csList.items) {
+              const mappedUpsells = csList.items
+                .map((i: string) =>
+                  MANAGER_MOCK_DATA.foodItems.find((f) => f.id === i),
+                )
+                .filter(Boolean);
+              setCrossSellItems(mappedUpsells);
             } else {
-              MANAGER_MOCK_DATA.foodItems = MANAGER_MOCK_DATA.foodItems.filter(
-                (item) => item.id !== itemId,
-              );
-              setCategoryItems([
-                ...MANAGER_MOCK_DATA.foodItems.filter(
-                  (item) => item.categoryId === id,
-                ),
-              ]);
+              setCrossSellItems([]);
             }
           },
         },
@@ -129,24 +145,28 @@ export default function CategoryDetailScreen() {
     );
   };
 
-  // Filtered items based on search query and stock status
-  const filteredItems = categoryItems.filter((item) => {
+  const filterItemLogic = (item: any) => {
     const matchesSearch = item.name
       .toLowerCase()
       .includes(searchQuery.toLowerCase());
-    if (stockFilter === "inStock") return matchesSearch && item.isAvailable;
-    if (stockFilter === "outOfStock") return matchesSearch && !item.isAvailable;
-    return matchesSearch;
-  });
 
-  const filteredUpsells = crossSellItems.filter((item) => {
-    const matchesSearch = item.name
-      .toLowerCase()
-      .includes(searchQuery.toLowerCase());
-    if (stockFilter === "inStock") return matchesSearch && item.isAvailable;
-    if (stockFilter === "outOfStock") return matchesSearch && !item.isAvailable;
-    return matchesSearch;
-  });
+    // Stock Filter
+    let matchesStock = true;
+    if (stockFilter === "inStock") matchesStock = item.isAvailable;
+    if (stockFilter === "outOfStock") matchesStock = !item.isAvailable;
+
+    // Dietary Filter
+    let matchesDietary = true;
+    if (dietaryFilter === "veg")
+      matchesDietary = item.dietaryPreference === "veg";
+    if (dietaryFilter === "non-veg")
+      matchesDietary = item.dietaryPreference === "non-veg";
+
+    return matchesSearch && matchesStock && matchesDietary;
+  };
+
+  const filteredItems = categoryItems.filter(filterItemLogic);
+  const filteredUpsells = crossSellItems.filter(filterItemLogic);
 
   return (
     <SafeAreaView className="flex-1" style={{ backgroundColor: theme.bg }}>
@@ -207,9 +227,7 @@ export default function CategoryDetailScreen() {
           >
             <Text
               className="text-sm font-bold"
-              style={{
-                color: activeTab === "items" ? "#ffffff" : theme.text,
-              }}
+              style={{ color: activeTab === "items" ? "#ffffff" : theme.text }}
             >
               Menu Items ({categoryItems.length})
             </Text>
@@ -257,7 +275,7 @@ export default function CategoryDetailScreen() {
         />
 
         {/* Stock Filter Chips */}
-        <View className="flex-row gap-2 mb-4">
+        <View className="flex-row gap-2 mb-2">
           <Pressable
             onPress={() => setStockFilter("all")}
             className="px-4 py-2 rounded-xl"
@@ -272,10 +290,9 @@ export default function CategoryDetailScreen() {
               className="text-xs font-bold"
               style={{ color: stockFilter === "all" ? "#ffffff" : theme.text }}
             >
-              All
+              All Stock
             </Text>
           </Pressable>
-
           <Pressable
             onPress={() => setStockFilter("inStock")}
             className="px-4 py-2 rounded-xl"
@@ -295,7 +312,6 @@ export default function CategoryDetailScreen() {
               In Stock
             </Text>
           </Pressable>
-
           <Pressable
             onPress={() => setStockFilter("outOfStock")}
             className="px-4 py-2 rounded-xl"
@@ -313,6 +329,67 @@ export default function CategoryDetailScreen() {
               }}
             >
               Out of Stock
+            </Text>
+          </Pressable>
+        </View>
+
+        {/* Dietary Filter Chips */}
+        <View className="flex-row gap-2 mb-4">
+          <Pressable
+            onPress={() => setDietaryFilter("all")}
+            className="px-4 py-2 rounded-xl"
+            style={{
+              backgroundColor:
+                dietaryFilter === "all"
+                  ? theme.primary
+                  : theme.card || theme.border,
+            }}
+          >
+            <Text
+              className="text-xs font-bold"
+              style={{
+                color: dietaryFilter === "all" ? "#ffffff" : theme.text,
+              }}
+            >
+              All Types
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setDietaryFilter("veg")}
+            className="px-4 py-2 rounded-xl"
+            style={{
+              backgroundColor:
+                dietaryFilter === "veg"
+                  ? theme.primary
+                  : theme.card || theme.border,
+            }}
+          >
+            <Text
+              className="text-xs font-bold"
+              style={{
+                color: dietaryFilter === "veg" ? "#ffffff" : theme.text,
+              }}
+            >
+              🟢 Veg
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setDietaryFilter("non-veg")}
+            className="px-4 py-2 rounded-xl"
+            style={{
+              backgroundColor:
+                dietaryFilter === "non-veg"
+                  ? theme.danger
+                  : theme.card || theme.border,
+            }}
+          >
+            <Text
+              className="text-xs font-bold"
+              style={{
+                color: dietaryFilter === "non-veg" ? "#ffffff" : theme.text,
+              }}
+            >
+              🔴 Non-Veg
             </Text>
           </Pressable>
         </View>
@@ -335,7 +412,7 @@ export default function CategoryDetailScreen() {
             style={{ borderColor: theme.border }}
           >
             <Text className="text-base font-bold" style={{ color: theme.text }}>
-              + Add New Menu Item
+              + Add New Cross-Sell Item
             </Text>
           </Pressable>
         )}
@@ -345,7 +422,10 @@ export default function CategoryDetailScreen() {
           filteredItems.length > 0 ? (
             filteredItems.map((item) => {
               const hasOffer =
-                item.offerPrice !== undefined && item.offerPrice < item.price;
+                item.offerPrice !== undefined &&
+                item.offerPrice !== null &&
+                Number(item.offerPrice) > 0 &&
+                Number(item.offerPrice) < Number(item.price);
 
               return (
                 <Card
@@ -354,14 +434,19 @@ export default function CategoryDetailScreen() {
                   className="p-4 mb-3 rounded-2xl border-0 flex-row justify-between items-center"
                 >
                   <View className="flex-1 mr-3 justify-center py-1">
-                    <Text
-                      className="text-base font-bold mb-1"
-                      style={{ color: theme.text }}
-                    >
-                      {item.name}
-                    </Text>
-
-                    <View className="flex-row items-center gap-2 mb-2">
+                    <View className="flex-row items-center gap-2 mb-1">
+                      <Text className="text-xs">
+                        {item.dietaryPreference === "veg" ? "🟢" : "🔴"}
+                      </Text>
+                      <Text
+                        className="text-base font-bold flex-1"
+                        style={{ color: theme.text }}
+                        numberOfLines={1}
+                      >
+                        {item.name}
+                      </Text>
+                    </View>
+                    <View className="flex-row items-center gap-3 mb-2">
                       <Text
                         className="text-sm font-bold"
                         style={{ color: theme.primary }}
@@ -376,13 +461,18 @@ export default function CategoryDetailScreen() {
                           ₹{item.price}
                         </Text>
                       )}
+                      <Text
+                        className="text-xs font-semibold"
+                        style={{ color: theme.muted }}
+                      >
+                        ⭐ {item.rating || 4.5}
+                      </Text>
                     </View>
-
                     <View className="flex-row items-center mt-1">
                       <Pressable
                         onPress={() =>
                           router.push(
-                            `/(manager)/operations/item/${item.id}` as any,
+                            `/(manager)/operations/item/${item.id}?categoryId=${id}` as any,
                           )
                         }
                         className="mr-4"
@@ -408,7 +498,6 @@ export default function CategoryDetailScreen() {
                       </Pressable>
                     </View>
                   </View>
-
                   <View className="items-end w-30">
                     <Switch
                       value={item.isAvailable}
@@ -422,7 +511,6 @@ export default function CategoryDetailScreen() {
                       style={{
                         color: item.isAvailable ? theme.primary : theme.danger,
                       }}
-                      numberOfLines={1}
                     >
                       {item.isAvailable ? "In Stock" : "Out Of Stock"}
                     </Text>
@@ -439,16 +527,17 @@ export default function CategoryDetailScreen() {
                 className="text-sm italic text-center"
                 style={{ color: theme.muted }}
               >
-                {categoryItems.length === 0
-                  ? "No menu items found in this category."
-                  : "No matching items found."}
+                No menu items found matching the selected filters.
               </Text>
             </View>
           )
         ) : filteredUpsells.length > 0 ? (
           filteredUpsells.map((item) => {
             const hasOffer =
-              item.offerPrice !== undefined && item.offerPrice < item.price;
+              item.offerPrice !== undefined &&
+              item.offerPrice !== null &&
+              Number(item.offerPrice) > 0 &&
+              Number(item.offerPrice) < Number(item.price);
 
             return (
               <Card
@@ -457,14 +546,19 @@ export default function CategoryDetailScreen() {
                 className="p-4 mb-3 rounded-2xl border-0 flex-row justify-between items-center"
               >
                 <View className="flex-1 mr-3 justify-center py-1">
-                  <Text
-                    className="text-base font-bold mb-1"
-                    style={{ color: theme.text }}
-                  >
-                    {item.name}
-                  </Text>
-
-                  <View className="flex-row items-center gap-2 mb-2">
+                  <View className="flex-row items-center gap-2 mb-1">
+                    <Text className="text-xs">
+                      {item.dietaryPreference === "veg" ? "🟢" : "🔴"}
+                    </Text>
+                    <Text
+                      className="text-base font-bold flex-1"
+                      style={{ color: theme.text }}
+                      numberOfLines={1}
+                    >
+                      {item.name}
+                    </Text>
+                  </View>
+                  <View className="flex-row items-center gap-3 mb-2">
                     <Text
                       className="text-sm font-bold"
                       style={{ color: theme.primary }}
@@ -479,13 +573,18 @@ export default function CategoryDetailScreen() {
                         ₹{item.price}
                       </Text>
                     )}
+                    <Text
+                      className="text-xs font-semibold"
+                      style={{ color: theme.muted }}
+                    >
+                      ⭐ {item.rating || 4.5}
+                    </Text>
                   </View>
-
                   <View className="flex-row items-center mt-1">
                     <Pressable
                       onPress={() =>
                         router.push(
-                          `/(manager)/operations/item/${item.id}` as any,
+                          `/(manager)/operations/upsell/${item.id}?triggerCategoryId=${id}` as any,
                         )
                       }
                       className="mr-4"
@@ -511,7 +610,6 @@ export default function CategoryDetailScreen() {
                     </Pressable>
                   </View>
                 </View>
-
                 <View className="items-end w-30">
                   <Switch
                     value={item.isAvailable}
@@ -525,7 +623,6 @@ export default function CategoryDetailScreen() {
                     style={{
                       color: item.isAvailable ? theme.primary : theme.danger,
                     }}
-                    numberOfLines={1}
                   >
                     {item.isAvailable ? "In Stock" : "Out Of Stock"}
                   </Text>
@@ -542,9 +639,7 @@ export default function CategoryDetailScreen() {
               className="text-sm italic text-center"
               style={{ color: theme.muted }}
             >
-              {crossSellItems.length === 0
-                ? "No cross-sell items configured for this category yet."
-                : "No matching cross-sell items found."}
+              No cross-sell items found matching the selected filters.
             </Text>
           </View>
         )}

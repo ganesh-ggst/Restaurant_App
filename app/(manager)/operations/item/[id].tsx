@@ -5,7 +5,6 @@ import { StatusBar } from "expo-status-bar";
 import { useRef, useState } from "react";
 import {
   Alert,
-  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -20,7 +19,10 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Button } from "../../../../components/ui/Button";
 import { Card } from "../../../../components/ui/Card";
-import { MANAGER_MOCK_DATA } from "../../../../constants/managerMockData";
+import {
+  FoodItemBadge,
+  MANAGER_MOCK_DATA,
+} from "../../../../constants/managerMockData";
 import { useAppTheme } from "../../../../hooks/useAppTheme";
 
 export default function EditMenuItemScreen() {
@@ -32,99 +34,107 @@ export default function EditMenuItemScreen() {
   }>();
 
   const isNewItem = id === "new";
-
   const existingItemIndex = MANAGER_MOCK_DATA.foodItems.findIndex(
     (item) => item.id === id,
   );
+
   const initialItem =
     existingItemIndex > -1
       ? MANAGER_MOCK_DATA.foodItems[existingItemIndex]
       : {
           name: "",
+          description: "",
           price: 0,
-          offerPrice: 0,
+          offerPrice: null,
           coupon: "",
+          quantity: null,
           isAvailable: true,
           categoryId: categoryId || "",
+          images: [],
+          dietaryPreference: "veg" as const,
+          rating: 4.5,
+          prepTime: "20 mins",
+          badge: { type: "none", text: "" } as FoodItemBadge,
+          addOns: [],
         };
 
-  // --- FORM STATES ---
-  const [images, setImages] = useState<string[]>(
-    isNewItem ? [] : ["mock_existing_image"],
-  );
+  // State: Core & Media
+  const [images, setImages] = useState<string[]>(initialItem.images || []);
   const [itemName, setItemName] = useState(initialItem.name);
+  const [itemDescription, setItemDescription] = useState(
+    initialItem.description || "",
+  );
   const [itemPrice, setItemPrice] = useState(
     initialItem.price ? initialItem.price.toString() : "",
   );
+
+  // FIX: Only initialize offer price if it's a valid number greater than 0, otherwise keep blank
   const [itemOfferPrice, setItemOfferPrice] = useState(
-    (initialItem as any).offerPrice
+    (initialItem as any).offerPrice && (initialItem as any).offerPrice > 0
       ? (initialItem as any).offerPrice.toString()
       : "",
   );
+
   const [itemCoupon, setItemCoupon] = useState(
     (initialItem as any).coupon || "",
   );
+  const [itemQuantity, setItemQuantity] = useState(
+    (initialItem as any).quantity !== null &&
+      (initialItem as any).quantity !== undefined
+      ? (initialItem as any).quantity.toString()
+      : "",
+  );
+
+  // State: New Display & Marketing Fields
+  const [itemDietary, setItemDietary] = useState<"veg" | "non-veg">(
+    initialItem.dietaryPreference === "non-veg" ? "non-veg" : "veg",
+  );
+  const [itemPrepTime, setItemPrepTime] = useState(
+    initialItem.prepTime || "20 mins",
+  );
+  const [itemBadgeType, setItemBadgeType] = useState<FoodItemBadge["type"]>(
+    (initialItem as any).badge?.type || "none",
+  );
+  const [itemBadgeText, setItemBadgeText] = useState(
+    (initialItem as any).badge?.text || "",
+  );
+
   const [isSaving, setIsSaving] = useState(false);
 
-  // --- ADD-ON STATES ---
-  const [addonGroups, setAddonGroups] = useState([
-    {
-      id: "g1",
-      name: "Biryani Add Ons",
-      isActive: true,
-      options: [
-        { id: "o1", name: "Chicken 65 Full", price: 269, isAvailable: true },
-      ],
-    },
-    {
-      id: "g2",
-      name: "Desserts",
-      isActive: true,
-      options: [
-        { id: "o2", name: "Apricot Delight", price: 125, isAvailable: true },
-      ],
-    },
-  ]);
-
+  // Add-Ons
+  const [addonGroups, setAddonGroups] = useState(
+    (initialItem as any).addOns || [],
+  );
   const [isOptionModalVisible, setIsOptionModalVisible] = useState(false);
   const [optionMode, setOptionMode] = useState<"add" | "edit">("add");
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [editingOptionId, setEditingOptionId] = useState<string | null>(null);
-
   const [optionName, setOptionName] = useState("");
   const [optionPrice, setOptionPrice] = useState("");
 
-  // Refs for focusing inputs
   const optionNameRef = useRef<TextInput>(null);
   const optionPriceRef = useRef<TextInput>(null);
   const groupNameRefs = useRef<Record<string, TextInput | null>>({});
 
-  // --- IMAGE PICKER HANDLERS ---
-  const handleAddMedia = () => {
-    Alert.alert("Upload Media", "Choose an option to add a photo.", [
-      { text: "Camera", onPress: openCamera },
-      { text: "Gallery", onPress: openGallery },
-      { text: "Cancel", style: "cancel" },
-    ]);
-  };
+  const parsedOfferPrice =
+    itemOfferPrice.trim() !== "" ? parseInt(itemOfferPrice) : NaN;
+  const isOfferInvalid =
+    !isNaN(parsedOfferPrice) &&
+    parsedOfferPrice > 0 &&
+    parsedOfferPrice >= Number(itemPrice);
 
   const openGallery = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
-      Alert.alert(
-        "Permission Required",
-        "We need access to your gallery to upload images.",
-      );
+      Alert.alert("Permission Required", "We need access to your gallery.");
       return;
     }
-
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
-      aspect: [1, 1],
+      aspect: [4, 3],
       quality: 0.8,
     });
-
     if (!result.canceled && result.assets[0].uri) {
       setImages([...images, result.assets[0].uri]);
     }
@@ -133,22 +143,25 @@ export default function EditMenuItemScreen() {
   const openCamera = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== "granted") {
-      Alert.alert(
-        "Permission Required",
-        "We need access to your camera to take photos.",
-      );
+      Alert.alert("Permission Required", "We need access to your camera.");
       return;
     }
-
     const result = await ImagePicker.launchCameraAsync({
       allowsEditing: true,
-      aspect: [1, 1],
+      aspect: [4, 3],
       quality: 0.8,
     });
-
     if (!result.canceled && result.assets[0].uri) {
       setImages([...images, result.assets[0].uri]);
     }
+  };
+
+  const handleAddMedia = () => {
+    Alert.alert("Upload Media", "Choose an option to add a photo.", [
+      { text: "Camera", onPress: openCamera },
+      { text: "Gallery", onPress: openGallery },
+      { text: "Cancel", style: "cancel" },
+    ]);
   };
 
   const handleRemoveImage = (index: number) => {
@@ -157,16 +170,15 @@ export default function EditMenuItemScreen() {
     setImages(newImages);
   };
 
-  // --- ADD-ON HANDLERS ---
   const updateGroupName = (groupId: string, newName: string) => {
-    setAddonGroups((groups) =>
-      groups.map((g) => (g.id === groupId ? { ...g, name: newName } : g)),
+    setAddonGroups((groups: any) =>
+      groups.map((g: any) => (g.id === groupId ? { ...g, name: newName } : g)),
     );
   };
 
   const toggleGroupStatus = (groupId: string) => {
-    setAddonGroups((groups) =>
-      groups.map((g) =>
+    setAddonGroups((groups: any) =>
+      groups.map((g: any) =>
         g.id === groupId ? { ...g, isActive: !(g as any).isActive } : g,
       ),
     );
@@ -181,20 +193,20 @@ export default function EditMenuItemScreen() {
         {
           text: "Delete",
           style: "destructive",
-          onPress: () => {
-            setAddonGroups((groups) => groups.filter((g) => g.id !== groupId));
-          },
+          onPress: () =>
+            setAddonGroups((groups: any) =>
+              groups.filter((g: any) => g.id !== groupId),
+            ),
         },
       ],
     );
   };
 
   const addGroup = () => {
-    const newGroupId = `g_${Date.now()}`;
-    setAddonGroups([
-      ...addonGroups,
+    setAddonGroups((groups: any) => [
+      ...groups,
       {
-        id: newGroupId,
+        id: `g_${Date.now()}`,
         name: "New Add-On Section",
         isActive: true,
         options: [],
@@ -203,12 +215,12 @@ export default function EditMenuItemScreen() {
   };
 
   const toggleOptionAvailability = (groupId: string, optionId: string) => {
-    setAddonGroups((groups) =>
-      groups.map((g) => {
+    setAddonGroups((groups: any) =>
+      groups.map((g: any) => {
         if (g.id === groupId) {
           return {
             ...g,
-            options: g.options.map((o) =>
+            options: g.options.map((o: any) =>
               o.id === optionId ? { ...o, isAvailable: !o.isAvailable } : o,
             ),
           };
@@ -238,9 +250,8 @@ export default function EditMenuItemScreen() {
 
   const handleSaveOption = () => {
     if (!optionName.trim() || !optionPrice.trim() || !activeGroupId) return;
-
-    setAddonGroups((groups) =>
-      groups.map((g) => {
+    setAddonGroups((groups: any) =>
+      groups.map((g: any) => {
         if (g.id === activeGroupId) {
           if (optionMode === "add") {
             return {
@@ -258,7 +269,7 @@ export default function EditMenuItemScreen() {
           } else if (optionMode === "edit" && editingOptionId) {
             return {
               ...g,
-              options: g.options.map((o) =>
+              options: g.options.map((o: any) =>
                 o.id === editingOptionId
                   ? {
                       ...o,
@@ -278,14 +289,13 @@ export default function EditMenuItemScreen() {
 
   const handleDeleteOption = () => {
     if (activeGroupId && editingOptionId) {
-      setAddonGroups((groups) =>
-        groups.map((g) => {
-          if (g.id === activeGroupId) {
+      setAddonGroups((groups: any) =>
+        groups.map((g: any) => {
+          if (g.id === activeGroupId)
             return {
               ...g,
-              options: g.options.filter((o) => o.id !== editingOptionId),
+              options: g.options.filter((o: any) => o.id !== editingOptionId),
             };
-          }
           return g;
         }),
       );
@@ -293,44 +303,77 @@ export default function EditMenuItemScreen() {
     }
   };
 
-  // --- SAVE LOGIC ---
   const handleSaveChanges = () => {
-    if (images.length === 0) {
-      Alert.alert("Missing Media", "At least 1 image is mandatory.");
-      return;
-    }
-    if (!itemName.trim() || !itemPrice.trim() || !itemOfferPrice.trim()) {
-      Alert.alert(
-        "Missing Details",
-        "Item Name, Regular Price, and Offer Price are mandatory.",
+    if (images.length === 0)
+      return Alert.alert(
+        "Missing Media",
+        "At least 1 image is mandatory for the carousel.",
       );
-      return;
+
+    const regPrice = parseInt(itemPrice) || 0;
+
+    // FIX: Explicitly store as null or undefined if empty/0 so it doesn't default to 0
+    const offPrice =
+      itemOfferPrice.trim() !== "" &&
+      !isNaN(parseInt(itemOfferPrice)) &&
+      parseInt(itemOfferPrice) > 0
+        ? parseInt(itemOfferPrice)
+        : null;
+
+    const qty = itemQuantity.trim() ? parseInt(itemQuantity) : null;
+
+    if (
+      !itemName.trim() ||
+      regPrice <= 0 ||
+      !itemDescription.trim() ||
+      !itemPrepTime.trim() ||
+      qty === null ||
+      qty < 0
+    ) {
+      return Alert.alert(
+        "Missing Details",
+        "Name, Description, Price, Prep Time, and Quantity are mandatory.",
+      );
     }
+
+    if (isOfferInvalid)
+      return Alert.alert(
+        "Invalid Price",
+        "Offer Price must be less than the Regular Price.",
+      );
 
     setIsSaving(true);
-
     setTimeout(() => {
+      const payload = {
+        name: itemName.trim(),
+        description: itemDescription.trim(),
+        images,
+        dietaryPreference: itemDietary,
+        prepTime: itemPrepTime.trim(),
+        badge: { type: itemBadgeType, text: itemBadgeText.trim() },
+        price: regPrice,
+        offerPrice: offPrice,
+        coupon: itemCoupon.trim(),
+        quantity: qty,
+        addOns: addonGroups as any,
+      };
+
       if (isNewItem) {
-        const newItem = {
-          id: `food_${Date.now()}`,
-          name: itemName.trim(),
-          price: parseInt(itemPrice) || 0,
-          offerPrice: parseInt(itemOfferPrice) || 0,
-          coupon: itemCoupon.trim(),
-          isAvailable: true,
-          categoryId: initialItem.categoryId,
-          addOns: addonGroups as any,
-          crossSellItems: [],
-        };
-        MANAGER_MOCK_DATA.foodItems = [newItem, ...MANAGER_MOCK_DATA.foodItems];
+        MANAGER_MOCK_DATA.foodItems = [
+          {
+            id: `food_${Date.now()}`,
+            categoryId: initialItem.categoryId,
+            isAvailable: true,
+            rating: 4.5,
+            crossSellItems: [],
+            ...payload,
+          },
+          ...MANAGER_MOCK_DATA.foodItems,
+        ];
       } else if (existingItemIndex > -1) {
         MANAGER_MOCK_DATA.foodItems[existingItemIndex] = {
           ...MANAGER_MOCK_DATA.foodItems[existingItemIndex],
-          name: itemName.trim(),
-          price: parseInt(itemPrice) || 0,
-          offerPrice: parseInt(itemOfferPrice) || 0,
-          coupon: itemCoupon.trim(),
-          addOns: addonGroups as any,
+          ...payload,
         };
       }
       setIsSaving(false);
@@ -341,7 +384,6 @@ export default function EditMenuItemScreen() {
   return (
     <SafeAreaView className="flex-1" style={{ backgroundColor: theme.bg }}>
       <StatusBar style={theme.isDark ? "light" : "dark"} />
-
       <View
         className="flex-row items-center px-6 pt-4 pb-4 border-b"
         style={{ borderBottomColor: theme.border }}
@@ -369,15 +411,14 @@ export default function EditMenuItemScreen() {
           contentContainerStyle={{ paddingBottom: 100 }}
           showsVerticalScrollIndicator={false}
         >
-          {/* MEDIA SECTION */}
+          {/* --- MEDIA SECTION --- */}
           <Text
             className="text-xs font-bold mb-3 uppercase tracking-wider"
             style={{ color: theme.muted }}
           >
-            Media (Min 1 Mandatory){" "}
+            Media Carousel (Min 1 Mandatory){" "}
             <Text style={{ color: theme.danger }}>*</Text>
           </Text>
-
           {images.length === 0 ? (
             <Pressable onPress={handleAddMedia}>
               <Card
@@ -391,9 +432,6 @@ export default function EditMenuItemScreen() {
                   style={{ color: theme.text }}
                 >
                   Select from Mobile Gallery
-                </Text>
-                <Text className="text-xs mt-1" style={{ color: theme.muted }}>
-                  Tap to open gallery or camera
                 </Text>
               </Card>
             </Pressable>
@@ -409,21 +447,9 @@ export default function EditMenuItemScreen() {
                   className="w-24 h-24 rounded-2xl mr-3 overflow-hidden"
                   style={{ backgroundColor: theme.border }}
                 >
-                  {img.startsWith("file://") || img.startsWith("content://") ? (
-                    <Image
-                      source={{ uri: img }}
-                      style={{
-                        width: "100%",
-                        height: "100%",
-                        position: "absolute",
-                      }}
-                      resizeMode="cover"
-                    />
-                  ) : (
-                    <Text className="text-3xl absolute top-6 left-7 opacity-30">
-                      🍲
-                    </Text>
-                  )}
+                  <Text className="text-3xl absolute top-6 left-7 opacity-30">
+                    🍲
+                  </Text>
                   <Pressable
                     onPress={() => handleRemoveImage(idx)}
                     className="bg-red-500 w-6 h-6 items-center justify-center rounded-bl-lg absolute top-0 right-0 z-10"
@@ -438,22 +464,16 @@ export default function EditMenuItemScreen() {
                 style={{ borderColor: theme.border }}
               >
                 <Text className="text-2xl mb-1">📸</Text>
-                <Text
-                  className="text-[10px] font-bold"
-                  style={{ color: theme.text }}
-                >
-                  Add More
-                </Text>
               </Pressable>
             </ScrollView>
           )}
 
-          {/* DETAILS SECTION */}
+          {/* --- CORE DETAILS SECTION --- */}
           <Text
             className="text-xs font-bold mb-3 uppercase tracking-wider"
             style={{ color: theme.muted }}
           >
-            Details <Text style={{ color: theme.danger }}>*</Text>
+            Core Details <Text style={{ color: theme.danger }}>*</Text>
           </Text>
           <Card variant="default" className="p-4 mb-6 rounded-3xl border-0">
             <Text
@@ -463,7 +483,7 @@ export default function EditMenuItemScreen() {
               Item Name
             </Text>
             <TextInput
-              placeholder="e.g. Chicken Dum Biryani"
+              placeholder="e.g. Paneer Butter Masala"
               placeholderTextColor={theme.muted}
               value={itemName}
               onChangeText={setItemName}
@@ -474,18 +494,105 @@ export default function EditMenuItemScreen() {
                 fontSize: 18,
                 height: 56,
                 textAlignVertical: "center",
-                paddingTop: 0,
-                paddingBottom: 0,
               }}
             />
 
+            <Text
+              className="text-xs font-bold mb-2 uppercase"
+              style={{ color: theme.muted }}
+            >
+              Description
+            </Text>
+            <TextInput
+              placeholder="e.g. Soft paneer cubes cooked in a rich, creamy tomato gravy with butter."
+              placeholderTextColor={theme.muted}
+              value={itemDescription}
+              onChangeText={setItemDescription}
+              multiline={true}
+              numberOfLines={3}
+              className="px-4 py-3 rounded-xl mb-4 font-medium"
+              style={{
+                backgroundColor: theme.bg,
+                color: theme.text,
+                fontSize: 14,
+                minHeight: 80,
+                textAlignVertical: "top",
+              }}
+            />
+
+            <Text
+              className="text-xs font-bold mb-2 uppercase"
+              style={{ color: theme.muted }}
+            >
+              Dietary Preference
+            </Text>
+            <View className="flex-row gap-3 mb-4">
+              {[
+                { id: "veg", label: "Veg", icon: "🟢" },
+                { id: "non-veg", label: "Non-Veg", icon: "🔴" },
+              ].map((diet) => (
+                <Pressable
+                  key={diet.id}
+                  onPress={() => setItemDietary(diet.id as any)}
+                  className="flex-1 px-3 py-3 rounded-xl border-2 flex-row items-center justify-center"
+                  style={{
+                    borderColor:
+                      itemDietary === diet.id ? theme.primary : theme.border,
+                    backgroundColor:
+                      itemDietary === diet.id ? theme.primary : "transparent",
+                  }}
+                >
+                  <Text className="mr-2 text-sm">{diet.icon}</Text>
+                  <Text
+                    className="text-sm font-bold"
+                    style={{
+                      color: itemDietary === diet.id ? "#ffffff" : theme.muted,
+                    }}
+                  >
+                    {diet.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <Text
+              className="text-xs font-bold mb-2 uppercase"
+              style={{ color: theme.muted }}
+            >
+              Preparation Time
+            </Text>
+            <TextInput
+              placeholder="e.g. 25 mins"
+              placeholderTextColor={theme.muted}
+              value={itemPrepTime}
+              onChangeText={setItemPrepTime}
+              className="px-4 rounded-xl mb-2 font-bold"
+              style={{
+                backgroundColor: theme.bg,
+                color: theme.text,
+                fontSize: 18,
+                height: 56,
+                textAlignVertical: "center",
+              }}
+            />
+          </Card>
+
+          {/* --- PRICING & MARKETING SECTION --- */}
+          <Text
+            className="text-xs font-bold mb-3 uppercase tracking-wider"
+            style={{ color: theme.muted }}
+          >
+            Pricing & Marketing
+          </Text>
+          <Card variant="default" className="p-4 mb-6 rounded-3xl border-0">
             <View className="flex-row gap-3 mb-4">
               <View className="flex-1">
                 <Text
                   className="text-xs font-bold mb-2 uppercase"
                   style={{ color: theme.muted }}
                 >
-                  Regular Price (₹) *
+                  Regular Price (₹){" "}
+                  <Text style={{ color: theme.danger }}>*</Text>
                 </Text>
                 <TextInput
                   placeholder="0"
@@ -500,62 +607,222 @@ export default function EditMenuItemScreen() {
                     fontSize: 18,
                     height: 56,
                     textAlignVertical: "center",
-                    paddingTop: 0,
-                    paddingBottom: 0,
                   }}
                 />
               </View>
 
-              <View className="flex-1">
-                <Text
-                  className="text-xs font-bold mb-2 uppercase"
-                  style={{ color: theme.primary }}
-                >
-                  Offer Price (₹) *
-                </Text>
-                <TextInput
-                  placeholder="0"
-                  placeholderTextColor={theme.muted}
-                  value={itemOfferPrice}
-                  onChangeText={setItemOfferPrice}
-                  keyboardType="numeric"
-                  className="px-4 rounded-xl font-bold border-2"
-                  style={{
-                    backgroundColor: theme.bg,
-                    color: theme.primary,
-                    borderColor: theme.primary,
-                    fontSize: 18,
-                    height: 56,
-                    textAlignVertical: "center",
-                    paddingTop: 0,
-                    paddingBottom: 0,
-                  }}
-                />
-              </View>
+              {Number(itemPrice) > 0 && (
+                <View className="flex-1">
+                  <Text
+                    className="text-xs font-bold mb-2 uppercase"
+                    style={{
+                      color: isOfferInvalid ? theme.danger : theme.primary,
+                    }}
+                  >
+                    Offer Price (₹)
+                  </Text>
+                  <TextInput
+                    placeholder="0"
+                    placeholderTextColor={theme.muted}
+                    value={itemOfferPrice}
+                    onChangeText={setItemOfferPrice}
+                    keyboardType="numeric"
+                    className="px-4 rounded-xl font-bold border-2"
+                    style={{
+                      backgroundColor: theme.bg,
+                      color: isOfferInvalid ? theme.danger : theme.primary,
+                      borderColor: isOfferInvalid
+                        ? theme.danger
+                        : theme.primary,
+                      fontSize: 18,
+                      height: 56,
+                      textAlignVertical: "center",
+                    }}
+                  />
+                  {isOfferInvalid && (
+                    <Text
+                      className="text-[10px] font-bold mt-1"
+                      style={{ color: theme.danger }}
+                    >
+                      Must be less than regular
+                    </Text>
+                  )}
+                </View>
+              )}
             </View>
 
             <Text
               className="text-xs font-bold mb-2 uppercase"
               style={{ color: theme.muted }}
             >
-              Coupon Code (Optional)
+              Available Quantity <Text style={{ color: theme.danger }}>*</Text>
             </Text>
             <TextInput
-              placeholder="e.g. SAVE20"
+              placeholder="e.g. 50"
               placeholderTextColor={theme.muted}
-              value={itemCoupon}
-              onChangeText={setItemCoupon}
-              className="px-4 rounded-xl font-bold uppercase"
+              value={itemQuantity}
+              onChangeText={setItemQuantity}
+              keyboardType="numeric"
+              className="px-4 rounded-xl font-bold mb-5"
               style={{
                 backgroundColor: theme.bg,
                 color: theme.text,
-                fontSize: 16,
-                height: 52,
+                fontSize: 18,
+                height: 56,
                 textAlignVertical: "center",
-                paddingTop: 0,
-                paddingBottom: 0,
               }}
             />
+
+            <Text
+              className="text-xs font-bold mb-2 uppercase"
+              style={{ color: theme.muted }}
+            >
+              Image Badge / Marketing Tag
+            </Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              className="mb-3"
+            >
+              {[
+                { id: "none", label: "None" },
+                { id: "auto_discount", label: "Auto Discount" },
+                { id: "bestseller", label: "⭐️ Bestseller" },
+                { id: "hot", label: "🔥 Hot" },
+                { id: "new", label: "🆕 New" },
+              ].map((badge) => (
+                <Pressable
+                  key={badge.id}
+                  onPress={() => {
+                    setItemBadgeType(badge.id as any);
+                    setItemBadgeText("");
+                  }}
+                  className="px-4 py-2 rounded-xl mr-2 border-2"
+                  style={{
+                    borderColor:
+                      itemBadgeType === badge.id ? theme.primary : theme.border,
+                    backgroundColor:
+                      itemBadgeType === badge.id
+                        ? theme.primary
+                        : "transparent",
+                  }}
+                >
+                  <Text
+                    className="text-xs font-bold"
+                    style={{
+                      color:
+                        itemBadgeType === badge.id ? "#ffffff" : theme.muted,
+                    }}
+                  >
+                    {badge.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+
+            <View
+              className="flex-row items-center justify-between p-3 rounded-2xl mb-4 border-2 border-dashed"
+              style={{ borderColor: theme.border }}
+            >
+              <Text className="text-sm font-bold" style={{ color: theme.text }}>
+                ✏️ Add Custom Tag
+              </Text>
+              <Switch
+                value={itemBadgeType === "custom"}
+                onValueChange={(val) => {
+                  setItemBadgeType(val ? "custom" : "none");
+                  if (!val) setItemBadgeText("");
+                }}
+                trackColor={{ false: theme.border, true: theme.primary }}
+                ios_backgroundColor={theme.border}
+                thumbColor={"#ffffff"}
+                style={{ transform: [{ scale: 0.8 }] }}
+              />
+            </View>
+
+            {itemBadgeType === "custom" && (
+              <TextInput
+                placeholder="e.g. FESTIVAL SPL (Max 12 chars)"
+                placeholderTextColor={theme.muted}
+                value={itemBadgeText}
+                onChangeText={setItemBadgeText}
+                maxLength={12}
+                className="px-4 rounded-xl font-bold uppercase mb-4 border-2"
+                style={{
+                  backgroundColor: theme.bg,
+                  color: theme.text,
+                  borderColor: theme.primary,
+                  fontSize: 16,
+                  height: 52,
+                  textAlignVertical: "center",
+                }}
+              />
+            )}
+
+            {/* PRICING & BADGE PREVIEW BOX */}
+            {itemOfferPrice.trim() !== "" &&
+              !isOfferInvalid &&
+              !isNaN(parseInt(itemOfferPrice)) &&
+              parseInt(itemOfferPrice) > 0 && (
+                <View
+                  className="mb-4 p-3 rounded-xl border border-dashed"
+                  style={{
+                    borderColor: theme.primary,
+                    backgroundColor: "transparent",
+                  }}
+                >
+                  <Text
+                    className="text-xs font-bold mb-1"
+                    style={{ color: theme.primary }}
+                  >
+                    💰 App Display Preview:
+                  </Text>
+                  <Text
+                    className="text-xs font-medium"
+                    style={{ color: theme.text }}
+                  >
+                    Price Text:{" "}
+                    <Text
+                      style={{
+                        textDecorationLine: "line-through",
+                        color: theme.muted,
+                      }}
+                    >
+                      ₹{itemPrice}
+                    </Text>{" "}
+                    <Text style={{ fontWeight: "bold", color: theme.primary }}>
+                      ₹{itemOfferPrice}
+                    </Text>
+                  </Text>
+                  {itemBadgeType === "auto_discount" &&
+                  Number(itemPrice) > 0 ? (
+                    <Text
+                      className="text-xs font-medium mt-1"
+                      style={{ color: theme.text }}
+                    >
+                      Image Badge:{" "}
+                      <Text
+                        style={{ fontWeight: "bold", color: theme.primary }}
+                      >
+                        {Math.round(
+                          ((Number(itemPrice) - Number(itemOfferPrice)) /
+                            Number(itemPrice)) *
+                            100,
+                        )}
+                        % OFF
+                      </Text>
+                    </Text>
+                  ) : itemBadgeType !== "none" ? (
+                    <Text
+                      className="text-[10px] mt-1"
+                      style={{ color: theme.muted }}
+                    >
+                      (The discounted price above is shown to users regardless
+                      of the '{itemBadgeType}' image tag)
+                    </Text>
+                  ) : null}
+                </View>
+              )}
           </Card>
 
           {/* ADD-ONS SECTION */}
@@ -565,14 +832,12 @@ export default function EditMenuItemScreen() {
           >
             Add-Ons (Optional)
           </Text>
-
-          {addonGroups.map((group) => (
+          {addonGroups.map((group: any) => (
             <Card
               key={group.id}
               variant="default"
               className="p-4 mb-4 rounded-3xl border-0"
             >
-              {/* Heading with Order: Edit -> Delete -> Toggle */}
               <View
                 className="flex-row items-center justify-between border-b mb-4 pb-2"
                 style={{ borderBottomColor: theme.border }}
@@ -613,15 +878,12 @@ export default function EditMenuItemScreen() {
                   />
                 </View>
               </View>
-
-              {/* Add-On Item Rows */}
-              {group.options.map((opt) => (
+              {group.options.map((opt: any) => (
                 <View
                   key={opt.id}
                   className="flex-row items-center justify-between px-4 py-3 mb-2 rounded-xl"
                   style={{ backgroundColor: theme.bg }}
                 >
-                  {/* Text (Tappable for Edit) */}
                   <Pressable
                     className="flex-1 justify-center mr-4 py-1"
                     onPress={() => openEditOptionModal(group.id, opt)}
@@ -639,8 +901,6 @@ export default function EditMenuItemScreen() {
                       +₹{opt.price}
                     </Text>
                   </Pressable>
-
-                  {/* Grouped Controls (Pencil + Switch) */}
                   <View className="flex-row items-center justify-center">
                     <Pressable
                       onPress={() => openEditOptionModal(group.id, opt)}
@@ -662,7 +922,6 @@ export default function EditMenuItemScreen() {
                   </View>
                 </View>
               ))}
-
               <Pressable
                 onPress={() => openAddOptionModal(group.id)}
                 className="mt-2 py-3 items-center rounded-xl border-dashed border-2"
@@ -677,8 +936,6 @@ export default function EditMenuItemScreen() {
               </Pressable>
             </Card>
           ))}
-
-          {/* Add New Section Button */}
           <Pressable
             onPress={addGroup}
             className="mb-6 py-4 items-center rounded-3xl border-dashed border-2"
@@ -694,11 +951,11 @@ export default function EditMenuItemScreen() {
             onPress={handleSaveChanges}
             loading={isSaving}
             className="py-4 mt-2"
+            disabled={isOfferInvalid}
           />
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Option Add/Edit Modal */}
       <Modal
         visible={isOptionModalVisible}
         transparent={true}
@@ -723,7 +980,6 @@ export default function EditMenuItemScreen() {
               >
                 {optionMode === "add" ? "Add New Add-On" : "Edit Add-On"}
               </Text>
-
               <Text
                 className="text-sm font-bold mb-2 uppercase"
                 style={{ color: theme.muted }}
@@ -747,10 +1003,11 @@ export default function EditMenuItemScreen() {
                 onSubmitEditing={() => optionPriceRef.current?.focus()}
                 autoFocus={true}
               />
-
               <Text
                 className="text-sm font-bold mb-2 uppercase"
-                style={{ color: theme.muted }}
+                style={{
+                  color: theme.muted,
+                }}
               >
                 Additional Price (₹)
               </Text>
@@ -768,7 +1025,6 @@ export default function EditMenuItemScreen() {
                   fontSize: 18,
                 }}
               />
-
               <View className="flex-row justify-between items-center mt-2">
                 {optionMode === "edit" ? (
                   <Pressable onPress={handleDeleteOption} className="p-2 -ml-2">
@@ -782,7 +1038,6 @@ export default function EditMenuItemScreen() {
                 ) : (
                   <View />
                 )}
-
                 <View className="flex-row">
                   <Button
                     title="Cancel"
