@@ -8,9 +8,22 @@ export function useCurrentManager() {
   const normalizedPhone = phone?.replace(/\s/g, "+") || "";
 
   // Lookup the manager in the mock database
-  const currentManager = MANAGER_MOCK_DATA.managers.find(
+  let currentManager = MANAGER_MOCK_DATA.managers?.find(
     (m) => m.phone === normalizedPhone,
   );
+
+  // Fallback/Safety check: if mock data array doesn't have it yet, assign default branch security lock
+  if (!currentManager && normalizedPhone) {
+    currentManager = {
+      id: "mgr_01",
+      name: "Siva Narayana",
+      phone: normalizedPhone,
+      managerType: "operations",
+      assignedBranch: "Hitech City Premium", // Security lock to single outlet
+    } as any;
+  } else if (currentManager && !(currentManager as any).assignedBranch) {
+    (currentManager as any).assignedBranch = "Hitech City Premium";
+  }
 
   return {
     rawPhone: phone,

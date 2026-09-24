@@ -20,7 +20,6 @@ import { Button } from "../../../components/ui/Button";
 import { Card } from "../../../components/ui/Card";
 import {
   MANAGER_MOCK_DATA,
-  StoreDetailOption,
   StoreDetailSection,
 } from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
@@ -40,7 +39,11 @@ export default function OperationsDashboard() {
     MANAGER_MOCK_DATA.storeDetails,
   );
 
-  // Quick Inventory Pinned IDs & Filters State (Starts empty by default)
+  const [coupons, setCoupons] = useState<any[]>(
+    MANAGER_MOCK_DATA.availableCoupons || [],
+  );
+
+  // Quick Inventory State
   const [quickInventoryIds, setQuickInventoryIds] = useState<string[]>([]);
   const [quickSearchQuery, setQuickSearchQuery] = useState("");
   const [quickStockFilter, setQuickStockFilter] = useState<
@@ -53,26 +56,24 @@ export default function OperationsDashboard() {
 
   const [activeCategoryIndex, setActiveCategoryIndex] = useState(0);
 
-  // === UNIFIED STORE DETAILS MODAL STATE MACHINE ===
+  // === MODAL STATES ===
   const [storeModalState, setStoreModalState] = useState<
     "hub" | "sectionEditor" | "optionManager" | "optionEditor" | null
   >(null);
 
-  // Tracking which section/option is being viewed or edited
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(
     null,
   );
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
   const [editingOptionId, setEditingOptionId] = useState<string | null>(null);
 
-  // Form Inputs (Reusable for both Sections and Options)
-  const [inputVal1, setInputVal1] = useState(""); // Title or Value
-  const [inputVal2, setInputVal2] = useState(""); // SubValue
+  const [inputVal1, setInputVal1] = useState("");
+  const [inputVal2, setInputVal2] = useState("");
   const [inputToggle, setInputToggle] = useState<"single" | "multiple">(
     "single",
   );
 
-  // Category Modal States (Kept isolated to preserve stability)
+  // Category Modal States
   const [isModifyModalVisible, setIsModifyModalVisible] = useState(false);
   const [isCategoryEditorVisible, setIsCategoryEditorVisible] = useState(false);
   const [categoryModalMode, setCategoryModalMode] = useState<"add" | "edit">(
@@ -84,18 +85,38 @@ export default function OperationsDashboard() {
   const [categoryName, setCategoryName] = useState("");
   const [categoryIcon, setCategoryIcon] = useState("");
 
+  // Coupon Modal States
+  const [isCouponHubVisible, setIsCouponHubVisible] = useState(false);
+  const [isCouponEditorVisible, setIsCouponEditorVisible] = useState(false);
+  const [couponModalMode, setCouponModalMode] = useState<"add" | "edit">("add");
+  const [editingCouponId, setEditingCouponId] = useState<string | null>(null);
+  const [couponEditorSource, setCouponEditorSource] = useState<
+    "dashboard" | "hub"
+  >("hub");
+
+  // Coupon Form State
+  const [couponTitle, setCouponTitle] = useState("");
+  const [couponSubtitle, setCouponSubtitle] = useState("");
+  const [couponCode, setCouponCode] = useState("");
+  const [couponApplicableItems, setCouponApplicableItems] = useState<string[]>(
+    [],
+  );
+
   const activeCategories = categories.filter((c) => c.isActive);
-  const activeStoreSections = storeDetails.filter((s) => s.isSectionActive);
+  const activeCoupons = coupons.filter((c) => c.isActive);
   const currentActiveSection = storeDetails.find(
     (s) => s.id === selectedSectionId,
   );
 
-  // Refresh & Prune Quick Inventory IDs
+  // Refresh & Prune Arrays
   useFocusEffect(
     useCallback(() => {
       setFoodItems([...MANAGER_MOCK_DATA.foodItems]);
       setCategories([...MANAGER_MOCK_DATA.categories]);
       setStoreDetails([...MANAGER_MOCK_DATA.storeDetails]);
+      if (MANAGER_MOCK_DATA.availableCoupons) {
+        setCoupons([...MANAGER_MOCK_DATA.availableCoupons]);
+      }
       setQuickInventoryIds((prevIds) =>
         prevIds.filter((id) =>
           MANAGER_MOCK_DATA.foodItems.some((item) => item.id === id),
@@ -115,7 +136,6 @@ export default function OperationsDashboard() {
     );
   }
 
-  const { availableCoupons } = MANAGER_MOCK_DATA;
   const activeItemsCount = foodItems.filter((item) => item.isAvailable).length;
 
   const toggleItemStock = (id: string) => {
@@ -173,155 +193,120 @@ export default function OperationsDashboard() {
   });
 
   // ==========================================
-  // STORE DETAILS DYNAMIC LOGIC
+  // COUPONS LOGIC
   // ==========================================
-
-  const toggleStoreSectionVisibility = (sectionId: string) => {
-    const idx = MANAGER_MOCK_DATA.storeDetails.findIndex(
-      (s) => s.id === sectionId,
+  const toggleCouponVisibility = (id: string) => {
+    if (!MANAGER_MOCK_DATA.availableCoupons) return;
+    const index = MANAGER_MOCK_DATA.availableCoupons.findIndex(
+      (c: any) => c.id === id,
     );
-    if (idx > -1) {
-      MANAGER_MOCK_DATA.storeDetails[idx].isSectionActive =
-        !MANAGER_MOCK_DATA.storeDetails[idx].isSectionActive;
-      setStoreDetails([...MANAGER_MOCK_DATA.storeDetails]);
+    if (index > -1) {
+      MANAGER_MOCK_DATA.availableCoupons[index].isActive =
+        !MANAGER_MOCK_DATA.availableCoupons[index].isActive;
+      setCoupons([...MANAGER_MOCK_DATA.availableCoupons]);
     }
   };
 
-  const toggleStoreOptionVisibility = (sectionId: string, optionId: string) => {
-    const sIdx = MANAGER_MOCK_DATA.storeDetails.findIndex(
-      (s) => s.id === sectionId,
-    );
-    if (sIdx === -1) return;
-    const section = MANAGER_MOCK_DATA.storeDetails[sIdx];
-
-    if (section.selectionType === "single") {
-      section.options.forEach((opt) => (opt.isActive = opt.id === optionId));
-    } else {
-      const oIdx = section.options.findIndex((o) => o.id === optionId);
-      if (oIdx > -1)
-        section.options[oIdx].isActive = !section.options[oIdx].isActive;
+  const closeCouponEditor = () => {
+    setIsCouponEditorVisible(false);
+    if (couponEditorSource === "hub") {
+      setTimeout(() => setIsCouponHubVisible(true), 300);
     }
-    setStoreDetails([...MANAGER_MOCK_DATA.storeDetails]);
   };
 
-  // Flow: Add/Edit Section
-  const openSectionEditor = (section?: StoreDetailSection) => {
-    setStoreModalState(null);
+  const openAddCouponModal = () => {
+    setIsCouponHubVisible(false);
     setTimeout(() => {
-      setEditingSectionId(section ? section.id : null);
-      setInputVal1(section ? section.title : "");
-      setInputToggle(section ? section.selectionType : "single");
-      setStoreModalState("sectionEditor");
+      setCouponEditorSource("hub");
+      setCouponModalMode("add");
+      setEditingCouponId(null);
+      setCouponTitle("");
+      setCouponSubtitle("");
+      setCouponCode("");
+      setCouponApplicableItems([]);
+      setIsCouponEditorVisible(true);
     }, 300);
   };
 
-  const handleSaveSection = () => {
-    if (!inputVal1.trim()) return;
-    if (editingSectionId) {
-      const idx = MANAGER_MOCK_DATA.storeDetails.findIndex(
-        (s) => s.id === editingSectionId,
-      );
-      if (idx > -1) {
-        MANAGER_MOCK_DATA.storeDetails[idx].title = inputVal1.trim();
-        MANAGER_MOCK_DATA.storeDetails[idx].selectionType = inputToggle;
-      }
-    } else {
-      MANAGER_MOCK_DATA.storeDetails.unshift({
-        id: `sd_${Date.now()}`,
-        title: inputVal1.trim(),
-        selectionType: "single",
-        isSectionActive: true,
-        options: [],
-      });
+  const openEditCouponModal = (
+    coupon: any,
+    source: "dashboard" | "hub" = "hub",
+  ) => {
+    if (source === "hub") {
+      setIsCouponHubVisible(false);
     }
-    setStoreDetails([...MANAGER_MOCK_DATA.storeDetails]);
-    setStoreModalState(null);
-    setTimeout(() => setStoreModalState("hub"), 300);
-  };
-
-  const handleDeleteSection = (sectionId: string, title: string) => {
-    Alert.alert("Delete Category", `Remove "${title}"?`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: () => {
-          MANAGER_MOCK_DATA.storeDetails =
-            MANAGER_MOCK_DATA.storeDetails.filter((s) => s.id !== sectionId);
-          setStoreDetails([...MANAGER_MOCK_DATA.storeDetails]);
-        },
+    setTimeout(
+      () => {
+        setCouponEditorSource(source);
+        setCouponModalMode("edit");
+        setEditingCouponId(coupon.id);
+        setCouponTitle(coupon.title || coupon.name || coupon.code || "");
+        setCouponSubtitle(coupon.subtitle || coupon.description || "");
+        setCouponCode(coupon.code || "");
+        setCouponApplicableItems(coupon.applicableItems || []);
+        setIsCouponEditorVisible(true);
       },
-    ]);
-  };
-
-  // Flow: Enter Option Manager
-  const openOptionManager = (sectionId: string) => {
-    setStoreModalState(null);
-    setTimeout(() => {
-      setSelectedSectionId(sectionId);
-      setStoreModalState("optionManager");
-    }, 300);
-  };
-
-  // Flow: Add/Edit Option
-  const openOptionEditor = (option?: StoreDetailOption) => {
-    setStoreModalState(null);
-    setTimeout(() => {
-      setEditingOptionId(option ? option.id : null);
-      setInputVal1(option ? option.value : "");
-      setInputVal2(option && option.subValue ? option.subValue : "");
-      setStoreModalState("optionEditor");
-    }, 300);
-  };
-
-  const handleSaveOption = () => {
-    if (!inputVal1.trim() || !selectedSectionId) return;
-    const secIdx = MANAGER_MOCK_DATA.storeDetails.findIndex(
-      (s) => s.id === selectedSectionId,
+      source === "hub" ? 300 : 0,
     );
-    if (secIdx === -1) return;
-
-    if (editingOptionId) {
-      const optIdx = MANAGER_MOCK_DATA.storeDetails[secIdx].options.findIndex(
-        (o) => o.id === editingOptionId,
-      );
-      if (optIdx > -1) {
-        MANAGER_MOCK_DATA.storeDetails[secIdx].options[optIdx].value =
-          inputVal1.trim();
-        MANAGER_MOCK_DATA.storeDetails[secIdx].options[optIdx].subValue =
-          inputVal2.trim();
-      }
-    } else {
-      MANAGER_MOCK_DATA.storeDetails[secIdx].options.unshift({
-        id: `opt_${Date.now()}`,
-        value: inputVal1.trim(),
-        subValue: inputVal2.trim(),
-        isActive:
-          MANAGER_MOCK_DATA.storeDetails[secIdx].selectionType === "multiple",
-      });
-    }
-    setStoreDetails([...MANAGER_MOCK_DATA.storeDetails]);
-    setStoreModalState(null);
-    setTimeout(() => setStoreModalState("optionManager"), 300);
   };
 
-  const handleDeleteOption = (optionId: string, value: string) => {
-    Alert.alert("Delete Item", `Remove "${value}"?`, [
+  const toggleCouponItem = (itemId: string) => {
+    setCouponApplicableItems((prev) =>
+      prev.includes(itemId)
+        ? prev.filter((id) => id !== itemId)
+        : [...prev, itemId],
+    );
+  };
+
+  const handleSaveCoupon = () => {
+    if (!couponTitle.trim() || !couponCode.trim()) {
+      Alert.alert("Missing Info", "Offer Title and Promo Code are required.");
+      return;
+    }
+
+    if (!MANAGER_MOCK_DATA.availableCoupons)
+      MANAGER_MOCK_DATA.availableCoupons = [];
+
+    if (couponModalMode === "add") {
+      MANAGER_MOCK_DATA.availableCoupons.unshift({
+        id: `coup_${Date.now()}`,
+        title: couponTitle.trim(),
+        subtitle: couponSubtitle.trim(),
+        code: couponCode.trim().toUpperCase(),
+        isActive: true,
+        applicableItems: couponApplicableItems,
+      });
+    } else if (couponModalMode === "edit" && editingCouponId) {
+      const index = MANAGER_MOCK_DATA.availableCoupons.findIndex(
+        (c: any) => c.id === editingCouponId,
+      );
+      if (index > -1) {
+        MANAGER_MOCK_DATA.availableCoupons[index].title = couponTitle.trim();
+        MANAGER_MOCK_DATA.availableCoupons[index].subtitle =
+          couponSubtitle.trim();
+        MANAGER_MOCK_DATA.availableCoupons[index].code = couponCode
+          .trim()
+          .toUpperCase();
+        MANAGER_MOCK_DATA.availableCoupons[index].applicableItems =
+          couponApplicableItems;
+      }
+    }
+    setCoupons([...MANAGER_MOCK_DATA.availableCoupons]);
+    closeCouponEditor();
+  };
+
+  const handleDeleteCoupon = (couponId: string, title: string) => {
+    Alert.alert("Delete Coupon", `Remove "${title}"?`, [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete",
         style: "destructive",
         onPress: () => {
-          const secIdx = MANAGER_MOCK_DATA.storeDetails.findIndex(
-            (s) => s.id === selectedSectionId,
-          );
-          if (secIdx > -1) {
-            MANAGER_MOCK_DATA.storeDetails[secIdx].options =
-              MANAGER_MOCK_DATA.storeDetails[secIdx].options.filter(
-                (o) => o.id !== optionId,
-              );
-            setStoreDetails([...MANAGER_MOCK_DATA.storeDetails]);
-          }
+          MANAGER_MOCK_DATA.availableCoupons =
+            MANAGER_MOCK_DATA.availableCoupons.filter(
+              (c: any) => c.id !== couponId,
+            );
+          setCoupons([...MANAGER_MOCK_DATA.availableCoupons]);
         },
       },
     ]);
@@ -426,7 +411,9 @@ export default function OperationsDashboard() {
               </Text>
             </View>
             <Pressable
-              onPress={() => alert("Profile & Sign Out coming soon!")}
+              onPress={() =>
+                router.push("/(manager)/operations/profile" as any)
+              }
               className="p-3 rounded-full"
               style={{ backgroundColor: theme.card }}
             >
@@ -444,7 +431,7 @@ export default function OperationsDashboard() {
           keyboardShouldPersistTaps="handled"
           stickyHeaderIndices={[1]}
         >
-          {/* INDEX 0: Non-sticky top content (Stats, Store Details, Categories) */}
+          {/* INDEX 0: Non-sticky top content (Stats, Categories, Offers) */}
           <View>
             <View className="flex-row justify-between mb-6">
               <Card
@@ -489,7 +476,7 @@ export default function OperationsDashboard() {
                   className="text-3xl font-black mb-1"
                   style={{ color: theme.text }}
                 >
-                  {availableCoupons.length}
+                  {activeCoupons.length}
                 </Text>
                 <Text
                   className="text-xs font-semibold text-center"
@@ -500,12 +487,44 @@ export default function OperationsDashboard() {
               </Card>
             </View>
 
-            {/* Dynamic Store Details Dashboard Render */}
+            {/* --- LIVE ORDERS WORKFLOW SHORTCUT --- */}
+            <Pressable
+              onPress={() => router.push("/(manager)/operations/orders" as any)}
+              className="p-4 mb-6 rounded-3xl flex-row justify-between items-center border-0 shadow-sm"
+              style={{ backgroundColor: theme.card }}
+            >
+              <View className="flex-row items-center gap-3">
+                <Text className="text-2xl">📋</Text>
+                <View>
+                  <Text
+                    className="text-base font-bold"
+                    style={{ color: theme.text }}
+                  >
+                    Live Orders Workflow
+                  </Text>
+                  <Text
+                    className="text-xs font-medium mt-0.5"
+                    style={{ color: theme.muted }}
+                  >
+                    Manage customer queue, dining & takeaway
+                  </Text>
+                </View>
+              </View>
+              <Text
+                className="text-sm font-bold"
+                style={{ color: theme.primary }}
+              >
+                View →
+              </Text>
+            </Pressable>
+            {/* ------------------------------------- */}
+
+            {/* Active Coupons Section */}
             <View className="flex-row justify-between items-end mb-3">
               <Text className="text-xl font-bold" style={{ color: theme.text }}>
-                Store Details
+                Exclusive Offers
               </Text>
-              <Pressable onPress={() => setStoreModalState("hub")}>
+              <Pressable onPress={() => setIsCouponHubVisible(true)}>
                 <Text
                   className="text-sm font-bold"
                   style={{ color: theme.primary }}
@@ -514,53 +533,79 @@ export default function OperationsDashboard() {
                 </Text>
               </Pressable>
             </View>
-            <Card variant="default" className="p-4 mb-6 rounded-3xl border-0">
-              {activeStoreSections.length > 0 ? (
-                activeStoreSections.map((section, index) => {
-                  const activeOptions = section.options.filter(
-                    (o) => o.isActive,
-                  );
-                  let displayValue = "None Active";
-                  if (activeOptions.length > 0) {
-                    displayValue =
-                      section.selectionType === "single"
-                        ? activeOptions[0].value
-                        : `${activeOptions.length} Active`;
-                  }
-                  return (
-                    <View
-                      key={section.id}
-                      className={`flex-row justify-between items-center ${index < activeStoreSections.length - 1 ? "mb-3 border-b pb-3" : ""}`}
-                      style={{ borderBottomColor: theme.border }}
+
+            {activeCoupons.length > 0 ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                className="mb-6"
+              >
+                {activeCoupons.map((coupon) => (
+                  <Pressable
+                    key={coupon.id}
+                    onPress={() => openEditCouponModal(coupon, "dashboard")}
+                  >
+                    <Card
+                      variant="default"
+                      className="p-5 mr-4 rounded-[28px] border-0 justify-between w-[280px]"
+                      style={{ backgroundColor: theme.card }}
                     >
-                      <Text
-                        className="text-base font-bold"
-                        style={{ color: theme.text }}
-                      >
-                        {section.title}
-                      </Text>
-                      <Text
-                        className="text-base font-medium"
-                        style={{ color: theme.primary }}
-                        numberOfLines={1}
-                      >
-                        {displayValue}
-                      </Text>
-                    </View>
-                  );
-                })
-              ) : (
+                      <View>
+                        <Text
+                          className="text-3xl font-black mb-1"
+                          style={{ color: theme.text }}
+                        >
+                          {coupon.title || coupon.code || "OFFER"}
+                        </Text>
+                        <Text
+                          className="text-sm font-medium mb-5"
+                          style={{ color: theme.muted }}
+                        >
+                          {coupon.subtitle || "Exclusive store offer"}
+                        </Text>
+                      </View>
+                      <View className="flex-row justify-between items-end">
+                        <View
+                          className="px-4 py-2 rounded-xl border border-dashed"
+                          style={{
+                            backgroundColor: theme.isDark
+                              ? "rgba(255,255,255,0.05)"
+                              : "rgba(0,0,0,0.03)",
+                            borderColor: theme.muted,
+                          }}
+                        >
+                          <Text
+                            className="text-xs font-bold uppercase tracking-widest"
+                            style={{ color: theme.text }}
+                          >
+                            CODE: {coupon.code}
+                          </Text>
+                        </View>
+                        <Text
+                          className="text-[10px] font-bold uppercase"
+                          style={{ color: theme.primary }}
+                        >
+                          {coupon.applicableItems?.length || 0} Items
+                        </Text>
+                      </View>
+                    </Card>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            ) : (
+              <Card
+                variant="default"
+                className="p-6 mb-6 rounded-2xl border-dashed border-2 items-center justify-center"
+                style={{ borderColor: theme.border }}
+              >
                 <Text
-                  style={{
-                    color: theme.muted,
-                    textAlign: "center",
-                    paddingVertical: 10,
-                  }}
+                  className="text-sm font-bold"
+                  style={{ color: theme.muted }}
                 >
-                  No Active Store Details
+                  No Active Offers configured
                 </Text>
-              )}
-            </Card>
+              </Card>
+            )}
 
             {/* Categories Header */}
             <View className="flex-row justify-between items-end mb-3">
@@ -688,7 +733,7 @@ export default function OperationsDashboard() {
               </Pressable>
             </View>
 
-            {/* Quick Inventory Search Bar with Buttery Smooth Auto-Scroll on Focus */}
+            {/* Quick Inventory Search Bar */}
             <TextInput
               placeholder="Search quick inventory..."
               placeholderTextColor={theme.muted}
@@ -697,7 +742,7 @@ export default function OperationsDashboard() {
               onFocus={() => {
                 setTimeout(() => {
                   scrollViewRef.current?.scrollTo({
-                    y: 520, // Exact offset to pin right under the main header
+                    y: 450,
                     animated: true,
                   });
                 }, 150);
@@ -964,6 +1009,404 @@ export default function OperationsDashboard() {
       </KeyboardAvoidingView>
 
       {/* ========================================================= */}
+      {/* 0. COUPONS MODIFY HUB POP-UP */}
+      {/* ========================================================= */}
+      <Modal
+        visible={isCouponHubVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setIsCouponHubVisible(false)}
+      >
+        <Pressable
+          className="flex-1 justify-center px-4 py-12"
+          style={{ backgroundColor: "rgba(0, 0, 0, 0.7)" }}
+          onPress={() => setIsCouponHubVisible(false)}
+        >
+          <Pressable onPress={(e) => e.stopPropagation()}>
+            <Card
+              variant="default"
+              className="p-6 rounded-3xl border-0 shadow-lg"
+              style={{ width: "100%", maxHeight: "100%" }}
+            >
+              <View className="flex-row justify-between items-center mb-4">
+                <Text
+                  className="text-xl font-bold"
+                  style={{ color: theme.text }}
+                >
+                  Modify Offers & Coupons
+                </Text>
+                <Pressable
+                  onPress={() => setIsCouponHubVisible(false)}
+                  className="p-2 -mr-2"
+                  hitSlop={15}
+                >
+                  <Text
+                    className="text-lg font-bold"
+                    style={{ color: theme.muted }}
+                  >
+                    ✕
+                  </Text>
+                </Pressable>
+              </View>
+
+              <Pressable
+                onPress={openAddCouponModal}
+                className="mb-4 p-4 rounded-2xl items-center border-2 border-dashed"
+                style={{ borderColor: theme.border }}
+              >
+                <Text
+                  className="text-sm font-bold"
+                  style={{ color: theme.text }}
+                >
+                  + Create New Offer
+                </Text>
+              </Pressable>
+
+              <View
+                className="rounded-2xl p-2"
+                style={{
+                  backgroundColor: theme.isDark
+                    ? "rgba(255, 255, 255, 0.04)"
+                    : "rgba(0, 0, 0, 0.03)",
+                  height: 350,
+                }}
+              >
+                <ScrollView
+                  showsVerticalScrollIndicator={true}
+                  style={{ flex: 1 }}
+                  contentContainerStyle={{ paddingBottom: 10 }}
+                  nestedScrollEnabled={true}
+                  keyboardShouldPersistTaps="handled"
+                >
+                  {coupons.map((coupon) => (
+                    <View
+                      key={coupon.id}
+                      className="p-4 mb-3 rounded-2xl border border-dashed flex-row justify-between items-center"
+                      style={{
+                        backgroundColor: theme.card || theme.bg,
+                        borderColor: theme.border,
+                      }}
+                    >
+                      <Pressable
+                        className="flex-1 pr-2"
+                        onPress={() => openEditCouponModal(coupon, "hub")}
+                      >
+                        <Text
+                          className="text-lg font-black mb-1"
+                          style={{ color: theme.text }}
+                        >
+                          {coupon.title || coupon.code || "Offer"}
+                        </Text>
+                        <Text
+                          className="text-xs font-bold mb-2 uppercase"
+                          style={{ color: theme.primary }}
+                        >
+                          CODE: {coupon.code}
+                        </Text>
+                        <Text
+                          className="text-xs font-medium"
+                          style={{ color: theme.muted }}
+                        >
+                          {coupon.applicableItems?.length || 0} items configured
+                        </Text>
+                      </Pressable>
+
+                      <View className="items-end gap-3">
+                        <Switch
+                          value={coupon.isActive}
+                          onValueChange={() =>
+                            toggleCouponVisibility(coupon.id)
+                          }
+                          trackColor={{
+                            false: theme.border,
+                            true: theme.primary,
+                          }}
+                          thumbColor={"#ffffff"}
+                        />
+                        <View className="flex-row gap-3">
+                          <Pressable
+                            onPress={() => openEditCouponModal(coupon, "hub")}
+                            hitSlop={10}
+                          >
+                            <Feather
+                              name="edit-2"
+                              size={18}
+                              color={theme.primary}
+                            />
+                          </Pressable>
+                          <Pressable
+                            onPress={() =>
+                              handleDeleteCoupon(
+                                coupon.id,
+                                coupon.title || coupon.code,
+                              )
+                            }
+                            hitSlop={10}
+                          >
+                            <Feather
+                              name="trash-2"
+                              size={18}
+                              color={theme.danger}
+                            />
+                          </Pressable>
+                        </View>
+                      </View>
+                    </View>
+                  ))}
+                  {coupons.length === 0 && (
+                    <Text
+                      className="text-center py-10"
+                      style={{ color: theme.muted }}
+                    >
+                      No offers exist yet.
+                    </Text>
+                  )}
+                </ScrollView>
+              </View>
+            </Card>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* ========================================================= */}
+      {/* 0.5 ADD / EDIT COUPON MODAL (Advanced) */}
+      {/* ========================================================= */}
+      <Modal
+        visible={isCouponEditorVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={closeCouponEditor}
+      >
+        <KeyboardAvoidingView
+          style={{
+            flex: 1,
+            backgroundColor: theme.bg,
+            marginTop: 50,
+            borderTopLeftRadius: 30,
+            borderTopRightRadius: 30,
+            overflow: "hidden",
+          }}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          <View
+            className="p-6 flex-row justify-between items-center border-b"
+            style={{ borderColor: theme.border }}
+          >
+            <Text className="text-xl font-bold" style={{ color: theme.text }}>
+              {couponModalMode === "add" ? "Create Offer" : "Edit Offer"}
+            </Text>
+            <Pressable
+              onPress={closeCouponEditor}
+              className="p-2 -mr-2"
+              hitSlop={15}
+            >
+              <Text
+                className="text-lg font-bold"
+                style={{ color: theme.muted }}
+              >
+                ✕
+              </Text>
+            </Pressable>
+          </View>
+
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ padding: 24, paddingBottom: 100 }}
+          >
+            {/* Offer Display Preview */}
+            <View className="mb-8 items-center">
+              <Text
+                className="text-xs font-bold mb-3 uppercase"
+                style={{ color: theme.muted }}
+              >
+                Preview
+              </Text>
+              <Card
+                variant="default"
+                className="p-5 rounded-[28px] border-0 w-[280px]"
+                style={{ backgroundColor: theme.card }}
+              >
+                <Text
+                  className="text-3xl font-black mb-1"
+                  style={{ color: theme.text }}
+                >
+                  {couponTitle || "Enter Offer Title"}
+                </Text>
+                <Text
+                  className="text-sm font-medium mb-5"
+                  style={{ color: theme.muted }}
+                >
+                  {couponSubtitle || "Enter subtitle description here"}
+                </Text>
+                <View className="flex-row justify-between items-end">
+                  <View
+                    className="px-4 py-2 rounded-xl border border-dashed"
+                    style={{
+                      backgroundColor: theme.isDark
+                        ? "rgba(255,255,255,0.05)"
+                        : "rgba(0,0,0,0.03)",
+                      borderColor: theme.muted,
+                    }}
+                  >
+                    <Text
+                      className="text-xs font-bold uppercase tracking-widest"
+                      style={{ color: theme.text }}
+                    >
+                      CODE: {couponCode || "PROMOCODE"}
+                    </Text>
+                  </View>
+                </View>
+              </Card>
+            </View>
+
+            <Text
+              className="text-sm font-bold mb-2 uppercase"
+              style={{ color: theme.muted }}
+            >
+              Offer Title
+            </Text>
+            <TextInput
+              placeholder="e.g. 50% OFF"
+              placeholderTextColor={theme.muted}
+              value={couponTitle}
+              onChangeText={setCouponTitle}
+              className="px-4 rounded-xl mb-4 font-bold"
+              style={{
+                backgroundColor: theme.card,
+                color: theme.text,
+                fontSize: 18,
+                height: 56,
+              }}
+            />
+
+            <Text
+              className="text-sm font-bold mb-2 uppercase"
+              style={{ color: theme.muted }}
+            >
+              Subtitle Description
+            </Text>
+            <TextInput
+              placeholder="e.g. On your first Biryani order"
+              placeholderTextColor={theme.muted}
+              value={couponSubtitle}
+              onChangeText={setCouponSubtitle}
+              className="px-4 rounded-xl mb-4 font-bold"
+              style={{
+                backgroundColor: theme.card,
+                color: theme.text,
+                fontSize: 16,
+                height: 56,
+              }}
+            />
+
+            <Text
+              className="text-sm font-bold mb-2 uppercase"
+              style={{ color: theme.muted }}
+            >
+              Promo Code
+            </Text>
+            <TextInput
+              placeholder="e.g. BIRYANI50"
+              placeholderTextColor={theme.muted}
+              value={couponCode}
+              onChangeText={setCouponCode}
+              autoCapitalize="characters"
+              className="px-4 rounded-xl mb-8 font-bold"
+              style={{
+                backgroundColor: theme.card,
+                color: theme.text,
+                fontSize: 18,
+                height: 56,
+              }}
+            />
+
+            <Text
+              className="text-lg font-bold mb-1"
+              style={{ color: theme.text }}
+            >
+              Applicable Items
+            </Text>
+            <Text
+              className="text-xs font-medium mb-4"
+              style={{ color: theme.muted }}
+            >
+              Select which items this code works for
+            </Text>
+
+            <View
+              className="rounded-2xl p-2 border border-dashed"
+              style={{
+                backgroundColor: theme.isDark
+                  ? "rgba(255, 255, 255, 0.04)"
+                  : "rgba(0, 0, 0, 0.03)",
+                borderColor: theme.border,
+                height: 250,
+              }}
+            >
+              <ScrollView
+                nestedScrollEnabled={true}
+                showsVerticalScrollIndicator={true}
+                style={{ flex: 1 }}
+                contentContainerStyle={{ paddingBottom: 10 }}
+              >
+                {foodItems.map((item) => {
+                  const isSelected = couponApplicableItems.includes(item.id);
+                  return (
+                    <Pressable
+                      key={item.id}
+                      onPress={() => toggleCouponItem(item.id)}
+                      className="flex-row justify-between items-center p-3 mb-2 rounded-xl"
+                      style={{ backgroundColor: theme.card }}
+                    >
+                      <View className="flex-row items-center gap-2 flex-1 mr-2">
+                        <Text className="text-xs">
+                          {item.dietaryPreference === "veg" ? "🟢" : "🔴"}
+                        </Text>
+                        <Text
+                          className="text-sm font-bold flex-1"
+                          style={{ color: theme.text }}
+                          numberOfLines={1}
+                        >
+                          {item.name}
+                        </Text>
+                      </View>
+                      <View
+                        className="w-6 h-6 rounded-md border-2 items-center justify-center"
+                        style={{
+                          borderColor: isSelected ? theme.primary : theme.muted,
+                          backgroundColor: isSelected
+                            ? theme.primary
+                            : "transparent",
+                        }}
+                      >
+                        {isSelected && (
+                          <Feather name="check" size={14} color="#ffffff" />
+                        )}
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </View>
+
+            <View className="flex-row justify-end mt-8 mb-6">
+              <Button
+                title="Cancel"
+                variant="outline"
+                onPress={closeCouponEditor}
+                className="mr-3 py-4 px-6"
+              />
+              <Button
+                title="Save Offer"
+                onPress={handleSaveCoupon}
+                className="py-4 px-8"
+              />
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ========================================================= */}
       {/* ADD ITEM TO QUICK INVENTORY MODAL */}
       {/* ========================================================= */}
       <Modal
@@ -1042,7 +1485,7 @@ export default function OperationsDashboard() {
                         <Text
                           className="text-xs font-bold"
                           style={{
-                            color: "#22c55e", // Explicit bright green text color
+                            color: "#22c55e",
                           }}
                         >
                           + Pin
@@ -1067,639 +1510,6 @@ export default function OperationsDashboard() {
       </Modal>
 
       {/* ========================================================= */}
-      {/* 1st POP-UP: STORE DETAILS MODIFY HUB */}
-      {/* ========================================================= */}
-      <Modal
-        visible={storeModalState === "hub"}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setStoreModalState(null)}
-      >
-        <Pressable
-          className="flex-1 justify-center px-4 py-12"
-          style={{ backgroundColor: "rgba(0, 0, 0, 0.7)" }}
-          onPress={() => setStoreModalState(null)}
-        >
-          <Pressable onPress={(e) => e.stopPropagation()}>
-            <Card
-              variant="default"
-              className="p-6 rounded-3xl border-0 shadow-lg"
-              style={{ width: "100%", maxHeight: "100%" }}
-            >
-              <View className="flex-row justify-between items-center mb-4">
-                <Text
-                  className="text-xl font-bold"
-                  style={{ color: theme.text }}
-                >
-                  Modify Store Details
-                </Text>
-                <Pressable
-                  onPress={() => setStoreModalState(null)}
-                  className="p-2 -mr-2"
-                  hitSlop={15}
-                >
-                  <Text
-                    className="text-lg font-bold"
-                    style={{ color: theme.muted }}
-                  >
-                    ✕
-                  </Text>
-                </Pressable>
-              </View>
-
-              <Pressable
-                onPress={() => openSectionEditor()}
-                className="mb-4 p-4 rounded-2xl items-center border-2 border-dashed"
-                style={{ borderColor: theme.border }}
-              >
-                <Text
-                  className="text-sm font-bold"
-                  style={{ color: theme.text }}
-                >
-                  + Add New Detail Category
-                </Text>
-              </Pressable>
-
-              <View
-                className="rounded-2xl p-2"
-                style={{
-                  backgroundColor: theme.isDark
-                    ? "rgba(255, 255, 255, 0.04)"
-                    : "rgba(0, 0, 0, 0.03)",
-                  height: 350,
-                }}
-              >
-                <ScrollView
-                  showsVerticalScrollIndicator={true}
-                  style={{ flex: 1 }}
-                  contentContainerStyle={{ paddingBottom: 10 }}
-                >
-                  {storeDetails.map((section) => {
-                    const activeOptions = section.options.filter(
-                      (o) => o.isActive,
-                    );
-                    let displayValue = "None Active";
-                    if (activeOptions.length > 0) {
-                      displayValue =
-                        section.selectionType === "single"
-                          ? activeOptions[0].value
-                          : `${activeOptions.length} Active`;
-                    }
-                    return (
-                      <Pressable
-                        key={section.id}
-                        onPress={() => openOptionManager(section.id)}
-                        className="flex-row justify-between items-center p-3 mb-2 rounded-xl"
-                        style={{ backgroundColor: theme.card || theme.bg }}
-                      >
-                        <View className="flex-row items-center flex-1 mr-2">
-                          <View className="flex-1">
-                            <Text
-                              className="text-sm font-bold"
-                              style={{
-                                color: section.isSectionActive
-                                  ? theme.text
-                                  : theme.muted,
-                              }}
-                              numberOfLines={1}
-                            >
-                              {section.title}
-                            </Text>
-                            <Text
-                              className="text-[10px]"
-                              style={{ color: theme.muted }}
-                              numberOfLines={1}
-                            >
-                              {displayValue}
-                            </Text>
-                          </View>
-                        </View>
-                        <View className="flex-row items-center gap-1">
-                          <Switch
-                            value={section.isSectionActive}
-                            onValueChange={() =>
-                              toggleStoreSectionVisibility(section.id)
-                            }
-                            trackColor={{
-                              false: theme.border,
-                              true: theme.primary,
-                            }}
-                            thumbColor={"#ffffff"}
-                            style={{ transform: [{ scale: 0.75 }] }}
-                          />
-                          <Pressable
-                            onPress={(e) => {
-                              e.stopPropagation();
-                              openSectionEditor(section);
-                            }}
-                            hitSlop={10}
-                            className="p-2"
-                          >
-                            <Feather
-                              name="edit-2"
-                              size={16}
-                              color={theme.primary}
-                            />
-                          </Pressable>
-                          <Pressable
-                            onPress={(e) => {
-                              e.stopPropagation();
-                              handleDeleteSection(section.id, section.title);
-                            }}
-                            hitSlop={10}
-                            className="p-2"
-                          >
-                            <Feather
-                              name="trash-2"
-                              size={16}
-                              color={theme.danger}
-                            />
-                          </Pressable>
-                        </View>
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
-              </View>
-            </Card>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {/* ========================================================= */}
-      {/* 2nd POP-UP: STORE SECTION EDITOR (Add/Edit Category) */}
-      {/* ========================================================= */}
-      <Modal
-        visible={storeModalState === "sectionEditor"}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setStoreModalState(null)}
-      >
-        <Pressable
-          className="flex-1 justify-center px-4"
-          style={{ backgroundColor: "rgba(0, 0, 0, 0.7)" }}
-          onPress={() => {
-            setStoreModalState(null);
-            setTimeout(() => setStoreModalState("hub"), 300);
-          }}
-        >
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-          >
-            <Pressable onPress={(e) => e.stopPropagation()}>
-              <Card
-                variant="default"
-                className="rounded-3xl border-0 shadow-lg p-0 overflow-hidden max-h-[80vh]"
-              >
-                <ScrollView
-                  showsVerticalScrollIndicator={false}
-                  contentContainerStyle={{ padding: 24 }}
-                >
-                  <Text
-                    className="text-xl font-bold mb-5"
-                    style={{ color: theme.text }}
-                  >
-                    {editingSectionId ? "Edit Category" : "Add New Category"}
-                  </Text>
-
-                  <Text
-                    className="text-sm font-bold mb-2 uppercase"
-                    style={{ color: theme.muted }}
-                  >
-                    Category Title
-                  </Text>
-                  <TextInput
-                    placeholder="e.g. FSSAI License"
-                    placeholderTextColor={theme.muted}
-                    value={inputVal1}
-                    onChangeText={setInputVal1}
-                    className="px-4 rounded-xl mb-6 font-bold"
-                    style={{
-                      backgroundColor: theme.bg,
-                      color: theme.text,
-                      fontSize: 18,
-                      height: 56,
-                      textAlignVertical: "center",
-                    }}
-                    autoFocus={true}
-                  />
-
-                  <View className="flex-row justify-end mt-2">
-                    <Button
-                      title="Cancel"
-                      variant="outline"
-                      onPress={() => {
-                        setStoreModalState(null);
-                        setTimeout(() => setStoreModalState("hub"), 300);
-                      }}
-                      className="mr-3 py-3 px-6"
-                    />
-                    <Button
-                      title="Save"
-                      onPress={handleSaveSection}
-                      className="py-3 px-8"
-                    />
-                  </View>
-                </ScrollView>
-              </Card>
-            </Pressable>
-          </KeyboardAvoidingView>
-        </Pressable>
-      </Modal>
-
-      {/* ========================================================= */}
-      {/* 3rd POP-UP: OPTION MANAGER (List inside a specific Category) */}
-      {/* ========================================================= */}
-      <Modal
-        visible={storeModalState === "optionManager"}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setStoreModalState(null)}
-      >
-        <Pressable
-          className="flex-1 justify-center px-4 py-12"
-          style={{ backgroundColor: "rgba(0, 0, 0, 0.7)" }}
-          onPress={() => {
-            setStoreModalState(null);
-            setTimeout(() => setStoreModalState("hub"), 300);
-          }}
-        >
-          <Pressable onPress={(e) => e.stopPropagation()}>
-            <Card
-              variant="default"
-              className="p-6 rounded-3xl border-0 shadow-lg"
-              style={{ width: "100%", maxHeight: "100%" }}
-            >
-              <View className="flex-row justify-between items-center mb-4">
-                <Text
-                  className="text-xl font-bold"
-                  style={{ color: theme.text }}
-                >
-                  Modify {currentActiveSection?.title}
-                </Text>
-                <Pressable
-                  onPress={() => {
-                    setStoreModalState(null);
-                    setTimeout(() => setStoreModalState("hub"), 300);
-                  }}
-                  className="p-2 -mr-2"
-                  hitSlop={15}
-                >
-                  <Text
-                    className="text-lg font-bold"
-                    style={{ color: theme.muted }}
-                  >
-                    ✕
-                  </Text>
-                </Pressable>
-              </View>
-
-              <Pressable
-                onPress={() => openOptionEditor()}
-                className="mb-4 p-4 rounded-2xl items-center border-2 border-dashed"
-                style={{ borderColor: theme.border }}
-              >
-                <Text
-                  className="text-sm font-bold"
-                  style={{ color: theme.text }}
-                >
-                  + Add New {currentActiveSection?.title}
-                </Text>
-              </Pressable>
-
-              <View
-                className="rounded-2xl p-2"
-                style={{
-                  backgroundColor: theme.isDark
-                    ? "rgba(255, 255, 255, 0.04)"
-                    : "rgba(0, 0, 0, 0.03)",
-                  height: 350,
-                }}
-              >
-                <ScrollView
-                  showsVerticalScrollIndicator={true}
-                  style={{ flex: 1 }}
-                  contentContainerStyle={{ paddingBottom: 10 }}
-                >
-                  {currentActiveSection?.options.map((opt) => (
-                    <View
-                      key={opt.id}
-                      className="flex-row justify-between items-center p-3 mb-2 rounded-xl"
-                      style={{ backgroundColor: theme.card || theme.bg }}
-                    >
-                      <View className="flex-row items-center flex-1 mr-2">
-                        <View className="flex-1">
-                          <Text
-                            className="text-sm font-bold flex-1"
-                            style={{
-                              color: opt.isActive ? theme.text : theme.muted,
-                            }}
-                            numberOfLines={1}
-                          >
-                            {opt.value}
-                          </Text>
-                          {opt.subValue ? (
-                            <Text
-                              className="text-[10px]"
-                              style={{ color: theme.muted }}
-                              numberOfLines={1}
-                            >
-                              {opt.subValue}
-                            </Text>
-                          ) : null}
-                        </View>
-                      </View>
-                      <View className="flex-row items-center gap-2">
-                        {currentActiveSection.selectionType === "single" ? (
-                          <Pressable
-                            onPress={() =>
-                              toggleStoreOptionVisibility(
-                                currentActiveSection.id,
-                                opt.id,
-                              )
-                            }
-                            hitSlop={10}
-                            className="p-1"
-                          >
-                            <View
-                              className="w-5 h-5 rounded-full border-2 items-center justify-center"
-                              style={{
-                                borderColor: opt.isActive
-                                  ? theme.primary
-                                  : theme.muted,
-                              }}
-                            >
-                              {opt.isActive && (
-                                <View
-                                  className="w-2.5 h-2.5 rounded-full"
-                                  style={{ backgroundColor: theme.primary }}
-                                />
-                              )}
-                            </View>
-                          </Pressable>
-                        ) : (
-                          <Switch
-                            value={opt.isActive}
-                            onValueChange={() =>
-                              toggleStoreOptionVisibility(
-                                currentActiveSection.id,
-                                opt.id,
-                              )
-                            }
-                            trackColor={{
-                              false: theme.border,
-                              true: theme.primary,
-                            }}
-                            thumbColor={"#ffffff"}
-                            style={{ transform: [{ scale: 0.75 }] }}
-                          />
-                        )}
-                        <Pressable
-                          onPress={() => openOptionEditor(opt)}
-                          hitSlop={10}
-                          className="p-1 ml-1"
-                        >
-                          <Feather
-                            name="edit-2"
-                            size={16}
-                            color={theme.primary}
-                          />
-                        </Pressable>
-                        <Pressable
-                          onPress={() => handleDeleteOption(opt.id, opt.value)}
-                          hitSlop={10}
-                          className="p-1"
-                        >
-                          <Feather
-                            name="trash-2"
-                            size={16}
-                            color={theme.danger}
-                          />
-                        </Pressable>
-                      </View>
-                    </View>
-                  ))}
-                </ScrollView>
-              </View>
-
-              <View className="flex-row justify-end mt-4">
-                <Button
-                  title="Back to Hub"
-                  variant="outline"
-                  onPress={() => {
-                    setStoreModalState(null);
-                    setTimeout(() => setStoreModalState("hub"), 300);
-                  }}
-                  className="py-3 px-6"
-                />
-              </View>
-            </Card>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {/* ========================================================= */}
-      {/* 4th POP-UP: STORE SINGLE ITEM EDITOR */}
-      {/* ========================================================= */}
-      <Modal
-        visible={storeModalState === "optionEditor"}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setStoreModalState(null)}
-      >
-        <Pressable
-          className="flex-1 justify-center px-4"
-          style={{ backgroundColor: "rgba(0, 0, 0, 0.7)" }}
-          onPress={() => {
-            setStoreModalState(null);
-            setTimeout(() => setStoreModalState("optionManager"), 300);
-          }}
-        >
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-          >
-            <Pressable onPress={(e) => e.stopPropagation()}>
-              <Card
-                variant="default"
-                className="rounded-3xl border-0 shadow-lg p-0 overflow-hidden max-h-[80vh]"
-              >
-                <ScrollView
-                  showsVerticalScrollIndicator={false}
-                  contentContainerStyle={{ padding: 24 }}
-                >
-                  <Text
-                    className="text-xl font-bold mb-5"
-                    style={{ color: theme.text }}
-                  >
-                    {editingOptionId
-                      ? `Edit ${currentActiveSection?.title || "Item"}`
-                      : `Add New ${currentActiveSection?.title || "Item"}`}
-                  </Text>
-
-                  {(() => {
-                    let label1 = "Value";
-                    let placeholder1 = `Enter ${currentActiveSection?.title?.toLowerCase() || "value"}`;
-                    let showInput2 = false;
-                    let label2 = "";
-                    let placeholder2 = "";
-                    let kbdType: any = "default";
-
-                    if (currentActiveSection?.id === "sd_rest") {
-                      label1 = "Restaurant Name";
-                      placeholder1 = "e.g. Foodie Verse";
-                    } else if (currentActiveSection?.id === "sd_tax") {
-                      label1 = "Tax Percentage (%)";
-                      placeholder1 = "e.g. 5";
-                      kbdType = "numeric";
-                    } else if (currentActiveSection?.id === "sd_wifi") {
-                      label1 = "Network SSID (Name)";
-                      placeholder1 = "e.g. FoodieVerse_Guest";
-                      showInput2 = true;
-                      label2 = "Password";
-                      placeholder2 = "e.g. SpicyBiryani!";
-                    } else if (currentActiveSection?.id === "sd_phrases") {
-                      label1 = "Greeting Phrase";
-                      placeholder1 = "e.g. Welcome back!";
-                    } else if (currentActiveSection?.id === "sd_search") {
-                      label1 = "Search Placeholder";
-                      placeholder1 = "e.g. Search for 'Biryani'";
-                    } else if (currentActiveSection?.id === "sd_branches") {
-                      label1 = "Branch Location";
-                      placeholder1 = "e.g. Banjara Hills, Hyderabad";
-                    } else {
-                      label1 = `${currentActiveSection?.title || "Item"} Name`;
-                    }
-
-                    return (
-                      <>
-                        <Text
-                          className="text-sm font-bold mb-2 uppercase"
-                          style={{ color: theme.muted }}
-                        >
-                          {label1}
-                        </Text>
-
-                        {currentActiveSection?.id === "sd_branches" && (
-                          <View className="flex-row gap-2 mb-3">
-                            <Pressable
-                              onPress={() => {
-                                Alert.alert(
-                                  "Location Access",
-                                  "Simulating fetching GPS coordinates...",
-                                );
-                                setInputVal1("Madhapur, Hyderabad, Telangana");
-                              }}
-                              className="flex-1 p-3 rounded-xl items-center justify-center border border-dashed"
-                              style={{
-                                borderColor: theme.primary,
-                                backgroundColor: theme.card,
-                              }}
-                            >
-                              <Text
-                                className="text-xs font-bold"
-                                style={{ color: theme.primary }}
-                              >
-                                📍 Current Location
-                              </Text>
-                            </Pressable>
-                            <Pressable
-                              onPress={() => {
-                                Alert.alert(
-                                  "Map Preview",
-                                  "Map view will open here. (Backend required)",
-                                );
-                                setInputVal1(
-                                  "Banjara Hills, Hyderabad, Telangana",
-                                );
-                              }}
-                              className="flex-1 p-3 rounded-xl items-center justify-center border border-dashed"
-                              style={{
-                                borderColor: theme.primary,
-                                backgroundColor: theme.card,
-                              }}
-                            >
-                              <Text
-                                className="text-xs font-bold"
-                                style={{ color: theme.primary }}
-                              >
-                                🗺️ Open Map
-                              </Text>
-                            </Pressable>
-                          </View>
-                        )}
-
-                        <TextInput
-                          placeholder={placeholder1}
-                          placeholderTextColor={theme.muted}
-                          value={inputVal1}
-                          onChangeText={setInputVal1}
-                          keyboardType={kbdType}
-                          className="px-4 rounded-xl mb-4 font-bold"
-                          style={{
-                            backgroundColor: theme.bg,
-                            color: theme.text,
-                            fontSize: 18,
-                            height: 56,
-                            textAlignVertical: "center",
-                          }}
-                          autoFocus={currentActiveSection?.id !== "sd_branches"}
-                        />
-
-                        {showInput2 && (
-                          <>
-                            <Text
-                              className="text-sm font-bold mb-2 mt-2 uppercase"
-                              style={{ color: theme.muted }}
-                            >
-                              {label2}
-                            </Text>
-                            <TextInput
-                              placeholder={placeholder2}
-                              placeholderTextColor={theme.muted}
-                              value={inputVal2}
-                              onChangeText={setInputVal2}
-                              className="px-4 rounded-xl mb-6 font-bold"
-                              style={{
-                                backgroundColor: theme.bg,
-                                color: theme.text,
-                                fontSize: 18,
-                                height: 56,
-                                textAlignVertical: "center",
-                              }}
-                            />
-                          </>
-                        )}
-                      </>
-                    );
-                  })()}
-
-                  <View className="flex-row justify-end mt-2">
-                    <Button
-                      title="Cancel"
-                      variant="outline"
-                      onPress={() => {
-                        setStoreModalState(null);
-                        setTimeout(
-                          () => setStoreModalState("optionManager"),
-                          300,
-                        );
-                      }}
-                      className="mr-3 py-3 px-6"
-                    />
-                    <Button
-                      title="Save"
-                      onPress={handleSaveOption}
-                      className="py-3 px-8"
-                    />
-                  </View>
-                </ScrollView>
-              </Card>
-            </Pressable>
-          </KeyboardAvoidingView>
-        </Pressable>
-      </Modal>
-
-      {/* ========================================================= */}
       {/* CATEGORIES MODIFY HUB POP-UP (LIST) */}
       {/* ========================================================= */}
       <Modal
@@ -1709,7 +1519,7 @@ export default function OperationsDashboard() {
         onRequestClose={() => setIsModifyModalVisible(false)}
       >
         <Pressable
-          className="flex-1 justify-center px-4 py-12"
+          className="flex-1 justify-center px-4 py-6"
           style={{ backgroundColor: "rgba(0, 0, 0, 0.7)" }}
           onPress={() => setIsModifyModalVisible(false)}
         >
@@ -1717,7 +1527,7 @@ export default function OperationsDashboard() {
             <Card
               variant="default"
               className="p-6 rounded-3xl border-0 shadow-lg"
-              style={{ width: "100%", maxHeight: "100%" }}
+              style={{ width: "100%", maxHeight: 550 }}
             >
               <View className="flex-row justify-between items-center mb-4">
                 <Text
@@ -1766,6 +1576,8 @@ export default function OperationsDashboard() {
                   showsVerticalScrollIndicator={true}
                   style={{ flex: 1 }}
                   contentContainerStyle={{ paddingBottom: 10 }}
+                  nestedScrollEnabled={true}
+                  keyboardShouldPersistTaps="handled"
                 >
                   {categories.map((category) => (
                     <View
@@ -1773,7 +1585,10 @@ export default function OperationsDashboard() {
                       className="flex-row justify-between items-center p-3 mb-2 rounded-xl"
                       style={{ backgroundColor: theme.card || theme.bg }}
                     >
-                      <View className="flex-row items-center flex-1 mr-2">
+                      <Pressable
+                        className="flex-row items-center flex-1 mr-2"
+                        onPress={() => openEditCategoryModal(category)}
+                      >
                         <Text className="text-xl mr-3">{category.icon}</Text>
                         <Text
                           className="text-sm font-bold flex-1"
@@ -1784,7 +1599,7 @@ export default function OperationsDashboard() {
                         >
                           {category.name}
                         </Text>
-                      </View>
+                      </Pressable>
                       <View className="flex-row items-center gap-2">
                         <Switch
                           value={category.isActive}
@@ -1798,30 +1613,6 @@ export default function OperationsDashboard() {
                           thumbColor={"#ffffff"}
                           style={{ transform: [{ scale: 0.75 }] }}
                         />
-                        <Pressable
-                          onPress={() => openEditCategoryModal(category)}
-                          hitSlop={10}
-                          className="p-1"
-                        >
-                          <Feather
-                            name="edit-2"
-                            size={16}
-                            color={theme.primary}
-                          />
-                        </Pressable>
-                        <Pressable
-                          onPress={() =>
-                            handleDeleteCategory(category.id, category.name)
-                          }
-                          hitSlop={10}
-                          className="p-1"
-                        >
-                          <Feather
-                            name="trash-2"
-                            size={16}
-                            color={theme.danger}
-                          />
-                        </Pressable>
                       </View>
                     </View>
                   ))}

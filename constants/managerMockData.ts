@@ -84,6 +84,7 @@ export const MANAGER_MOCK_DATA: {
   crossSellItems: CrossSellList[];
   foodItems: FoodItem[];
   availableCoupons: any[];
+  orders: any[];
 } = {
   managers: [
     {
@@ -160,9 +161,19 @@ export const MANAGER_MOCK_DATA: {
       title: "Restaurant Name",
       selectionType: "single",
       isSectionActive: true,
+      options: [{ id: "opt_1", value: "Foodie Verse", isActive: true }],
+    },
+    {
+      id: "sd_address",
+      title: "Manage Hotel Address",
+      selectionType: "single",
+      isSectionActive: true,
       options: [
-        { id: "rn1", value: "Foodie Verse", isActive: true },
-        { id: "rn2", value: "Foodie Verse Express", isActive: false },
+        {
+          id: "opt_addr_1",
+          value: "Hitech City, Hyderabad, Telangana",
+          isActive: true,
+        },
       ],
     },
     {
@@ -170,11 +181,7 @@ export const MANAGER_MOCK_DATA: {
       title: "Tax Details (GST)",
       selectionType: "single",
       isSectionActive: true,
-      options: [
-        { id: "t1", value: "5%", isActive: true },
-        { id: "t2", value: "12%", isActive: false },
-        { id: "t3", value: "18%", isActive: false },
-      ],
+      options: [{ id: "opt_2", value: "5%", isActive: true }],
     },
     {
       id: "sd_wifi",
@@ -183,16 +190,10 @@ export const MANAGER_MOCK_DATA: {
       isSectionActive: true,
       options: [
         {
-          id: "w1",
+          id: "opt_3",
           value: "FoodieVerse_Guest",
           subValue: "SpicyBiryani!",
           isActive: true,
-        },
-        {
-          id: "w2",
-          value: "FoodieVerse_Staff",
-          subValue: "StaffOnly123",
-          isActive: false,
         },
       ],
     },
@@ -449,6 +450,46 @@ export const MANAGER_MOCK_DATA: {
       code: "FESTIVAL20",
       description: "20% OFF on all items",
       isActive: false,
+    },
+  ],
+  orders: [
+    {
+      id: "ord_01",
+      customerName: "Siva Narayana",
+      phone: "+91 9999999996",
+      branch: "Hitech City Premium",
+      mode: "Delivery",
+      items: [
+        { name: "Chicken Dum Biryani", qty: 2, price: 340 },
+        { name: "Coke (500ml)", qty: 2, price: 60 },
+      ],
+      totalAmount: 800,
+      status: "pending", // pending -> preparing -> ready -> completed
+      time: "2 mins ago",
+    },
+    {
+      id: "ord_02",
+      customerName: "Rahul Sharma",
+      phone: "+91 9876543210",
+      branch: "Hitech City Premium",
+      mode: "Takeaway",
+      items: [{ name: "Grills & Starters Platter", qty: 1, price: 450 }],
+      totalAmount: 450,
+      status: "pending",
+      time: "12 mins ago",
+    },
+    {
+      id: "ord_03",
+      customerName: "Anita Reddy",
+      phone: "+91 9123456789",
+      branch: "Hitech City Premium",
+      mode: "Delivery",
+      items: [
+        { name: "Butter Naan & Paneer Butter Masala", qty: 2, price: 320 },
+      ],
+      totalAmount: 640,
+      status: "preparing",
+      time: "25 mins ago",
     },
   ],
 };
