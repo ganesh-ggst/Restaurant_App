@@ -70,6 +70,9 @@ export default function EditCrossSellScreen() {
       ? (initialItem as any).quantity.toString()
       : "",
   );
+  const [dietaryPreference, setDietaryPreference] = useState<"veg" | "non-veg">(
+    (initialItem as any).dietaryPreference || "veg",
+  );
   const [isSaving, setIsSaving] = useState(false);
 
   const parsedOfferPrice =
@@ -162,7 +165,7 @@ export default function EditCrossSellScreen() {
           name: itemName.trim(),
           description: itemDescription.trim(),
           images,
-          dietaryPreference: "veg" as const,
+          dietaryPreference,
           rating: 4.5,
           prepTime: "15 mins",
           badge: { type: "none" as const, text: "" },
@@ -202,6 +205,7 @@ export default function EditCrossSellScreen() {
           price: regPrice,
           offerPrice: offPrice,
           quantity: qty,
+          dietaryPreference,
         };
       }
       setIsSaving(false);
@@ -304,6 +308,58 @@ export default function EditCrossSellScreen() {
             Details <Text style={{ color: theme.danger }}>*</Text>
           </Text>
           <Card variant="default" className="p-4 mb-6 rounded-3xl border-0">
+            {/* Dietary Preference Selection (Matching Reference UI Style) */}
+            <Text
+              className="text-xs font-bold mb-2 uppercase"
+              style={{ color: theme.muted }}
+            >
+              Dietary Preference
+            </Text>
+            <View className="flex-row gap-3 mb-4">
+              <Pressable
+                onPress={() => setDietaryPreference("veg")}
+                className="flex-1 py-3.5 rounded-2xl items-center flex-row justify-center gap-2"
+                style={{
+                  backgroundColor:
+                    dietaryPreference === "veg" ? "#22c55e" : "transparent",
+                  borderWidth: dietaryPreference === "veg" ? 0 : 1,
+                  borderColor: theme.border,
+                }}
+              >
+                <Text className="text-sm">🟢</Text>
+                <Text
+                  className="text-sm font-bold"
+                  style={{
+                    color: dietaryPreference === "veg" ? "#ffffff" : theme.text,
+                  }}
+                >
+                  Veg
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => setDietaryPreference("non-veg")}
+                className="flex-1 py-3.5 rounded-2xl items-center flex-row justify-center gap-2"
+                style={{
+                  backgroundColor:
+                    dietaryPreference === "non-veg" ? "#22c55e" : "transparent",
+                  borderWidth: dietaryPreference === "non-veg" ? 0 : 1,
+                  borderColor: theme.border,
+                }}
+              >
+                <Text className="text-sm">🔴</Text>
+                <Text
+                  className="text-sm font-bold"
+                  style={{
+                    color:
+                      dietaryPreference === "non-veg" ? "#ffffff" : theme.text,
+                  }}
+                >
+                  Non-Veg
+                </Text>
+              </Pressable>
+            </View>
+
             <Text
               className="text-xs font-bold mb-2 uppercase"
               style={{ color: theme.muted }}
