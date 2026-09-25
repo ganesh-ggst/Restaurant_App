@@ -19,6 +19,11 @@ export default function ProfileLayout() {
       <Stack.Screen name="address" />
       <Stack.Screen name="security" />
       <Stack.Screen name="notifications" />
+      <Stack.Screen name="add-manager" />
+      <Stack.Screen name="store-details/index" />
+      <Stack.Screen name="store-details/[id]" />
+      <Stack.Screen name="storefront-display/index" />
+      <Stack.Screen name="storefront-display/[id]" />
     </Stack>
   );
 }
