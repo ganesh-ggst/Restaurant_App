@@ -462,8 +462,10 @@ export default function EditCrossSellScreen() {
               placeholder="e.g. 50"
               placeholderTextColor={theme.muted}
               value={itemQuantity}
-              onChangeText={setItemQuantity}
-              keyboardType="numeric"
+              onChangeText={(text) =>
+                setItemQuantity(text.replace(/[^0-9]/g, ""))
+              }
+              keyboardType="number-pad"
               className="px-4 rounded-xl font-bold"
               style={{
                 backgroundColor: theme.bg,

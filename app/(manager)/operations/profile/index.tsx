@@ -10,13 +10,15 @@ import {
   MessageSquare,
   Moon,
   Palette,
-  ShieldCheck,
+  Shield,
   Smartphone,
+  Sparkles,
   Store,
   Sun,
+  UserPlus,
   UserRound,
   UserRoundPen,
-  X,
+  X
 } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
 import { useCallback, useState } from "react";
@@ -151,10 +153,28 @@ export default function ManagerProfileScreen() {
               theme={theme}
             />
             <SettingsRow
-              icon={ShieldCheck}
-              label="Security"
+              icon={Sparkles}
+              label="Storefront Display"
+              onPress={() =>
+                router.push(
+                  "/(manager)/operations/profile/storefront-display" as any,
+                )
+              }
+              theme={theme}
+            />
+            <SettingsRow
+              icon={Shield}
+              label="Security & Access"
               onPress={() =>
                 router.push("/(manager)/operations/profile/security" as any)
+              }
+              theme={theme}
+            />
+            <SettingsRow
+              icon={UserPlus}
+              label="Add New Manager"
+              onPress={() =>
+                router.push("/(manager)/operations/profile/add-manager" as any)
               }
               theme={theme}
             />

@@ -1,9 +1,10 @@
 import { Feather } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
+  Animated,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -31,6 +32,32 @@ export default function OperationsDashboard() {
   const scrollViewRef = useRef<ScrollView>(null);
 
   const { currentManager } = useCurrentManager();
+
+  // Unread Notification State
+  const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
+  const lastAlertCountRef = useRef(0);
+
+  // Notification Pulse Animation
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (hasUnreadNotifications) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.35,
+            duration: 700,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 700,
+            useNativeDriver: true,
+          }),
+        ]),
+      ).start();
+    }
+  }, [hasUnreadNotifications, pulseAnim]);
 
   // Data State
   const [foodItems, setFoodItems] = useState(MANAGER_MOCK_DATA.foodItems);
@@ -108,15 +135,32 @@ export default function OperationsDashboard() {
     (s) => s.id === selectedSectionId,
   );
 
-  // Refresh & Prune Arrays
+  // Refresh & Prune Arrays & Smart Notification Check
   useFocusEffect(
     useCallback(() => {
-      setFoodItems([...MANAGER_MOCK_DATA.foodItems]);
+      const updatedFoodItems = [...MANAGER_MOCK_DATA.foodItems];
+      setFoodItems(updatedFoodItems);
       setCategories([...MANAGER_MOCK_DATA.categories]);
       setStoreDetails([...MANAGER_MOCK_DATA.storeDetails]);
       if (MANAGER_MOCK_DATA.availableCoupons) {
         setCoupons([...MANAGER_MOCK_DATA.availableCoupons]);
       }
+
+      // Check current active alerts (low stock < 10 or unavailable items)
+      const currentAlertsCount = updatedFoodItems.filter(
+        (item) =>
+          (item.quantity !== undefined &&
+            item.quantity !== null &&
+            item.quantity < 10) ||
+          !item.isAvailable,
+      ).length;
+
+      // Only trigger notification if new alerts appeared
+      if (currentAlertsCount > lastAlertCountRef.current) {
+        setHasUnreadNotifications(true);
+      }
+      lastAlertCountRef.current = currentAlertsCount;
+
       setQuickInventoryIds((prevIds) =>
         prevIds.filter((id) =>
           MANAGER_MOCK_DATA.foodItems.some((item) => item.id === id),
@@ -410,15 +454,51 @@ export default function OperationsDashboard() {
                 Manage menu & store settings
               </Text>
             </View>
-            <Pressable
-              onPress={() =>
-                router.push("/(manager)/operations/profile" as any)
-              }
-              className="p-3 rounded-full"
-              style={{ backgroundColor: theme.card }}
-            >
-              <Text className="text-lg">👤</Text>
-            </Pressable>
+            <View className="flex-row items-center gap-3">
+              <Pressable
+                onPress={() => {
+                  setHasUnreadNotifications(false);
+                  lastAlertCountRef.current = foodItems.filter(
+                    (item) =>
+                      (item.quantity !== undefined &&
+                        item.quantity !== null &&
+                        item.quantity < 10) ||
+                      !item.isAvailable,
+                  ).length;
+                  router.push(
+                    "/(manager)/operations/profile/notifications" as any,
+                  );
+                }}
+                className="p-3 rounded-full relative"
+                style={{ backgroundColor: theme.card }}
+              >
+                <Feather name="bell" size={20} color={theme.text} />
+                {hasUnreadNotifications && (
+                  <Animated.View
+                    style={{
+                      position: "absolute",
+                      top: 8,
+                      right: 8,
+                      transform: [{ scale: pulseAnim }],
+                    }}
+                  >
+                    <View
+                      className="w-3 h-3 rounded-full shadow-md"
+                      style={{ backgroundColor: theme.primary }}
+                    />
+                  </Animated.View>
+                )}
+              </Pressable>
+              <Pressable
+                onPress={() =>
+                  router.push("/(manager)/operations/profile" as any)
+                }
+                className="p-3 rounded-full"
+                style={{ backgroundColor: theme.card }}
+              >
+                <Text className="text-lg">👤</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
 
@@ -742,7 +822,7 @@ export default function OperationsDashboard() {
               onFocus={() => {
                 setTimeout(() => {
                   scrollViewRef.current?.scrollTo({
-                    y: 450,
+                    y: 650,
                     animated: true,
                   });
                 }, 150);

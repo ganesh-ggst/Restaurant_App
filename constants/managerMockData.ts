@@ -85,6 +85,7 @@ export const MANAGER_MOCK_DATA: {
   foodItems: FoodItem[];
   availableCoupons: any[];
   orders: any[];
+  storefrontDisplay: any[];
 } = {
   managers: [
     {
@@ -194,6 +195,47 @@ export const MANAGER_MOCK_DATA: {
           value: "FoodieVerse_Guest",
           subValue: "SpicyBiryani!",
           isActive: true,
+        },
+      ],
+    },
+    {
+      id: "sd_charges",
+      title: "Restaurant Charges",
+      selectionType: "single",
+      isSectionActive: true,
+      options: [
+        {
+          id: "opt_charges_1",
+          value: "Packaging: ₹20 | Platform: ₹10 | Delivery: ₹30",
+          subValue:
+            "Packaging Charge: ₹20, Platform Fee: ₹10, Base Delivery Fee: ₹30",
+          isActive: true,
+        },
+      ],
+    },
+    {
+      id: "sd_delivery",
+      title: "Delivery Options",
+      selectionType: "multiple",
+      isSectionActive: true,
+      options: [
+        {
+          id: "opt_del_1",
+          value: "Express (₹29)",
+          subValue: "Fastest delivery, directly to you! • 20-25 mins",
+          isActive: true,
+        },
+        {
+          id: "opt_del_2",
+          value: "Standard (Free)",
+          subValue: "Minimal order grouping • 25-30 mins",
+          isActive: false,
+        },
+        {
+          id: "opt_del_3",
+          value: "Eco Saver (-₹10)",
+          subValue: "Lesser CO2 by order grouping • 30-40 mins",
+          isActive: false,
         },
       ],
     },
@@ -450,6 +492,84 @@ export const MANAGER_MOCK_DATA: {
       code: "FESTIVAL20",
       description: "20% OFF on all items",
       isActive: false,
+    },
+  ],
+  storefrontDisplay: [
+    {
+      id: "sf_greetings",
+      title: "Greetings",
+      selectionType: "multiple",
+      isSectionActive: true,
+      options: [
+        { id: "g_1", value: "What are you craving?", isActive: true },
+        { id: "g_2", value: "Let's get you something tasty!", isActive: true },
+        { id: "g_3", value: "Ready for a delicious meal?", isActive: true },
+        { id: "g_4", value: "How are you eating today?", isActive: true },
+      ],
+    },
+    {
+      id: "sf_search",
+      title: "Search Placeholders",
+      selectionType: "multiple",
+      isSectionActive: true,
+      options: [
+        { id: "sp_1", value: "Search for 'Sweets'", isActive: true },
+        { id: "sp_2", value: "Search for 'Pizza'", isActive: true },
+        { id: "sp_3", value: "Search for 'Biryani'", isActive: true },
+        { id: "sp_4", value: "Search for 'Cake'", isActive: true },
+      ],
+    },
+    {
+      id: "sf_featured",
+      title: "Featured Content",
+      selectionType: "single",
+      options: [
+        {
+          id: "fc_1",
+          value: "Freshly Crafted Daily",
+          subValue: "Featured Reel Banner • Image/Video",
+          isActive: true,
+        },
+      ],
+    },
+    {
+      id: "sf_empty",
+      title: "Empty State",
+      selectionType: "single",
+      isSectionActive: true,
+      options: [
+        {
+          id: "es_1",
+          value: "Oops! No matches found.",
+          subValue: "We couldn't find anything exactly matching.",
+          isActive: true,
+        },
+      ],
+    },
+    {
+      id: "sf_celebrations",
+      title: "Celebration Emojis",
+      selectionType: "multiple",
+      options: [
+        {
+          id: "sf_cel_1",
+          value: "🎉",
+          subValue: "Checkout success confetti effect",
+          isActive: true,
+        },
+        {
+          id: "sf_cel_2",
+          value: "✨",
+          subValue: "Checkout success sparkle effect",
+          isActive: false,
+        },
+        {
+          id: "sf_cel_3",
+          value: "🌸",
+          subValue: "Checkout success floral effect",
+          isActive: false,
+        },
+      ],
     },
   ],
   orders: [
