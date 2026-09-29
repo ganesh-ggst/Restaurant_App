@@ -29,7 +29,6 @@ export default function NotificationsScreen() {
 
   const [foodItems, setFoodItems] = useState(MANAGER_MOCK_DATA.foodItems);
 
-  // Custom Restock Modal States
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [selectedItemName, setSelectedItemName] = useState("");

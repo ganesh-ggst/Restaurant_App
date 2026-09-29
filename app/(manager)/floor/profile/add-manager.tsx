@@ -1,4 +1,4 @@
 import AddManagerModal from "../../../../components/manager/AddManagerModal";
-export default function OperationsAddManager() {
+export default function FloorAddManager() {
   return <AddManagerModal />;
 }

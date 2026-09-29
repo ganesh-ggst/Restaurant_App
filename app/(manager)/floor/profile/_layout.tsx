@@ -1,7 +1,7 @@
 import { Stack } from "expo-router";
 import { useAppTheme } from "../../../../hooks/useAppTheme";
 
-export default function ProfileLayout() {
+export default function FloorProfileLayout() {
   const theme = useAppTheme();
 
   return (

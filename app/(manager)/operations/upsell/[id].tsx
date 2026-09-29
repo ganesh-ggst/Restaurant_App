@@ -308,7 +308,6 @@ export default function EditCrossSellScreen() {
             Details <Text style={{ color: theme.danger }}>*</Text>
           </Text>
           <Card variant="default" className="p-4 mb-6 rounded-3xl border-0">
-            {/* Dietary Preference Selection (Matching Reference UI Style) */}
             <Text
               className="text-xs font-bold mb-2 uppercase"
               style={{ color: theme.muted }}

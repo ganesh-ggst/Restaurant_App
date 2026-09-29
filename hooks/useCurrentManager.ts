@@ -1,33 +1,40 @@
-import { useLocalSearchParams } from "expo-router";
-import { MANAGER_MOCK_DATA } from "../constants/managerMockData";
+import { useLocalSearchParams, usePathname } from "expo-router";
+import {
+  MANAGER_MOCK_DATA,
+  MANAGER_PHONES,
+} from "../constants/managerMockData";
 
 export function useCurrentManager() {
   const { phone } = useLocalSearchParams<{ phone: string }>();
+  const pathname = usePathname();
 
-  // Normalize phone by restoring the '+' sign if URL decoding stripped it
   const normalizedPhone = phone?.replace(/\s/g, "+") || "";
 
-  // Lookup the manager in the mock database
   let currentManager = MANAGER_MOCK_DATA.managers?.find(
-    (m) => m.phone === normalizedPhone,
+    (m: any) =>
+      m.phone === normalizedPhone ||
+      m.phoneNumber === normalizedPhone ||
+      m.mobile === normalizedPhone ||
+      m.id === normalizedPhone,
   );
 
-  // Fallback/Safety check: if mock data array doesn't have it yet, assign default branch security lock
-  if (!currentManager && normalizedPhone) {
-    currentManager = {
-      id: "mgr_01",
-      name: "Siva Narayana",
-      phone: normalizedPhone,
-      managerType: "operations",
-      assignedBranch: "Hitech City Premium", // Security lock to single outlet
-    } as any;
-  } else if (currentManager && !(currentManager as any).assignedBranch) {
-    (currentManager as any).assignedBranch = "Hitech City Premium";
+  if (!currentManager) {
+    const isFloorRoute = pathname?.includes("floor");
+    const targetType = isFloorRoute ? "floor" : "operations";
+
+    currentManager = MANAGER_MOCK_DATA.managers?.find(
+      (m: any) => m.managerType?.toLowerCase() === targetType,
+    );
+  }
+
+  if (!currentManager) {
+    currentManager = MANAGER_MOCK_DATA.managers?.[0];
   }
 
   return {
     rawPhone: phone,
-    normalizedPhone,
+    normalizedPhone:
+      normalizedPhone || currentManager?.phone || MANAGER_PHONES.ops_1,
     currentManager,
     isOperations: currentManager?.managerType === "operations",
     isFloor: currentManager?.managerType === "floor",

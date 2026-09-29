@@ -33,11 +33,9 @@ export default function OperationsDashboard() {
 
   const { currentManager } = useCurrentManager();
 
-  // Unread Notification State
   const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
   const lastAlertCountRef = useRef(0);
 
-  // Notification Pulse Animation
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
@@ -59,7 +57,6 @@ export default function OperationsDashboard() {
     }
   }, [hasUnreadNotifications, pulseAnim]);
 
-  // Data State
   const [foodItems, setFoodItems] = useState(MANAGER_MOCK_DATA.foodItems);
   const [categories, setCategories] = useState(MANAGER_MOCK_DATA.categories);
   const [storeDetails, setStoreDetails] = useState<StoreDetailSection[]>(
@@ -70,7 +67,6 @@ export default function OperationsDashboard() {
     MANAGER_MOCK_DATA.availableCoupons || [],
   );
 
-  // Quick Inventory State
   const [quickInventoryIds, setQuickInventoryIds] = useState<string[]>([]);
   const [quickSearchQuery, setQuickSearchQuery] = useState("");
   const [quickStockFilter, setQuickStockFilter] = useState<
@@ -83,7 +79,6 @@ export default function OperationsDashboard() {
 
   const [activeCategoryIndex, setActiveCategoryIndex] = useState(0);
 
-  // === MODAL STATES ===
   const [storeModalState, setStoreModalState] = useState<
     "hub" | "sectionEditor" | "optionManager" | "optionEditor" | null
   >(null);
@@ -100,7 +95,6 @@ export default function OperationsDashboard() {
     "single",
   );
 
-  // Category Modal States
   const [isModifyModalVisible, setIsModifyModalVisible] = useState(false);
   const [isCategoryEditorVisible, setIsCategoryEditorVisible] = useState(false);
   const [categoryModalMode, setCategoryModalMode] = useState<"add" | "edit">(
@@ -112,7 +106,6 @@ export default function OperationsDashboard() {
   const [categoryName, setCategoryName] = useState("");
   const [categoryIcon, setCategoryIcon] = useState("");
 
-  // Coupon Modal States
   const [isCouponHubVisible, setIsCouponHubVisible] = useState(false);
   const [isCouponEditorVisible, setIsCouponEditorVisible] = useState(false);
   const [couponModalMode, setCouponModalMode] = useState<"add" | "edit">("add");
@@ -121,7 +114,6 @@ export default function OperationsDashboard() {
     "dashboard" | "hub"
   >("hub");
 
-  // Coupon Form State
   const [couponTitle, setCouponTitle] = useState("");
   const [couponSubtitle, setCouponSubtitle] = useState("");
   const [couponCode, setCouponCode] = useState("");
@@ -135,7 +127,6 @@ export default function OperationsDashboard() {
     (s) => s.id === selectedSectionId,
   );
 
-  // Refresh & Prune Arrays & Smart Notification Check
   useFocusEffect(
     useCallback(() => {
       const updatedFoodItems = [...MANAGER_MOCK_DATA.foodItems];
@@ -146,7 +137,6 @@ export default function OperationsDashboard() {
         setCoupons([...MANAGER_MOCK_DATA.availableCoupons]);
       }
 
-      // Check current active alerts (low stock < 10 or unavailable items)
       const currentAlertsCount = updatedFoodItems.filter(
         (item) =>
           (item.quantity !== undefined &&
@@ -155,7 +145,6 @@ export default function OperationsDashboard() {
           !item.isAvailable,
       ).length;
 
-      // Only trigger notification if new alerts appeared
       if (currentAlertsCount > lastAlertCountRef.current) {
         setHasUnreadNotifications(true);
       }
@@ -201,9 +190,6 @@ export default function OperationsDashboard() {
     );
   };
 
-  // ==========================================
-  // QUICK INVENTORY HELPER LOGIC
-  // ==========================================
   const addToQuickInventory = (itemId: string) => {
     if (!quickInventoryIds.includes(itemId)) {
       setQuickInventoryIds([...quickInventoryIds, itemId]);
@@ -236,9 +222,6 @@ export default function OperationsDashboard() {
     return matchesSearch && matchesStock && matchesDietary;
   });
 
-  // ==========================================
-  // COUPONS LOGIC
-  // ==========================================
   const toggleCouponVisibility = (id: string) => {
     if (!MANAGER_MOCK_DATA.availableCoupons) return;
     const index = MANAGER_MOCK_DATA.availableCoupons.findIndex(
@@ -356,9 +339,6 @@ export default function OperationsDashboard() {
     ]);
   };
 
-  // ==========================================
-  // CATEGORY LOGIC
-  // ==========================================
   const toggleCategoryVisibility = (id: string) => {
     const index = MANAGER_MOCK_DATA.categories.findIndex((c) => c.id === id);
     if (index > -1) {
