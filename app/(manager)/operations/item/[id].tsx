@@ -58,7 +58,6 @@ export default function EditMenuItemScreen() {
           addOns: [],
         };
 
-  // State: Core & Media
   const [images, setImages] = useState<string[]>(initialItem.images || []);
   const [itemName, setItemName] = useState(initialItem.name);
   const [itemDescription, setItemDescription] = useState(
@@ -68,7 +67,6 @@ export default function EditMenuItemScreen() {
     initialItem.price ? initialItem.price.toString() : "",
   );
 
-  // FIX: Only initialize offer price if it's a valid number greater than 0, otherwise keep blank
   const [itemOfferPrice, setItemOfferPrice] = useState(
     (initialItem as any).offerPrice && (initialItem as any).offerPrice > 0
       ? (initialItem as any).offerPrice.toString()
@@ -85,7 +83,6 @@ export default function EditMenuItemScreen() {
       : "",
   );
 
-  // State: New Display & Marketing Fields
   const [itemDietary, setItemDietary] = useState<"veg" | "non-veg">(
     initialItem.dietaryPreference === "non-veg" ? "non-veg" : "veg",
   );
@@ -101,7 +98,6 @@ export default function EditMenuItemScreen() {
 
   const [isSaving, setIsSaving] = useState(false);
 
-  // Add-Ons
   const [addonGroups, setAddonGroups] = useState(
     (initialItem as any).addOns || [],
   );
@@ -312,7 +308,6 @@ export default function EditMenuItemScreen() {
 
     const regPrice = parseInt(itemPrice) || 0;
 
-    // FIX: Explicitly store as null or undefined if empty/0 so it doesn't default to 0
     const offPrice =
       itemOfferPrice.trim() !== "" &&
       !isNaN(parseInt(itemOfferPrice)) &&

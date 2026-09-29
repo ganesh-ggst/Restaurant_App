@@ -39,13 +39,11 @@ export default function CategoryDetailScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      // 1. Load standard menu items for this category
       const items = MANAGER_MOCK_DATA.foodItems.filter(
         (item) => item.categoryId === id,
       );
       setCategoryItems(items);
 
-      // 2. Load cross-sell items associated with this category
       const csList = MANAGER_MOCK_DATA.crossSellItems.find(
         (cs) => cs.triggerCategoryId === id,
       );
@@ -75,14 +73,11 @@ export default function CategoryDetailScreen() {
     ]);
   };
 
-  // --- SEPARATE ROUTING LOGIC ---
   const handleCreateNewItem = () => {
-    // Routes to the Menu Item Editor
     router.push(`/(manager)/operations/item/new?categoryId=${id}` as any);
   };
 
   const handleAddCrossSellItem = () => {
-    // Routes to the entirely separate Upsell Editor
     router.push(
       `/(manager)/operations/upsell/new?triggerCategoryId=${id}` as any,
     );
@@ -114,12 +109,10 @@ export default function CategoryDetailScreen() {
               }
             }
 
-            // Fully delete the item from global foodItems catalog
             MANAGER_MOCK_DATA.foodItems = MANAGER_MOCK_DATA.foodItems.filter(
               (item) => item.id !== itemId,
             );
 
-            // Refresh local states
             setCategoryItems([
               ...MANAGER_MOCK_DATA.foodItems.filter(
                 (item) => item.categoryId === id,
@@ -150,12 +143,10 @@ export default function CategoryDetailScreen() {
       .toLowerCase()
       .includes(searchQuery.toLowerCase());
 
-    // Stock Filter
     let matchesStock = true;
     if (stockFilter === "inStock") matchesStock = item.isAvailable;
     if (stockFilter === "outOfStock") matchesStock = !item.isAvailable;
 
-    // Dietary Filter
     let matchesDietary = true;
     if (dietaryFilter === "veg")
       matchesDietary = item.dietaryPreference === "veg";
@@ -209,7 +200,6 @@ export default function CategoryDetailScreen() {
           Manage menu items and cross-sell recommendations for this category.
         </Text>
 
-        {/* Tab Switcher */}
         <View
           className="flex-row rounded-2xl p-1 mb-4"
           style={{ backgroundColor: theme.card || theme.border }}

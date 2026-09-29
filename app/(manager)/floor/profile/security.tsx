@@ -1,4 +1,4 @@
 import SecurityModal from "../../../../components/manager/SecurityModal";
-export default function OperationsSecurity() {
+export default function FloorSecurity() {
   return <SecurityModal />;
 }

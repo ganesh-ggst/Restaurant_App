@@ -1,15 +1,15 @@
 import { useRouter } from "expo-router";
 import {
-    ArrowLeft,
-    Bike,
-    CheckCircle2,
-    ChefHat,
-    Clock,
-    Eye,
-    MapPin,
-    Package,
-    Phone,
-    ShoppingBag,
+  ArrowLeft,
+  Bike,
+  CheckCircle2,
+  ChefHat,
+  Clock,
+  Eye,
+  MapPin,
+  Package,
+  Phone,
+  ShoppingBag,
 } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
@@ -37,7 +37,6 @@ export default function ManagerOrdersScreen() {
     "all",
   );
 
-  // 30-Second Auto-Completion Timer for "Out For Delivery" orders
   useEffect(() => {
     const timer = setInterval(() => {
       let updated = false;
@@ -53,7 +52,7 @@ export default function ManagerOrdersScreen() {
         MANAGER_MOCK_DATA.orders = newOrders;
         setOrders([...newOrders]);
       }
-    }, 30000); // 30 seconds
+    }, 30000);
 
     return () => clearInterval(timer);
   }, [orders]);
@@ -101,7 +100,7 @@ export default function ManagerOrdersScreen() {
           icon: ShoppingBag,
         };
       case "out_for_delivery":
-        return null; // View only, auto completes in 30s
+        return null;
       default:
         return null;
     }

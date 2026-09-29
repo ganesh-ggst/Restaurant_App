@@ -1,4 +1,5 @@
 import StorefrontDisplayDetailComponent from "../../../../../components/manager/storefront-display/[id]";
-export default function OperationsStorefrontDisplayDetail() {
+
+export default function FloorStorefrontDisplayDetail() {
   return <StorefrontDisplayDetailComponent />;
 }

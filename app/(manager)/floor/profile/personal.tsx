@@ -1,4 +1,4 @@
 import PersonalInfoModal from "../../../../components/manager/PersonalInfoModal";
-export default function OperationsPersonalInfo() {
+export default function FloorPersonal() {
   return <PersonalInfoModal />;
 }

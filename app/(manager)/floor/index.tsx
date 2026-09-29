@@ -1,29 +1,154 @@
-import { useRouter } from "expo-router";
+import { Feather } from "@expo/vector-icons";
+import { useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Alert,
+  Animated,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { useCurrentManager } from "@/hooks/useCurrentManager";
 import { Card } from "../../../components/ui/Card";
-import { MANAGER_MOCK_DATA } from "../../../constants/managerMockData";
+import {
+  FloorTable,
+  INITIAL_FLOOR_NOTIFICATIONS,
+  INITIAL_FLOOR_TABLES,
+  MANAGER_MOCK_DATA,
+} from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
+import { useCurrentManager } from "../../../hooks/useCurrentManager";
 
-export default function ManagerDashboard() {
+export default function FloorDashboard() {
   const theme = useAppTheme();
   const router = useRouter();
-  const { currentManager, normalizedPhone, isOperations } = useCurrentManager();
+  const { currentManager, normalizedPhone } = useCurrentManager();
 
-  // const { phone } = useLocalSearchParams<{ phone: string }>();
-  // const normalizedPhone = phone?.replace(/\s/g, "+") || "";
+  const getTableNumber = (str: string) => {
+    const match = String(str).match(/\d+/);
+    return match ? match[0] : String(str).toUpperCase().trim();
+  };
 
-  // const currentManager = MANAGER_MOCK_DATA.managers.find(
-  //   (m) => m.phone === normalizedPhone,
-  // );
+  const assignedTableValues = currentManager?.assignedTables || [];
+  const assignedTableNums = new Set(
+    assignedTableValues.map((val: string) => getTableNumber(val)),
+  );
+
+  const managerAssignedTables = INITIAL_FLOOR_TABLES.filter((t) => {
+    const tNum = getTableNumber(t.tableName || t.id || "");
+    return assignedTableNums.has(tNum);
+  });
+
+  const [tables, setTables] = useState<FloorTable[]>([
+    ...managerAssignedTables,
+  ]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<
+    "all" | "available" | "occupied" | "reserved" | "billed"
+  >("all");
+
+  const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (hasUnreadNotifications) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.35,
+            duration: 700,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 700,
+            useNativeDriver: true,
+          }),
+        ]),
+      ).start();
+    }
+  }, [hasUnreadNotifications, pulseAnim]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const refreshedAssignedTables = currentManager?.assignedTables || [];
+      const refreshedNums = new Set(
+        refreshedAssignedTables.map((val: string) => getTableNumber(val)),
+      );
+      const filtered = INITIAL_FLOOR_TABLES.filter((t) => {
+        const tNum = getTableNumber(t.tableName || t.id || "");
+        return refreshedNums.has(tNum);
+      });
+      setTables([...filtered]);
+
+      const managerUnread = INITIAL_FLOOR_NOTIFICATIONS.some((n) => {
+        if (n.isRead) return false;
+        let tNum = "";
+        if (n.tableId) {
+          tNum = getTableNumber(n.tableId);
+        } else if (n.message) {
+          const match = n.message.match(/Table\s+(\d+)/i);
+          if (match) {
+            tNum = match[1];
+          }
+        }
+        return tNum ? refreshedNums.has(tNum) : false;
+      });
+
+      setHasUnreadNotifications(managerUnread);
+    }, [currentManager]),
+  );
+
+  const handleTestFreeTable = () => {
+    const freeTableIndex = INITIAL_FLOOR_TABLES.findIndex(
+      (t) =>
+        t.status === "available" &&
+        assignedTableNums.has(getTableNumber(t.tableName || t.id || "")),
+    );
+    if (freeTableIndex === -1) {
+      Alert.alert(
+        "No Free Tables",
+        "All your assigned tables are currently occupied, reserved, or billed!",
+      );
+      return;
+    }
+
+    const assignedWaiterIds = currentManager?.assignedWaiters || [];
+    const defaultWaiterId = assignedWaiterIds[0] || "w1";
+
+    INITIAL_FLOOR_TABLES[freeTableIndex] = {
+      ...INITIAL_FLOOR_TABLES[freeTableIndex],
+      status: "occupied",
+      customerCount: INITIAL_FLOOR_TABLES[freeTableIndex].capacity,
+      currentOrder: {
+        orderId: `ORD-${Math.floor(100 + Math.random() * 900)}`,
+        itemsCount: 2,
+        totalAmount: 950,
+        waiterId: defaultWaiterId,
+        timeSeated: "Just ordered via QR",
+      },
+    };
+
+    const filtered = INITIAL_FLOOR_TABLES.filter((t) => {
+      const tNum = getTableNumber(t.tableName || t.id || "");
+      return assignedTableNums.has(tNum);
+    });
+    setTables([...filtered]);
+
+    Alert.alert(
+      "Table Updated",
+      `${INITIAL_FLOOR_TABLES[freeTableIndex].tableName} moved to Active (Blocked).`,
+    );
+  };
 
   if (!currentManager) {
     return (
       <SafeAreaView
-        className="flex-1 justify-center items-center"
+        className="flex-1 justify-center items-center px-6"
         style={{ backgroundColor: theme.bg }}
       >
         <Text style={{ color: theme.text }}>Manager profile not found.</Text>
@@ -31,62 +156,100 @@ export default function ManagerDashboard() {
     );
   }
 
-  const myTables = MANAGER_MOCK_DATA.tables.filter(
-    (t) => t.managerId === currentManager.id,
-  );
-  const myWaiters = MANAGER_MOCK_DATA.waiters.filter(
-    (w) => w.managerId === currentManager.id,
-  );
+  const totalTables = tables.length;
+  const availableCount = tables.filter((t) => t.status === "available").length;
+  const occupiedCount = tables.filter((t) => t.status === "occupied").length;
+  const reservedCount = tables.filter((t) => t.status === "reserved").length;
 
-  const occupiedTables = myTables.filter(
-    (t) => t.status !== "available",
-  ).length;
-  const availableWaiters = myWaiters.filter(
-    (w) => w.status === "available",
-  ).length;
+  const filteredTables = tables.filter((table) => {
+    const matchesSearch = table.tableName
+      .toLowerCase()
+      .includes(searchQuery.toLowerCase());
+    let matchesStatus = true;
+    if (statusFilter !== "all") {
+      matchesStatus = table.status === statusFilter;
+    }
+    return matchesSearch && matchesStatus;
+  });
+
+  const getStatusColor = (status: FloorTable["status"]) => {
+    switch (status) {
+      case "available":
+        return "#22c55e";
+      case "occupied":
+        return theme.primary;
+      case "reserved":
+        return "#eab308";
+      case "billed":
+        return "#3b82f6";
+      default:
+        return theme.muted;
+    }
+  };
+
+  const handleTablePress = (table: FloorTable) => {
+    router.push(`/(manager)/floor/table/${table.id}` as any);
+  };
 
   return (
     <SafeAreaView className="flex-1" style={{ backgroundColor: theme.bg }}>
       <StatusBar style={theme.isDark ? "light" : "dark"} />
 
-      <ScrollView
-        className="flex-1 px-6 pt-2 pb-10"
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Header */}
-        <View className="flex-row justify-between items-center mb-8 mt-2">
-          <View>
-            <Text className="text-3xl font-black" style={{ color: theme.text }}>
-              Hi, {currentManager.name.split(" ")[0]} 👋
+      {/* --- TOP HEADER --- */}
+      <View className="px-6 mb-4 mt-2">
+        <View className="flex-row justify-between items-center mb-4">
+          <View className="flex-1 mr-3">
+            <Text
+              className="text-2xl font-black"
+              style={{ color: theme.text }}
+              numberOfLines={1}
+            >
+              Floor Manager 🍽️
             </Text>
             <Text
-              className="text-sm font-medium mt-1"
+              className="text-xs font-medium mt-0.5"
               style={{ color: theme.muted }}
+              numberOfLines={1}
             >
-              Here's your shift overview
+              Live seating • {currentManager.name}
             </Text>
           </View>
 
-          <View className="flex-row items-center">
+          <View className="flex-row items-center gap-2">
             <Pressable
-              // FIX: Passing phone to notifications
-              onPress={() =>
+              onPress={() => {
+                setHasUnreadNotifications(false);
                 router.push(
-                  `/(manager)/notifications?phone=${encodeURIComponent(normalizedPhone)}` as any,
-                )
-              }
-              className="p-3 rounded-full relative mr-2"
+                  `/(manager)/floor/profile/notifications?phone=${encodeURIComponent(normalizedPhone)}` as any,
+                );
+              }}
+              className="p-3 rounded-full relative"
               style={{ backgroundColor: theme.card }}
             >
-              <Text className="text-lg">🔔</Text>
-              <View
-                className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full"
-                style={{ backgroundColor: theme.danger }}
-              />
+              <Feather name="bell" size={20} color={theme.text} />
+              {hasUnreadNotifications && (
+                <Animated.View
+                  style={{
+                    position: "absolute",
+                    top: 8,
+                    right: 8,
+                    transform: [{ scale: pulseAnim }],
+                  }}
+                >
+                  <View
+                    className="w-3 h-3 rounded-full shadow-md"
+                    style={{ backgroundColor: theme.primary }}
+                  />
+                </Animated.View>
+              )}
             </Pressable>
 
             <Pressable
-              onPress={() => alert("Profile & Sign Out coming soon!")}
+              onPress={() =>
+                router.push(
+                  `/(manager)/floor/profile?phone=${encodeURIComponent(normalizedPhone)}` as any,
+                )
+              }
               className="p-3 rounded-full"
               style={{ backgroundColor: theme.card }}
             >
@@ -95,187 +258,263 @@ export default function ManagerDashboard() {
           </View>
         </View>
 
-        {/* Quick Stats */}
-        <View className="flex-row justify-between mb-8">
-          <Card
-            variant="default"
-            className="w-[31%] py-5 items-center rounded-3xl border-0"
-          >
-            <Text
-              className="text-3xl font-black mb-1"
-              style={{ color: theme.text }}
-            >
-              {myTables.length}
-            </Text>
-            <Text
-              className="text-xs font-semibold text-center"
-              style={{ color: theme.muted }}
-            >
-              Total{"\n"}Tables
-            </Text>
-          </Card>
-          <Card
-            variant="default"
-            className="w-[31%] py-5 items-center rounded-3xl border-0"
-          >
-            <Text
-              className="text-3xl font-black mb-1"
-              style={{ color: theme.text }}
-            >
-              {occupiedTables}
-            </Text>
-            <Text
-              className="text-xs font-semibold text-center"
-              style={{ color: theme.muted }}
-            >
-              Active{"\n"}Tables
-            </Text>
-          </Card>
-          <Card
-            variant="default"
-            className="w-[31%] py-5 items-center rounded-3xl border-0"
-          >
-            <Text
-              className="text-3xl font-black mb-1"
-              style={{ color: theme.text }}
-            >
-              {availableWaiters}
-            </Text>
-            <Text
-              className="text-xs font-semibold text-center"
-              style={{ color: theme.muted }}
-            >
-              Free{"\n"}Waiters
-            </Text>
-          </Card>
-        </View>
-
-        {/* Tables */}
-        <Text className="text-xl font-bold mb-4" style={{ color: theme.text }}>
-          Live Tables
-        </Text>
-
-        <View className="flex-row flex-wrap justify-between">
-          {myTables.map((table) => (
-            <Pressable
-              key={table.id}
-              className="w-[48%] mb-4"
-              // FIX: Passing phone to table details
-              onPress={() =>
-                router.push(
-                  `/(manager)/table/${table.id}?phone=${encodeURIComponent(normalizedPhone)}` as any,
-                )
-              }
-            >
-              <Card variant="default" className="p-4 rounded-3xl border-0">
-                <View className="flex-row justify-between items-center mb-4">
-                  <View
-                    className="w-10 h-10 rounded-full items-center justify-center"
-                    style={{ backgroundColor: theme.bg }}
-                  >
-                    <Text
-                      className="text-base font-black"
-                      style={{ color: theme.text }}
-                    >
-                      T{table.number}
-                    </Text>
-                  </View>
-
-                  <View
-                    className="px-2 py-1 rounded-md"
-                    style={{
-                      backgroundColor:
-                        table.status === "available"
-                          ? "#22c55e"
-                          : table.status === "occupied"
-                            ? "#eab308"
-                            : "#ef4444",
-                    }}
-                  >
-                    <Text className="text-[9px] font-bold text-white uppercase tracking-wider">
-                      {table.status === "needs_attention"
-                        ? "Alert"
-                        : table.status}
-                    </Text>
-                  </View>
-                </View>
-
-                <View className="mt-1">
-                  <Text
-                    className="text-sm font-medium mb-1"
-                    style={{ color: theme.muted }}
-                  >
-                    Guests:{" "}
-                    <Text style={{ color: theme.text, fontWeight: "bold" }}>
-                      {table.activeCustomers.length}
-                    </Text>
-                  </Text>
-                  <Text
-                    className="text-sm font-medium"
-                    style={{ color: theme.muted }}
-                    numberOfLines={1}
-                  >
-                    Waiter:{" "}
-                    <Text style={{ color: theme.text, fontWeight: "bold" }}>
-                      {table.assignedWaiterId
-                        ? myWaiters
-                            .find((w) => w.id === table.assignedWaiterId)
-                            ?.name.split(" ")[0]
-                        : "None"}
-                    </Text>
-                  </Text>
-                </View>
-              </Card>
-            </Pressable>
-          ))}
-        </View>
-
-        {/* Waiters */}
-        <Text
-          className="text-xl font-bold mb-4 mt-4"
-          style={{ color: theme.text }}
+        {/* --- TEST FREE TABLE BUTTON --- */}
+        <Pressable
+          onPress={handleTestFreeTable}
+          className="p-3 mb-4 rounded-2xl items-center flex-row justify-center border border-dashed"
+          style={{ borderColor: theme.primary }}
         >
-          Team Status
-        </Text>
-
-        {myWaiters.map((waiter) => (
-          <Card
-            key={waiter.id}
-            variant="default"
-            className="p-4 mb-3 rounded-2xl border-0 flex-row justify-between items-center"
+          <Text
+            className="text-xs font-bold uppercase text-center"
+            style={{ color: theme.primary }}
           >
-            <View className="flex-row items-center">
-              <View
-                className="w-10 h-10 rounded-full items-center justify-center mr-3"
-                style={{ backgroundColor: theme.bg }}
-              >
-                <Text className="text-base">🧑‍🍳</Text>
-              </View>
-              <Text
-                className="text-base font-bold"
-                style={{ color: theme.text }}
-              >
-                {waiter.name}
-              </Text>
-            </View>
+            ▶️ Test Free Table (Move to Active & Block)
+          </Text>
+        </Pressable>
 
-            <View className="flex-row items-center">
-              <View
-                className="w-2 h-2 rounded-full mr-2"
-                style={{
-                  backgroundColor:
-                    waiter.status === "available" ? "#22c55e" : "#ef4444",
-                }}
-              />
-              <Text
-                className="text-sm font-semibold capitalize"
-                style={{ color: theme.muted }}
-              >
-                {waiter.status}
-              </Text>
-            </View>
+        {/* --- FORMATTED STATS CARDS --- */}
+        <View className="flex-row justify-between mb-4">
+          <Card
+            variant="default"
+            className="w-[23%] py-2.5 items-center rounded-2xl border-0"
+          >
+            <Text
+              className="text-xl font-black mb-0.5"
+              style={{ color: theme.text }}
+            >
+              {totalTables}
+            </Text>
+            <Text
+              className="text-[10px] font-bold text-center uppercase tracking-wider"
+              style={{ color: theme.muted }}
+              numberOfLines={1}
+            >
+              Total
+            </Text>
           </Card>
-        ))}
+          <Card
+            variant="default"
+            className="w-[23%] py-2.5 items-center rounded-2xl border-0"
+          >
+            <Text
+              className="text-xl font-black mb-0.5"
+              style={{ color: "#22c55e" }}
+            >
+              {availableCount}
+            </Text>
+            <Text
+              className="text-[10px] font-bold text-center uppercase tracking-wider"
+              style={{ color: theme.muted }}
+              numberOfLines={1}
+            >
+              Free
+            </Text>
+          </Card>
+          <Card
+            variant="default"
+            className="w-[23%] py-2.5 items-center rounded-2xl border-0"
+          >
+            <Text
+              className="text-xl font-black mb-0.5"
+              style={{ color: theme.primary }}
+            >
+              {occupiedCount}
+            </Text>
+            <Text
+              className="text-[10px] font-bold text-center uppercase tracking-wider"
+              style={{ color: theme.muted }}
+              numberOfLines={1}
+            >
+              Active
+            </Text>
+          </Card>
+          <Card
+            variant="default"
+            className="w-[23%] py-2.5 items-center rounded-2xl border-0"
+          >
+            <Text
+              className="text-xl font-black mb-0.5"
+              style={{ color: "#eab308" }}
+            >
+              {reservedCount}
+            </Text>
+            <Text
+              className="text-[10px] font-bold text-center uppercase tracking-wider"
+              style={{ color: theme.muted }}
+              numberOfLines={1}
+            >
+              Free
+            </Text>
+          </Card>
+        </View>
+
+        {/* --- SEARCH BAR --- */}
+        <TextInput
+          placeholder="Search tables..."
+          placeholderTextColor={theme.muted}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          className="px-4 rounded-xl mb-3 font-semibold"
+          style={{
+            backgroundColor: theme.card,
+            color: theme.text,
+            fontSize: 15,
+            height: 48,
+          }}
+        />
+
+        {/* --- SEGMENTED TAB FILTER --- */}
+        <View
+          className="flex-row p-1 rounded-2xl mb-2"
+          style={{ backgroundColor: theme.card }}
+        >
+          {[
+            { id: "all", label: "All" },
+            { id: "available", label: "Free" },
+            { id: "occupied", label: "Active" },
+            { id: "reserved", label: "Reserved" },
+            { id: "billed", label: "Billed" },
+          ].map((tab) => {
+            const isActive = statusFilter === tab.id;
+            return (
+              <Pressable
+                key={tab.id}
+                onPress={() => setStatusFilter(tab.id as any)}
+                className="flex-1 py-2.5 rounded-xl items-center justify-center"
+                style={{
+                  backgroundColor: isActive ? theme.primary : "transparent",
+                }}
+              >
+                <Text
+                  className="text-xs font-bold"
+                  style={{
+                    color: isActive ? "#ffffff" : theme.muted,
+                  }}
+                >
+                  {tab.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+
+      {/* --- TABLE GRID LIST --- */}
+      <ScrollView
+        className="flex-1 px-6"
+        contentContainerStyle={{ paddingBottom: 60 }}
+        showsVerticalScrollIndicator={false}
+      >
+        {filteredTables.length > 0 ? (
+          filteredTables.map((table) => {
+            const statusColor = getStatusColor(table.status);
+            const capacity = table.capacity;
+            const isBlocked = table.status !== "available";
+
+            return (
+              <Pressable key={table.id} onPress={() => handleTablePress(table)}>
+                <Card
+                  variant="default"
+                  className="p-4 mb-3 rounded-2xl border-0 flex-row justify-between items-center"
+                  style={{ backgroundColor: theme.card }}
+                >
+                  <View className="flex-1 mr-3">
+                    <View className="flex-row items-center gap-2 mb-1">
+                      <Text
+                        className="text-lg font-black"
+                        style={{ color: theme.text }}
+                      >
+                        {table.tableName}
+                      </Text>
+                      <View
+                        className="px-2.5 py-0.5 rounded-full"
+                        style={{ backgroundColor: statusColor }}
+                      >
+                        <Text
+                          className="text-[10px] font-extrabold uppercase"
+                          style={{ color: "#ffffff" }}
+                        >
+                          {table.status}
+                        </Text>
+                      </View>
+
+                      <View
+                        className="px-2 py-0.5 rounded-full"
+                        style={{
+                          backgroundColor: isBlocked ? "#ef4444" : "#22c55e",
+                        }}
+                      >
+                        <Text className="text-[9px] font-bold text-white">
+                          {isBlocked ? "BLOCKED 🔒" : "OPEN 🔓"}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <Text
+                      className="text-xs font-medium mb-1"
+                      style={{ color: theme.muted }}
+                    >
+                      Capacity: {capacity} Guests Max
+                    </Text>
+
+                    {table.status === "reserved" || !table.currentOrder ? (
+                      <Text
+                        className="text-xs italic"
+                        style={{ color: theme.muted }}
+                      >
+                        Ready for seating
+                      </Text>
+                    ) : (
+                      (() => {
+                        const assignedWaiter = MANAGER_MOCK_DATA.waiters.find(
+                          (w: any) => w.id === table.currentOrder?.waiterId,
+                        );
+                        const waiterNameDisplay = assignedWaiter
+                          ? assignedWaiter.name
+                          : "";
+                        return (
+                          <Text
+                            className="text-xs font-bold"
+                            style={{ color: theme.text }}
+                          >
+                            {waiterNameDisplay
+                              ? `Waiter: ${waiterNameDisplay} • `
+                              : ""}
+                            {table.currentOrder.totalAmount > 0
+                              ? `₹${table.currentOrder.totalAmount}`
+                              : table.currentOrder.timeSeated}
+                          </Text>
+                        );
+                      })()
+                    )}
+                  </View>
+
+                  <View className="items-end">
+                    <Text
+                      className="text-sm font-bold"
+                      style={{ color: theme.primary }}
+                    >
+                      Manage →
+                    </Text>
+                  </View>
+                </Card>
+              </Pressable>
+            );
+          })
+        ) : (
+          <Card
+            variant="default"
+            className="p-8 rounded-2xl border border-dashed items-center mt-6"
+            style={{ borderColor: theme.border }}
+          >
+            <Text
+              className="text-sm italic text-center"
+              style={{ color: theme.muted }}
+            >
+              No tables found matching your filter.
+            </Text>
+          </Card>
+        )}
       </ScrollView>
     </SafeAreaView>
   );

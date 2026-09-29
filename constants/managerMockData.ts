@@ -33,11 +33,10 @@ export interface FoodItem {
   quantity?: number | null;
   isAvailable: boolean;
 
-  // NEW FIELDS
   images: string[];
   description: string;
   dietaryPreference: "veg" | "non-veg" | "egg" | "vegan";
-  rating: number; // Mock rating for display
+  rating: number;
   prepTime: string;
   badge: FoodItemBadge;
 
@@ -108,7 +107,7 @@ export const MANAGER_MOCK_DATA: {
     },
     {
       id: "m6",
-      name: "Admin (Ops)",
+      name: "Akash (Ops)",
       phone: MANAGER_PHONES.ops_1,
       role: "manager",
       managerType: "operations",
@@ -118,9 +117,11 @@ export const MANAGER_MOCK_DATA: {
   ],
   waiters: [
     { id: "w1", name: "Raju", managerId: "m1", status: "available" },
-    { id: "w2", name: "Ramesh", managerId: "m1", status: "busy" },
+    { id: "w2", name: "Ramesh", managerId: "m1", status: "available" },
     { id: "w3", name: "Suresh", managerId: "m2", status: "available" },
     { id: "w4", name: "Mahesh", managerId: "m2", status: "available" },
+    { id: "w5", name: "Kiran", managerId: null, status: "available" },
+    { id: "w6", name: "Vijay", managerId: null, status: "available" },
   ],
   tables: [
     {
@@ -144,7 +145,7 @@ export const MANAGER_MOCK_DATA: {
       number: 3,
       managerId: "m2",
       assignedWaiterId: null,
-      status: "needs_attention",
+      status: "reserved",
       activeCustomers: [{ id: "c2", phone: "+917777777777" }],
     },
     {
@@ -278,7 +279,6 @@ export const MANAGER_MOCK_DATA: {
     },
   ],
   foodItems: [
-    // --- BIRYANI (c1) ---
     {
       id: "fi1",
       name: "Chicken Dum Biryani",
@@ -337,7 +337,6 @@ export const MANAGER_MOCK_DATA: {
       crossSellItems: [],
     },
 
-    // --- GRILLS & STARTERS (c2) ---
     {
       id: "fi3",
       name: "Tandoori Chicken Platter",
@@ -385,8 +384,6 @@ export const MANAGER_MOCK_DATA: {
       addOns: [],
       crossSellItems: [],
     },
-
-    // --- BEVERAGES (c3) ---
     {
       id: "fi5",
       name: "Fresh Mint Mojito",
@@ -425,8 +422,6 @@ export const MANAGER_MOCK_DATA: {
       addOns: [],
       crossSellItems: [],
     },
-
-    // --- ICE CREAMS & DESSERTS (c4) ---
     {
       id: "fi7",
       name: "Sizzling Brownie with Vanilla",
@@ -584,7 +579,7 @@ export const MANAGER_MOCK_DATA: {
         { name: "Coke (500ml)", qty: 2, price: 60 },
       ],
       totalAmount: 800,
-      status: "pending", // pending -> preparing -> ready -> completed
+      status: "pending",
       time: "2 mins ago",
     },
     {
@@ -613,3 +608,155 @@ export const MANAGER_MOCK_DATA: {
     },
   ],
 };
+
+export interface FloorTable {
+  id: string;
+  tableName: string;
+  capacity: number;
+  status: "available" | "occupied" | "reserved" | "billed";
+  customerCount?: number;
+  currentOrder?: {
+    orderId: string;
+    itemsCount: number;
+    totalAmount: number;
+    waiterId?: string;
+    timeSeated: string;
+    startTime?: number;
+    items?: Array<{ name: string; qty: number; price: number }>;
+  };
+}
+
+const now = Date.now();
+const twentyMinsAgo = now - 20 * 60 * 1000;
+
+export let INITIAL_FLOOR_TABLES: FloorTable[] = [
+  {
+    id: "tbl_1",
+    tableName: "Table 1",
+    capacity: 4,
+    status: "occupied",
+    customerCount: 4,
+    currentOrder: {
+      orderId: "ORD-101",
+      itemsCount: 3,
+      totalAmount: 1150,
+      waiterId: "w1",
+      timeSeated: "25 mins ago",
+      startTime: twentyMinsAgo,
+      items: [
+        { name: "Paneer Butter Masala", qty: 2, price: 500 },
+        { name: "Butter Naan", qty: 4, price: 200 },
+        { name: "Fresh Lime Soda", qty: 3, price: 450 },
+      ],
+    },
+  },
+  {
+    id: "tbl_2",
+    tableName: "Table 2",
+    capacity: 2,
+    status: "available",
+    customerCount: 0,
+  },
+  {
+    id: "tbl_3",
+    tableName: "Table 3",
+    capacity: 6,
+    status: "reserved",
+    customerCount: 6,
+    currentOrder: {
+      orderId: "RES-202",
+      itemsCount: 2,
+      totalAmount: 850,
+      waiterId: "w3",
+      timeSeated: "Reserved for 8:00 PM",
+      startTime: twentyMinsAgo,
+      items: [
+        { name: "Chicken Biryani", qty: 2, price: 700 },
+        { name: "Coke (750ml)", qty: 2, price: 150 },
+      ],
+    },
+  },
+  {
+    id: "tbl_4",
+    tableName: "Table 4",
+    capacity: 4,
+    status: "billed",
+    customerCount: 4,
+    currentOrder: {
+      orderId: "ORD-104",
+      itemsCount: 5,
+      totalAmount: 2400,
+      waiterId: "w4",
+      timeSeated: "1 hr ago",
+      startTime: twentyMinsAgo,
+      items: [
+        { name: "Veg Manchurian", qty: 2, price: 600 },
+        { name: "Hakka Noodles", qty: 2, price: 800 },
+        { name: "Brownie with Ice Cream", qty: 2, price: 1000 },
+      ],
+    },
+  },
+  {
+    id: "tbl_5",
+    tableName: "Table 5",
+    capacity: 8,
+    status: "available",
+    customerCount: 0,
+  },
+  {
+    id: "tbl_6",
+    tableName: "Table 6",
+    capacity: 2,
+    status: "available",
+    customerCount: 0,
+  },
+];
+
+export interface FloorNotification {
+  id: string;
+  title: string;
+  message: string;
+  timestamp: string;
+  type: "order" | "reservation" | "assistance" | "billing" | "status_change";
+  isRead: boolean;
+  tableId?: string;
+}
+
+export let INITIAL_FLOOR_NOTIFICATIONS: FloorNotification[] = [
+  {
+    id: "fn_1",
+    title: "Table QR Order Placed",
+    message: "Table 2 placed a new order via QR (Total: ₹950).",
+    timestamp: "2 mins ago",
+    type: "order",
+    isRead: false,
+    tableId: "tbl_2",
+  },
+  {
+    id: "fn_2",
+    title: "Table Status Changed",
+    message: "Table 1 moved from Active to Billed.",
+    timestamp: "15 mins ago",
+    type: "status_change",
+    isRead: false,
+    tableId: "tbl_1",
+  },
+  {
+    id: "fn_3",
+    title: "Waiter Called",
+    message: "Table 3 requested assistance from assigned waiter Rahul Sharma.",
+    timestamp: "30 mins ago",
+    type: "assistance",
+    isRead: true,
+    tableId: "tbl_3",
+  },
+  {
+    id: "fn_4",
+    title: "Bill Generated & Requested",
+    message: "Table 4 requested bill generation totaling ₹2,400.",
+    timestamp: "1 hr ago",
+    type: "billing",
+    isRead: true,
+    tableId: "tbl_4",
+  },
+];
