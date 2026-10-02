@@ -2,6 +2,9 @@ export const MANAGER_PHONES = {
   floor_1: "+919999999991",
   floor_2: "+919999999992",
   ops_1: "+919999999996",
+  ops_2: "+919999999998",
+  admin: "+919999999990",
+  admin_2: "+919999999999",
 };
 
 export interface AddOnOption {
@@ -88,11 +91,32 @@ export const MANAGER_MOCK_DATA: {
 } = {
   managers: [
     {
+      id: "admin_1",
+      name: "RAM SITA",
+      phone: MANAGER_PHONES.admin,
+      role: "admin",
+      managerType: "admin",
+      isActive: true,
+      assignedTables: [],
+      assignedWaiters: [],
+    },
+    {
+      id: "admin_2",
+      name: "RAJESH (Admin)",
+      phone: MANAGER_PHONES.admin_2,
+      role: "admin",
+      managerType: "admin",
+      isActive: true,
+      assignedTables: [],
+      assignedWaiters: [],
+    },
+    {
       id: "m1",
       name: "Siva (Floor)",
       phone: MANAGER_PHONES.floor_1,
       role: "manager",
       managerType: "floor",
+      isActive: true,
       assignedTables: ["T1", "T2"],
       assignedWaiters: ["w1", "w2"],
     },
@@ -102,6 +126,7 @@ export const MANAGER_MOCK_DATA: {
       phone: MANAGER_PHONES.floor_2,
       role: "manager",
       managerType: "floor",
+      isActive: true,
       assignedTables: ["T3", "T4"],
       assignedWaiters: ["w3", "w4"],
     },
@@ -111,17 +136,74 @@ export const MANAGER_MOCK_DATA: {
       phone: MANAGER_PHONES.ops_1,
       role: "manager",
       managerType: "operations",
+      isActive: true,
+      assignedTables: [],
+      assignedWaiters: [],
+    },
+    {
+      id: "m8",
+      name: "Priya (Ops)",
+      phone: MANAGER_PHONES.ops_2,
+      role: "manager",
+      managerType: "operations",
+      isActive: true,
+      assignedTables: [],
+      assignedWaiters: [],
+    },
+    {
+      id: "m7",
+      name: "Rahul (Floor)",
+      phone: "+919999999997",
+      role: "manager",
+      managerType: "floor",
+      isActive: false,
       assignedTables: [],
       assignedWaiters: [],
     },
   ],
   waiters: [
-    { id: "w1", name: "Raju", managerId: "m1", status: "available" },
-    { id: "w2", name: "Ramesh", managerId: "m1", status: "available" },
-    { id: "w3", name: "Suresh", managerId: "m2", status: "available" },
-    { id: "w4", name: "Mahesh", managerId: "m2", status: "available" },
-    { id: "w5", name: "Kiran", managerId: null, status: "available" },
-    { id: "w6", name: "Vijay", managerId: null, status: "available" },
+    {
+      id: "w1",
+      name: "Raju",
+      managerId: "m1",
+      status: "available",
+      isActive: true,
+    },
+    {
+      id: "w2",
+      name: "Ramesh",
+      managerId: "m1",
+      status: "available",
+      isActive: true,
+    },
+    {
+      id: "w3",
+      name: "Suresh",
+      managerId: "m2",
+      status: "available",
+      isActive: true,
+    },
+    {
+      id: "w4",
+      name: "Mahesh",
+      managerId: "m2",
+      status: "available",
+      isActive: true,
+    },
+    {
+      id: "w5",
+      name: "Kiran",
+      managerId: null,
+      status: "available",
+      isActive: true,
+    },
+    {
+      id: "w6",
+      name: "Vijay",
+      managerId: null,
+      status: "available",
+      isActive: false,
+    },
   ],
   tables: [
     {
@@ -760,3 +842,91 @@ export let INITIAL_FLOOR_NOTIFICATIONS: FloorNotification[] = [
     tableId: "tbl_4",
   },
 ];
+
+export interface RevenueNotification {
+  id: string;
+  title: string;
+  subtitle: string;
+  amount: string;
+  description: string;
+  timestamp: string;
+  type: string;
+  isRead: boolean;
+}
+
+export let INITIAL_REVENUE_NOTIFICATIONS: RevenueNotification[] = [
+  {
+    id: "n_year",
+    title: "📅 Year-End Total Revenue Report",
+    subtitle: "Fiscal Year 2025-2026 Summary",
+    amount: "₹18,42,000",
+    description:
+      "Total annual revenue successfully processed across all dine-in tables, online delivery channels, and takeaway orders. 14% growth compared to previous fiscal year.",
+    timestamp: "Today, 12:00 AM",
+    type: "year",
+    isRead: false,
+  },
+  {
+    id: "n_month",
+    title: "📊 Month-End Total Revenue Report",
+    subtitle: "March 2026 Summary",
+    amount: "₹1,48,500",
+    description:
+      "Monthly financial audit complete. Dine-In contributed 60% (₹89,100), Online Delivery 25% (₹37,125), and Takeaway 15% (₹22,275).",
+    timestamp: "Yesterday, 11:59 PM",
+    type: "month",
+    isRead: false,
+  },
+  {
+    id: "n_day",
+    title: "🟢 End-of-Day Total Revenue Report",
+    subtitle: "Daily Closing Summary",
+    amount: "₹4,850",
+    description:
+      "Today's shift closed successfully. 28 total orders processed with a peak revenue hour recorded between 8:00 PM - 9:00 PM on Saturday.",
+    timestamp: "Yesterday, 11:00 PM",
+    type: "day",
+    isRead: false,
+  },
+];
+
+export interface DailyRevenue {
+  day: string;
+  dineIn: number;
+  takeaway: number;
+  delivery: number;
+  total: number;
+}
+
+export let FINANCIAL_MOCK_STATE = {
+  todayBaseRevenue: 4850,
+  completedTableBills: 0,
+  monthlySalesBase: 148500,
+  yearlyRevenueBase: 18420000,
+  weeklyTrend: [
+    { day: "Mon", amount: 3200, dineIn: 1920, takeaway: 480, delivery: 800 },
+    { day: "Tue", amount: 4100, dineIn: 2460, takeaway: 615, delivery: 1025 },
+    { day: "Wed", amount: 3800, dineIn: 2280, takeaway: 570, delivery: 950 },
+    { day: "Thu", amount: 4900, dineIn: 2940, takeaway: 735, delivery: 1225 },
+    { day: "Fri", amount: 5600, dineIn: 3360, takeaway: 840, delivery: 1400 },
+    { day: "Sat", amount: 6200, dineIn: 3720, takeaway: 930, delivery: 1550 },
+    { day: "Sun", amount: 5300, dineIn: 3180, takeaway: 795, delivery: 1325 },
+  ],
+  monthlyBreakdown: [
+    { label: "Week 1 (Mon - Sun)", amount: 37200, status: "Verified" },
+    { label: "Week 2 (Mon - Sun)", amount: 42100, status: "Verified" },
+    { label: "Week 3 (Mon - Sun)", amount: 39400, status: "Verified" },
+    { label: "Week 4 (Mon - Sun)", amount: 31800, status: "Verified" },
+  ],
+  yearlyBreakdown: [
+    { quarter: "Q1 (Apr - Jun)", rev: 420000, growth: "+12%" },
+    { quarter: "Q2 (Jul - Sep)", rev: 445000, growth: "+15%" },
+    { quarter: "Q3 (Oct - Dec)", rev: 475000, growth: "+16%" },
+    { quarter: "Q4 (Jan - Mar)", rev: 502000, growth: "+14%" },
+  ],
+  salesDistribution: {
+    dineIn: { percentage: 60, amount: 89100, orders: 420 },
+    delivery: { percentage: 25, amount: 37125, orders: 210 },
+    takeaway: { percentage: 15, amount: 22275, orders: 140 },
+  },
+};

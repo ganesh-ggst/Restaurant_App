@@ -52,13 +52,19 @@ export default function VerifyOtpScreen() {
 
       console.log("[AUTH] Received JWT:", token);
 
-      // --- BYPASS FOR MANAGER MOCK DATA TESTING ---
       const testManager = MANAGER_MOCK_DATA.managers.find(
         (m) => m.phone === normalizedPhone,
       );
 
       if (testManager) {
-        if (testManager.managerType === "floor") {
+        if (
+          testManager.role === "admin" ||
+          testManager.managerType === "admin"
+        ) {
+          router.replace(
+            `/(admin)?phone=${encodeURIComponent(normalizedPhone)}` as any,
+          );
+        } else if (testManager.managerType === "floor") {
           router.replace(
             `/(manager)/floor?phone=${encodeURIComponent(normalizedPhone)}` as any,
           );
@@ -69,7 +75,6 @@ export default function VerifyOtpScreen() {
         }
         return;
       }
-      // ---------------------------------------------
 
       if (user.isNewUser) {
         router.replace(
@@ -78,10 +83,11 @@ export default function VerifyOtpScreen() {
       } else {
         switch (user.role) {
           case "admin":
-            console.log("Routing to Admin Dash (Coming Soon)");
+            router.replace(
+              `/(admin)?phone=${encodeURIComponent(normalizedPhone)}` as any,
+            );
             break;
           case "manager":
-            // Fallback for real API until managerType is added to backend
             router.replace(
               `/(manager)/floor?phone=${encodeURIComponent(normalizedPhone)}` as any,
             );

@@ -26,28 +26,42 @@ export default function PersonalInfoModal() {
   const { phone } = useLocalSearchParams<{ phone: string }>();
   const { currentManager } = useCurrentManager();
 
-  const isFloor = pathname?.includes("floor");
-  const targetType = isFloor ? "floor" : "operations";
-
   let matchedManager = (MANAGER_MOCK_DATA as any).managers?.find(
     (m: any) => m.phone === phone || m.phone === currentManager?.phone,
   );
 
   if (!matchedManager) {
+    const isAdmin =
+      pathname?.includes("admin") || currentManager?.role === "admin";
+    const isFloor =
+      pathname?.includes("floor") || currentManager?.managerType === "floor";
+    const targetType = isAdmin ? "admin" : isFloor ? "floor" : "operations";
+
     matchedManager = (MANAGER_MOCK_DATA as any).managers?.find(
-      (m: any) => m.managerType?.toLowerCase() === targetType,
+      (m: any) =>
+        m.managerType?.toLowerCase() === targetType ||
+        m.role?.toLowerCase() === targetType,
     );
   }
 
+  if (!matchedManager) {
+    matchedManager = {
+      name: "RAM SITA",
+      phone: MANAGER_PHONES.admin,
+      role: "admin",
+      managerType: "admin",
+    };
+  }
+
   const [editFirstName, setEditFirstName] = useState(
-    matchedManager?.name || (isFloor ? "Floor Manager" : "Operations Manager"),
+    matchedManager?.name || "",
   );
 
   const displayPhone =
     matchedManager?.phone ||
     matchedManager?.phoneNumber ||
     matchedManager?.mobile ||
-    (isFloor ? MANAGER_PHONES.floor_1 : MANAGER_PHONES.ops_1);
+    MANAGER_PHONES.ops_1;
 
   const handleSave = () => {
     if (!editFirstName.trim()) {

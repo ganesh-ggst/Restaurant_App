@@ -14,6 +14,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Button } from "../../../../components/ui/Button";
 import { Card } from "../../../../components/ui/Card";
 import {
+  FINANCIAL_MOCK_STATE,
   FloorTable,
   INITIAL_FLOOR_NOTIFICATIONS,
   INITIAL_FLOOR_TABLES,
@@ -207,6 +208,49 @@ export default function TableDetailScreen() {
     const startTime = isMovingToActive
       ? Date.now()
       : table.currentOrder?.startTime || Date.now();
+
+    // 🟢 DYNAMIC REVENUE CALCULATION: Capture bill amount when moving Billed -> Free
+    if (table.status === "billed" && status === "available") {
+      const billAmt = table.currentOrder?.totalAmount || 1207.5;
+      FINANCIAL_MOCK_STATE.completedTableBills += billAmt;
+
+      if (!(FINANCIAL_MOCK_STATE as any).completedTableTransactions) {
+        (FINANCIAL_MOCK_STATE as any).completedTableTransactions = [];
+      }
+      const alreadyExists = (
+        FINANCIAL_MOCK_STATE as any
+      ).completedTableTransactions.some(
+        (b: any) => b.tableName === table.tableName && b.amount === billAmt,
+      );
+      if (!alreadyExists) {
+        (FINANCIAL_MOCK_STATE as any).completedTableTransactions.push({
+          tableName: table.tableName,
+          amount: billAmt,
+        });
+      }
+
+      FINANCIAL_MOCK_STATE.salesDistribution.dineIn.amount += billAmt;
+
+      // Dynamically update today's weekly trend bar (Thu)
+      const daysMap = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const liveDayStr = daysMap[new Date().getDay()];
+      const todayEntry = FINANCIAL_MOCK_STATE.weeklyTrend.find(
+        (w) => w.day === liveDayStr,
+      );
+      const targetIndex = FINANCIAL_MOCK_STATE.weeklyTrend.findIndex(
+        (w) => w.day === liveDayStr,
+      );
+      if (todayEntry) {
+        todayEntry.amount += billAmt;
+        todayEntry.dineIn += billAmt;
+      } else if (targetIndex > -1) {
+        FINANCIAL_MOCK_STATE.weeklyTrend[targetIndex].amount += billAmt;
+        FINANCIAL_MOCK_STATE.weeklyTrend[targetIndex].dineIn += billAmt;
+      } else {
+        FINANCIAL_MOCK_STATE.weeklyTrend[4].amount += billAmt;
+        FINANCIAL_MOCK_STATE.weeklyTrend[4].dineIn += billAmt;
+      }
+    }
 
     if (tableIndex > -1) {
       const defaultOrderItems = [
@@ -497,7 +541,6 @@ export default function TableDetailScreen() {
                       </Text>
                     </View>
 
-                    {/* GST ROW HIGHLIGHTED IN GREEN WITHOUT UNDERLINE OR ICON */}
                     <Pressable
                       onPress={() => setShowTaxPopup(!showTaxPopup)}
                       className="flex-row justify-between items-center py-1"

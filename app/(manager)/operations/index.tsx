@@ -32,11 +32,15 @@ export default function OperationsDashboard() {
   const scrollViewRef = useRef<ScrollView>(null);
 
   const { currentManager } = useCurrentManager();
+  const assignedBranch =
+    (currentManager as any)?.assignedBranch || "Hitech City Premium";
 
   const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
   const lastAlertCountRef = useRef(0);
-
   const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  // Check In / Check Out toggle state
+  const [isCheckedIn, setIsCheckedIn] = useState(true);
 
   useEffect(() => {
     if (hasUnreadNotifications) {
@@ -79,22 +83,6 @@ export default function OperationsDashboard() {
 
   const [activeCategoryIndex, setActiveCategoryIndex] = useState(0);
 
-  const [storeModalState, setStoreModalState] = useState<
-    "hub" | "sectionEditor" | "optionManager" | "optionEditor" | null
-  >(null);
-
-  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(
-    null,
-  );
-  const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
-  const [editingOptionId, setEditingOptionId] = useState<string | null>(null);
-
-  const [inputVal1, setInputVal1] = useState("");
-  const [inputVal2, setInputVal2] = useState("");
-  const [inputToggle, setInputToggle] = useState<"single" | "multiple">(
-    "single",
-  );
-
   const [isModifyModalVisible, setIsModifyModalVisible] = useState(false);
   const [isCategoryEditorVisible, setIsCategoryEditorVisible] = useState(false);
   const [categoryModalMode, setCategoryModalMode] = useState<"add" | "edit">(
@@ -123,9 +111,6 @@ export default function OperationsDashboard() {
 
   const activeCategories = categories.filter((c) => c.isActive);
   const activeCoupons = coupons.filter((c) => c.isActive);
-  const currentActiveSection = storeDetails.find(
-    (s) => s.id === selectedSectionId,
-  );
 
   useFocusEffect(
     useCallback(() => {
@@ -168,6 +153,72 @@ export default function OperationsDashboard() {
       </SafeAreaView>
     );
   }
+
+  const handleToggleCheckIn = (newValue: boolean) => {
+    if (!newValue) {
+      // 🔒 SECURITY CHECK: Ensure no orders are in pending, preparing, ready, or out_for_delivery for assignedBranch
+      const activeQueueOrders = (MANAGER_MOCK_DATA.orders || []).filter(
+        (o: any) => {
+          const isAssigned =
+            o.branch?.trim().toLowerCase() ===
+            assignedBranch?.trim().toLowerCase();
+          const mode = o.mode?.trim().toLowerCase();
+          const isDeliveryOrTakeaway =
+            mode === "delivery" || mode === "takeaway";
+          const status = o.status;
+          const isPendingActive =
+            status === "pending" ||
+            status === "preparing" ||
+            status === "ready" ||
+            status === "out_for_delivery";
+          return isAssigned && isDeliveryOrTakeaway && isPendingActive;
+        },
+      );
+
+      if (activeQueueOrders.length > 0) {
+        const orderSummary = activeQueueOrders
+          .map(
+            (o: any) =>
+              `• Order #${o.id} (${o.customerName}) - ${o.status.toUpperCase()}`,
+          )
+          .join("\n");
+        Alert.alert(
+          "⚠️ Cannot Check Out",
+          `All active queue orders must be completed before you can check out.\n\nPending/Active Orders:\n${orderSummary}`,
+          [{ text: "OK", style: "default" }],
+        );
+        return;
+      }
+    }
+
+    Alert.alert(
+      newValue ? "Check In" : "Check Out",
+      `Are you sure you want to check ${newValue ? "IN" : "OUT"}?`,
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+          onPress: () => {},
+        },
+        {
+          text: "Confirm",
+          onPress: () => {
+            setIsCheckedIn(newValue);
+            if (currentManager) {
+              const matchMgr = MANAGER_MOCK_DATA.managers?.find(
+                (m: any) =>
+                  m.id === currentManager.id ||
+                  m.phone === currentManager.phone,
+              );
+              if (matchMgr) {
+                matchMgr.isActive = newValue;
+              }
+            }
+          },
+        },
+      ],
+    );
+  };
 
   const activeItemsCount = foodItems.filter((item) => item.isAvailable).length;
 
@@ -393,22 +444,6 @@ export default function OperationsDashboard() {
     setTimeout(() => setIsModifyModalVisible(true), 300);
   };
 
-  const handleDeleteCategory = (categoryId: string, catName: string) => {
-    Alert.alert("Delete Category", `Remove "${catName}"?`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: () => {
-          MANAGER_MOCK_DATA.categories = MANAGER_MOCK_DATA.categories.filter(
-            (c) => c.id !== categoryId,
-          );
-          setCategories([...MANAGER_MOCK_DATA.categories]);
-        },
-      },
-    ]);
-  };
-
   return (
     <SafeAreaView className="flex-1" style={{ backgroundColor: theme.bg }}>
       <StatusBar style={theme.isDark ? "light" : "dark"} />
@@ -431,7 +466,7 @@ export default function OperationsDashboard() {
                 className="text-sm font-medium mt-1"
                 style={{ color: theme.muted }}
               >
-                Manage menu & store settings
+                Manage menu & store settings • {currentManager.name}
               </Text>
             </View>
             <View className="flex-row items-center gap-3">
@@ -480,200 +515,149 @@ export default function OperationsDashboard() {
               </Pressable>
             </View>
           </View>
-        </View>
 
-        {/* --- SCROLLVIEW WITH NATIVE STICKY HEADER INDEX --- */}
-        <ScrollView
-          ref={scrollViewRef}
-          className="flex-1 px-6"
-          contentContainerStyle={{ paddingBottom: 60 }}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          stickyHeaderIndices={[1]}
-        >
-          {/* INDEX 0: Non-sticky top content (Stats, Categories, Offers) */}
-          <View>
-            <View className="flex-row justify-between mb-6">
-              <Card
-                variant="default"
-                className="w-[31%] py-5 items-center rounded-3xl border-0"
-              >
+          {/* --- CHECK IN / CHECK OUT TOGGLE BAR --- */}
+          <Card
+            variant="default"
+            className="p-3.5 mb-2 rounded-2xl border-0 flex-row items-center justify-between"
+            style={{ backgroundColor: theme.card }}
+          >
+            <View className="flex-row items-center gap-2.5">
+              <View
+                className="w-3 h-3 rounded-full"
+                style={{ backgroundColor: isCheckedIn ? "#22c55e" : "#ef4444" }}
+              />
+              <View>
                 <Text
-                  className="text-3xl font-black mb-1"
+                  className="text-xs font-black uppercase"
                   style={{ color: theme.text }}
                 >
-                  {foodItems.length}
+                  {isCheckedIn ? "CHECKED IN" : "CHECKED OUT"}
                 </Text>
-                <Text
-                  className="text-xs font-semibold text-center"
-                  style={{ color: theme.muted }}
-                >
-                  Total{"\n"}Items
+                <Text className="text-[10px]" style={{ color: theme.muted }}>
+                  {isCheckedIn ? "On duty & managing operations" : "Off duty"}
                 </Text>
-              </Card>
-              <Card
-                variant="default"
-                className="w-[31%] py-5 items-center rounded-3xl border-0"
-              >
-                <Text
-                  className="text-3xl font-black mb-1"
-                  style={{ color: theme.text }}
-                >
-                  {activeItemsCount}
-                </Text>
-                <Text
-                  className="text-xs font-semibold text-center"
-                  style={{ color: theme.muted }}
-                >
-                  In Stock{"\n"}Items
-                </Text>
-              </Card>
-              <Card
-                variant="default"
-                className="w-[31%] py-5 items-center rounded-3xl border-0"
-              >
-                <Text
-                  className="text-3xl font-black mb-1"
-                  style={{ color: theme.text }}
-                >
-                  {activeCoupons.length}
-                </Text>
-                <Text
-                  className="text-xs font-semibold text-center"
-                  style={{ color: theme.muted }}
-                >
-                  Active{"\n"}Coupons
-                </Text>
-              </Card>
+              </View>
             </View>
 
-            {/* --- LIVE ORDERS WORKFLOW SHORTCUT --- */}
-            <Pressable
-              onPress={() => router.push("/(manager)/operations/orders" as any)}
-              className="p-4 mb-6 rounded-3xl flex-row justify-between items-center border-0 shadow-sm"
-              style={{ backgroundColor: theme.card }}
-            >
-              <View className="flex-row items-center gap-3">
-                <Text className="text-2xl">📋</Text>
-                <View>
+            <Switch
+              value={isCheckedIn}
+              onValueChange={handleToggleCheckIn}
+              trackColor={{ false: theme.border, true: "#22c55e" }}
+              thumbColor={"#ffffff"}
+              style={{ transform: [{ scale: 0.8 }] }}
+            />
+          </Card>
+        </View>
+
+        {/* --- SCROLLVIEW OR CHECKED OUT NOTICE --- */}
+        {isCheckedIn ? (
+          <ScrollView
+            ref={scrollViewRef}
+            className="flex-1 px-6"
+            contentContainerStyle={{ paddingBottom: 60 }}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            stickyHeaderIndices={[1]}
+          >
+            {/* INDEX 0: Non-sticky top content (Stats, Categories, Offers) */}
+            <View>
+              <View className="flex-row justify-between mb-6">
+                <Card
+                  variant="default"
+                  className="w-[31%] py-5 items-center rounded-3xl border-0"
+                >
                   <Text
-                    className="text-base font-bold"
+                    className="text-3xl font-black mb-1"
                     style={{ color: theme.text }}
                   >
-                    Live Orders Workflow
+                    {foodItems.length}
                   </Text>
                   <Text
-                    className="text-xs font-medium mt-0.5"
+                    className="text-xs font-semibold text-center"
                     style={{ color: theme.muted }}
                   >
-                    Manage customer queue, dining & takeaway
+                    Total{"\n"}Items
                   </Text>
-                </View>
+                </Card>
+                <Card
+                  variant="default"
+                  className="w-[31%] py-5 items-center rounded-3xl border-0"
+                >
+                  <Text
+                    className="text-3xl font-black mb-1"
+                    style={{ color: theme.text }}
+                  >
+                    {activeItemsCount}
+                  </Text>
+                  <Text
+                    className="text-xs font-semibold text-center"
+                    style={{ color: theme.muted }}
+                  >
+                    In Stock{"\n"}Items
+                  </Text>
+                </Card>
+                <Card
+                  variant="default"
+                  className="w-[31%] py-5 items-center rounded-3xl border-0"
+                >
+                  <Text
+                    className="text-3xl font-black mb-1"
+                    style={{ color: theme.text }}
+                  >
+                    {activeCoupons.length}
+                  </Text>
+                  <Text
+                    className="text-xs font-semibold text-center"
+                    style={{ color: theme.muted }}
+                  >
+                    Active{"\n"}Coupons
+                  </Text>
+                </Card>
               </View>
-              <Text
-                className="text-sm font-bold"
-                style={{ color: theme.primary }}
-              >
-                View →
-              </Text>
-            </Pressable>
-            {/* ------------------------------------- */}
 
-            {/* Active Coupons Section */}
-            <View className="flex-row justify-between items-end mb-3">
-              <Text className="text-xl font-bold" style={{ color: theme.text }}>
-                Exclusive Offers
-              </Text>
-              <Pressable onPress={() => setIsCouponHubVisible(true)}>
+              {/* --- LIVE ORDERS WORKFLOW SHORTCUT --- */}
+              <Pressable
+                onPress={() =>
+                  router.push("/(manager)/operations/orders" as any)
+                }
+                className="p-4 mb-6 rounded-3xl flex-row justify-between items-center border-0 shadow-sm"
+                style={{ backgroundColor: theme.card }}
+              >
+                <View className="flex-row items-center gap-3">
+                  <Text className="text-2xl">📋</Text>
+                  <View>
+                    <Text
+                      className="text-base font-bold"
+                      style={{ color: theme.text }}
+                    >
+                      Live Orders Workflow
+                    </Text>
+                    <Text
+                      className="text-xs font-medium mt-0.5"
+                      style={{ color: theme.muted }}
+                    >
+                      Manage customer queue, dining & takeaway
+                    </Text>
+                  </View>
+                </View>
                 <Text
                   className="text-sm font-bold"
                   style={{ color: theme.primary }}
                 >
-                  Modify
+                  View →
                 </Text>
               </Pressable>
-            </View>
 
-            {activeCoupons.length > 0 ? (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                className="mb-6"
-              >
-                {activeCoupons.map((coupon) => (
-                  <Pressable
-                    key={coupon.id}
-                    onPress={() => openEditCouponModal(coupon, "dashboard")}
-                  >
-                    <Card
-                      variant="default"
-                      className="p-5 mr-4 rounded-[28px] border-0 justify-between w-[280px]"
-                      style={{ backgroundColor: theme.card }}
-                    >
-                      <View>
-                        <Text
-                          className="text-3xl font-black mb-1"
-                          style={{ color: theme.text }}
-                        >
-                          {coupon.title || coupon.code || "OFFER"}
-                        </Text>
-                        <Text
-                          className="text-sm font-medium mb-5"
-                          style={{ color: theme.muted }}
-                        >
-                          {coupon.subtitle || "Exclusive store offer"}
-                        </Text>
-                      </View>
-                      <View className="flex-row justify-between items-end">
-                        <View
-                          className="px-4 py-2 rounded-xl border border-dashed"
-                          style={{
-                            backgroundColor: theme.isDark
-                              ? "rgba(255,255,255,0.05)"
-                              : "rgba(0,0,0,0.03)",
-                            borderColor: theme.muted,
-                          }}
-                        >
-                          <Text
-                            className="text-xs font-bold uppercase tracking-widest"
-                            style={{ color: theme.text }}
-                          >
-                            CODE: {coupon.code}
-                          </Text>
-                        </View>
-                        <Text
-                          className="text-[10px] font-bold uppercase"
-                          style={{ color: theme.primary }}
-                        >
-                          {coupon.applicableItems?.length || 0} Items
-                        </Text>
-                      </View>
-                    </Card>
-                  </Pressable>
-                ))}
-              </ScrollView>
-            ) : (
-              <Card
-                variant="default"
-                className="p-6 mb-6 rounded-2xl border-dashed border-2 items-center justify-center"
-                style={{ borderColor: theme.border }}
-              >
+              {/* Active Coupons Section */}
+              <View className="flex-row justify-between items-end mb-3">
                 <Text
-                  className="text-sm font-bold"
-                  style={{ color: theme.muted }}
+                  className="text-xl font-bold"
+                  style={{ color: theme.text }}
                 >
-                  No Active Offers configured
+                  Exclusive Offers
                 </Text>
-              </Card>
-            )}
-
-            {/* Categories Header */}
-            <View className="flex-row justify-between items-end mb-3">
-              <Text className="text-xl font-bold" style={{ color: theme.text }}>
-                Categories
-              </Text>
-              <View className="flex-row gap-4 items-center">
-                <Pressable onPress={() => setIsModifyModalVisible(true)}>
+                <Pressable onPress={() => setIsCouponHubVisible(true)}>
                   <Text
                     className="text-sm font-bold"
                     style={{ color: theme.primary }}
@@ -681,391 +665,513 @@ export default function OperationsDashboard() {
                     Modify
                   </Text>
                 </Pressable>
-                <Pressable
-                  onPress={() =>
-                    router.push("/(manager)/operations/categories")
-                  }
+              </View>
+
+              {activeCoupons.length > 0 ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  className="mb-6"
                 >
+                  {activeCoupons.map((coupon) => (
+                    <Pressable
+                      key={coupon.id}
+                      onPress={() => openEditCouponModal(coupon, "dashboard")}
+                    >
+                      <Card
+                        variant="default"
+                        className="p-5 mr-4 rounded-[28px] border-0 justify-between w-[280px]"
+                        style={{ backgroundColor: theme.card }}
+                      >
+                        <View>
+                          <Text
+                            className="text-3xl font-black mb-1"
+                            style={{ color: theme.text }}
+                          >
+                            {coupon.title || coupon.code || "OFFER"}
+                          </Text>
+                          <Text
+                            className="text-sm font-medium mb-5"
+                            style={{ color: theme.muted }}
+                          >
+                            {coupon.subtitle || "Exclusive store offer"}
+                          </Text>
+                        </View>
+                        <View className="flex-row justify-between items-end">
+                          <View
+                            className="px-4 py-2 rounded-xl border border-dashed"
+                            style={{
+                              backgroundColor: theme.isDark
+                                ? "rgba(255,255,255,0.05)"
+                                : "rgba(0,0,0,0.03)",
+                              borderColor: theme.muted,
+                            }}
+                          >
+                            <Text
+                              className="text-xs font-bold uppercase tracking-widest"
+                              style={{ color: theme.text }}
+                            >
+                              CODE: {coupon.code}
+                            </Text>
+                          </View>
+                          <Text
+                            className="text-[10px] font-bold uppercase"
+                            style={{ color: theme.primary }}
+                          >
+                            {coupon.applicableItems?.length || 0} Items
+                          </Text>
+                        </View>
+                      </Card>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              ) : (
+                <Card
+                  variant="default"
+                  className="p-6 mb-6 rounded-2xl border-dashed border-2 items-center justify-center"
+                  style={{ borderColor: theme.border }}
+                >
+                  <Text
+                    className="text-sm font-bold"
+                    style={{ color: theme.muted }}
+                  >
+                    No Active Offers configured
+                  </Text>
+                </Card>
+              )}
+
+              {/* Categories Header */}
+              <View className="flex-row justify-between items-end mb-3">
+                <Text
+                  className="text-xl font-bold"
+                  style={{ color: theme.text }}
+                >
+                  Categories
+                </Text>
+                <View className="flex-row gap-4 items-center">
+                  <Pressable onPress={() => setIsModifyModalVisible(true)}>
+                    <Text
+                      className="text-sm font-bold"
+                      style={{ color: theme.primary }}
+                    >
+                      Modify
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() =>
+                      router.push("/(manager)/operations/categories")
+                    }
+                  >
+                    <Text
+                      className="text-sm font-bold"
+                      style={{ color: theme.primary }}
+                    >
+                      View All
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              {activeCategories.length > 0 ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  className="mb-3"
+                  onScroll={handleScroll}
+                  scrollEventThrottle={16}
+                >
+                  {activeCategories.map((category) => (
+                    <Pressable
+                      key={category.id}
+                      onPress={() =>
+                        router.push(
+                          `/(manager)/operations/category/${category.id}` as any,
+                        )
+                      }
+                    >
+                      <Card
+                        variant="default"
+                        className="p-3 mr-3 rounded-2xl border-0 items-center justify-center w-[110px] h-[115px]"
+                      >
+                        <Text className="text-2xl mb-1">{category.icon}</Text>
+                        <Text
+                          className="text-xs font-bold text-center"
+                          style={{ color: theme.text }}
+                          numberOfLines={2}
+                        >
+                          {category.name}
+                        </Text>
+                        <Text
+                          className="text-[10px] mt-2 uppercase font-bold"
+                          style={{ color: "#22c55e" }}
+                        >
+                          Active
+                        </Text>
+                      </Card>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              ) : (
+                <Card
+                  variant="default"
+                  className="p-6 mb-3 rounded-2xl border-dashed border-2 items-center justify-center"
+                  style={{ borderColor: theme.border }}
+                >
+                  <Text
+                    className="text-sm font-bold"
+                    style={{ color: theme.muted }}
+                  >
+                    No Active Categories
+                  </Text>
+                </Card>
+              )}
+
+              {activeCategories.length > 0 && (
+                <View className="flex-row justify-center items-center mb-6 mt-1">
+                  {activeCategories.map((_, index) => {
+                    const isActive = activeCategoryIndex === index;
+                    return (
+                      <View
+                        key={index}
+                        className="h-1.5 mx-1 rounded-full"
+                        style={{
+                          width: isActive ? 16 : 6,
+                          backgroundColor: isActive
+                            ? theme.primary
+                            : theme.border,
+                        }}
+                      />
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+
+            {/* INDEX 1: STICKY QUICK INVENTORY HEADER & FILTERS */}
+            <View
+              style={{
+                backgroundColor: theme.bg,
+                paddingTop: 12,
+                paddingBottom: 8,
+              }}
+            >
+              <View className="flex-row justify-between items-end mb-3">
+                <Text
+                  className="text-xl font-bold"
+                  style={{ color: theme.text }}
+                >
+                  Quick Inventory
+                </Text>
+                <Pressable onPress={() => setIsAddQuickModalVisible(true)}>
                   <Text
                     className="text-sm font-bold"
                     style={{ color: theme.primary }}
                   >
-                    View All
+                    + Add Item
+                  </Text>
+                </Pressable>
+              </View>
+
+              {/* Quick Inventory Search Bar */}
+              <TextInput
+                placeholder="Search quick inventory..."
+                placeholderTextColor={theme.muted}
+                value={quickSearchQuery}
+                onChangeText={setQuickSearchQuery}
+                onFocus={() => {
+                  setTimeout(() => {
+                    scrollViewRef.current?.scrollTo({
+                      y: 650,
+                      animated: true,
+                    });
+                  }, 150);
+                }}
+                className="px-4 rounded-xl mb-3 font-semibold"
+                style={{
+                  backgroundColor: theme.card || theme.border,
+                  color: theme.text,
+                  fontSize: 16,
+                  height: 52,
+                  textAlignVertical: "center",
+                  paddingTop: 0,
+                  paddingBottom: 0,
+                }}
+              />
+
+              {/* Quick Inventory Stock Filter Chips */}
+              <View className="flex-row gap-2 mb-2">
+                <Pressable
+                  onPress={() => setQuickStockFilter("all")}
+                  className="px-4 py-2 rounded-xl"
+                  style={{
+                    backgroundColor:
+                      quickStockFilter === "all"
+                        ? theme.primary
+                        : theme.card || theme.border,
+                  }}
+                >
+                  <Text
+                    className="text-xs font-bold"
+                    style={{
+                      color:
+                        quickStockFilter === "all" ? "#ffffff" : theme.text,
+                    }}
+                  >
+                    All Stock
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setQuickStockFilter("inStock")}
+                  className="px-4 py-2 rounded-xl"
+                  style={{
+                    backgroundColor:
+                      quickStockFilter === "inStock"
+                        ? theme.primary
+                        : theme.card || theme.border,
+                  }}
+                >
+                  <Text
+                    className="text-xs font-bold"
+                    style={{
+                      color:
+                        quickStockFilter === "inStock" ? "#ffffff" : theme.text,
+                    }}
+                  >
+                    In Stock
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setQuickStockFilter("outOfStock")}
+                  className="px-4 py-2 rounded-xl"
+                  style={{
+                    backgroundColor:
+                      quickStockFilter === "outOfStock"
+                        ? theme.danger
+                        : theme.card || theme.border,
+                  }}
+                >
+                  <Text
+                    className="text-xs font-bold"
+                    style={{
+                      color:
+                        quickStockFilter === "outOfStock"
+                          ? "#ffffff"
+                          : theme.text,
+                    }}
+                  >
+                    Out of Stock
+                  </Text>
+                </Pressable>
+              </View>
+
+              {/* Quick Inventory Dietary Filter Chips */}
+              <View className="flex-row gap-2 mb-2">
+                <Pressable
+                  onPress={() => setQuickDietaryFilter("all")}
+                  className="px-4 py-2 rounded-xl"
+                  style={{
+                    backgroundColor:
+                      quickDietaryFilter === "all"
+                        ? theme.primary
+                        : theme.card || theme.border,
+                  }}
+                >
+                  <Text
+                    className="text-xs font-bold"
+                    style={{
+                      color:
+                        quickDietaryFilter === "all" ? "#ffffff" : theme.text,
+                    }}
+                  >
+                    All Types
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setQuickDietaryFilter("veg")}
+                  className="px-4 py-2 rounded-xl"
+                  style={{
+                    backgroundColor:
+                      quickDietaryFilter === "veg"
+                        ? theme.primary
+                        : theme.card || theme.border,
+                  }}
+                >
+                  <Text
+                    className="text-xs font-bold"
+                    style={{
+                      color:
+                        quickDietaryFilter === "veg" ? "#ffffff" : theme.text,
+                    }}
+                  >
+                    🟢 Veg
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setQuickDietaryFilter("non-veg")}
+                  className="px-4 py-2 rounded-xl"
+                  style={{
+                    backgroundColor:
+                      quickDietaryFilter === "non-veg"
+                        ? theme.danger
+                        : theme.card || theme.border,
+                  }}
+                >
+                  <Text
+                    className="text-xs font-bold"
+                    style={{
+                      color:
+                        quickDietaryFilter === "non-veg"
+                          ? "#ffffff"
+                          : theme.text,
+                    }}
+                  >
+                    🔴 Non-Veg
                   </Text>
                 </Pressable>
               </View>
             </View>
 
-            {activeCategories.length > 0 ? (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                className="mb-3"
-                onScroll={handleScroll}
-                scrollEventThrottle={16}
-              >
-                {activeCategories.map((category) => (
-                  <Pressable
-                    key={category.id}
-                    onPress={() =>
-                      router.push(
-                        `/(manager)/operations/category/${category.id}` as any,
-                      )
-                    }
-                  >
-                    <Card
-                      variant="default"
-                      className="p-3 mr-3 rounded-2xl border-0 items-center justify-center w-[110px] h-[115px]"
-                    >
-                      <Text className="text-2xl mb-1">{category.icon}</Text>
-                      <Text
-                        className="text-xs font-bold text-center"
-                        style={{ color: theme.text }}
-                        numberOfLines={2}
-                      >
-                        {category.name}
-                      </Text>
-                      <Text
-                        className="text-[10px] mt-2 uppercase font-bold"
-                        style={{ color: "#22c55e" }}
-                      >
-                        Active
-                      </Text>
-                    </Card>
-                  </Pressable>
-                ))}
-              </ScrollView>
-            ) : (
-              <Card
-                variant="default"
-                className="p-6 mb-3 rounded-2xl border-dashed border-2 items-center justify-center"
-                style={{ borderColor: theme.border }}
-              >
-                <Text
-                  className="text-sm font-bold"
-                  style={{ color: theme.muted }}
-                >
-                  No Active Categories
-                </Text>
-              </Card>
-            )}
-
-            {activeCategories.length > 0 && (
-              <View className="flex-row justify-center items-center mb-6 mt-1">
-                {activeCategories.map((_, index) => {
-                  const isActive = activeCategoryIndex === index;
-                  return (
-                    <View
-                      key={index}
-                      className="h-1.5 mx-1 rounded-full"
-                      style={{
-                        width: isActive ? 16 : 6,
-                        backgroundColor: isActive
-                          ? theme.primary
-                          : theme.border,
-                      }}
-                    />
+            {/* INDEX 2: Quick Inventory Item Cards List */}
+            <View className="pt-2">
+              {filteredQuickInventory.length > 0 ? (
+                filteredQuickInventory.map((item) => {
+                  const hasOffer =
+                    item.offerPrice !== undefined &&
+                    item.offerPrice !== null &&
+                    Number(item.offerPrice) > 0 &&
+                    Number(item.offerPrice) < Number(item.price);
+                  const parentCategory = categories.find(
+                    (c) => c.id === item.categoryId,
                   );
-                })}
-              </View>
-            )}
-          </View>
 
-          {/* INDEX 1: STICKY QUICK INVENTORY HEADER & FILTERS */}
-          <View
-            style={{
-              backgroundColor: theme.bg,
-              paddingTop: 12,
-              paddingBottom: 8,
-            }}
-          >
-            <View className="flex-row justify-between items-end mb-3">
-              <Text className="text-xl font-bold" style={{ color: theme.text }}>
-                Quick Inventory
-              </Text>
-              <Pressable onPress={() => setIsAddQuickModalVisible(true)}>
-                <Text
-                  className="text-sm font-bold"
-                  style={{ color: theme.primary }}
-                >
-                  + Add Item
-                </Text>
-              </Pressable>
-            </View>
-
-            {/* Quick Inventory Search Bar */}
-            <TextInput
-              placeholder="Search quick inventory..."
-              placeholderTextColor={theme.muted}
-              value={quickSearchQuery}
-              onChangeText={setQuickSearchQuery}
-              onFocus={() => {
-                setTimeout(() => {
-                  scrollViewRef.current?.scrollTo({
-                    y: 650,
-                    animated: true,
-                  });
-                }, 150);
-              }}
-              className="px-4 rounded-xl mb-3 font-semibold"
-              style={{
-                backgroundColor: theme.card || theme.border,
-                color: theme.text,
-                fontSize: 16,
-                height: 52,
-                textAlignVertical: "center",
-                paddingTop: 0,
-                paddingBottom: 0,
-              }}
-            />
-
-            {/* Quick Inventory Stock Filter Chips */}
-            <View className="flex-row gap-2 mb-2">
-              <Pressable
-                onPress={() => setQuickStockFilter("all")}
-                className="px-4 py-2 rounded-xl"
-                style={{
-                  backgroundColor:
-                    quickStockFilter === "all"
-                      ? theme.primary
-                      : theme.card || theme.border,
-                }}
-              >
-                <Text
-                  className="text-xs font-bold"
-                  style={{
-                    color: quickStockFilter === "all" ? "#ffffff" : theme.text,
-                  }}
-                >
-                  All Stock
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={() => setQuickStockFilter("inStock")}
-                className="px-4 py-2 rounded-xl"
-                style={{
-                  backgroundColor:
-                    quickStockFilter === "inStock"
-                      ? theme.primary
-                      : theme.card || theme.border,
-                }}
-              >
-                <Text
-                  className="text-xs font-bold"
-                  style={{
-                    color:
-                      quickStockFilter === "inStock" ? "#ffffff" : theme.text,
-                  }}
-                >
-                  In Stock
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={() => setQuickStockFilter("outOfStock")}
-                className="px-4 py-2 rounded-xl"
-                style={{
-                  backgroundColor:
-                    quickStockFilter === "outOfStock"
-                      ? theme.danger
-                      : theme.card || theme.border,
-                }}
-              >
-                <Text
-                  className="text-xs font-bold"
-                  style={{
-                    color:
-                      quickStockFilter === "outOfStock"
-                        ? "#ffffff"
-                        : theme.text,
-                  }}
-                >
-                  Out of Stock
-                </Text>
-              </Pressable>
-            </View>
-
-            {/* Quick Inventory Dietary Filter Chips */}
-            <View className="flex-row gap-2 mb-2">
-              <Pressable
-                onPress={() => setQuickDietaryFilter("all")}
-                className="px-4 py-2 rounded-xl"
-                style={{
-                  backgroundColor:
-                    quickDietaryFilter === "all"
-                      ? theme.primary
-                      : theme.card || theme.border,
-                }}
-              >
-                <Text
-                  className="text-xs font-bold"
-                  style={{
-                    color:
-                      quickDietaryFilter === "all" ? "#ffffff" : theme.text,
-                  }}
-                >
-                  All Types
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={() => setQuickDietaryFilter("veg")}
-                className="px-4 py-2 rounded-xl"
-                style={{
-                  backgroundColor:
-                    quickDietaryFilter === "veg"
-                      ? theme.primary
-                      : theme.card || theme.border,
-                }}
-              >
-                <Text
-                  className="text-xs font-bold"
-                  style={{
-                    color:
-                      quickDietaryFilter === "veg" ? "#ffffff" : theme.text,
-                  }}
-                >
-                  🟢 Veg
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={() => setQuickDietaryFilter("non-veg")}
-                className="px-4 py-2 rounded-xl"
-                style={{
-                  backgroundColor:
-                    quickDietaryFilter === "non-veg"
-                      ? theme.danger
-                      : theme.card || theme.border,
-                }}
-              >
-                <Text
-                  className="text-xs font-bold"
-                  style={{
-                    color:
-                      quickDietaryFilter === "non-veg" ? "#ffffff" : theme.text,
-                  }}
-                >
-                  🔴 Non-Veg
-                </Text>
-              </Pressable>
-            </View>
-          </View>
-
-          {/* INDEX 2: Quick Inventory Item Cards List */}
-          <View className="pt-2">
-            {filteredQuickInventory.length > 0 ? (
-              filteredQuickInventory.map((item) => {
-                const hasOffer =
-                  item.offerPrice !== undefined &&
-                  item.offerPrice !== null &&
-                  Number(item.offerPrice) > 0 &&
-                  Number(item.offerPrice) < Number(item.price);
-                const parentCategory = categories.find(
-                  (c) => c.id === item.categoryId,
-                );
-
-                return (
-                  <Card
-                    key={item.id}
-                    variant="default"
-                    className="p-4 mb-3 rounded-2xl border-0 flex-row justify-between items-center"
-                  >
-                    <Pressable
-                      className="flex-1 mr-3 justify-center py-1"
-                      onPress={() =>
-                        router.push(
-                          `/(manager)/operations/item/${item.id}` as any,
-                        )
-                      }
+                  return (
+                    <Card
+                      key={item.id}
+                      variant="default"
+                      className="p-4 mb-3 rounded-2xl border-0 flex-row justify-between items-center"
                     >
-                      <View className="flex-row items-center gap-2 mb-1">
-                        <Text className="text-xs">
-                          {item.dietaryPreference === "veg" ? "🟢" : "🔴"}
-                        </Text>
-                        <Text
-                          className="text-base font-bold flex-1"
-                          style={{ color: theme.text }}
-                          numberOfLines={1}
-                        >
-                          {item.name}
-                        </Text>
-                      </View>
-                      <View className="flex-row items-center gap-3 mb-2">
-                        <Text
-                          className="text-sm font-bold"
-                          style={{ color: theme.primary }}
-                        >
-                          ₹{hasOffer ? item.offerPrice : item.price}
-                        </Text>
-                        {hasOffer && (
-                          <Text
-                            className="text-xs line-through"
-                            style={{ color: theme.muted }}
-                          >
-                            ₹{item.price}
-                          </Text>
-                        )}
-                        {parentCategory && (
-                          <Text
-                            className="text-xs font-medium"
-                            style={{ color: theme.muted }}
-                          >
-                            {parentCategory.icon} {parentCategory.name}
-                          </Text>
-                        )}
-                      </View>
-                      <View className="flex-row items-center mt-1">
-                        <Pressable
-                          onPress={() => removeFromQuickInventory(item.id)}
-                          className="mr-3"
-                        >
-                          <Text
-                            className="text-xs font-bold"
-                            style={{ color: theme.danger }}
-                          >
-                            Remove from Quick
-                          </Text>
-                        </Pressable>
-                      </View>
-                    </Pressable>
-                    <View className="items-end w-30">
-                      <Switch
-                        value={item.isAvailable}
-                        onValueChange={() => toggleItemStock(item.id)}
-                        trackColor={{
-                          false: theme.border,
-                          true: theme.primary,
-                        }}
-                        thumbColor={"#ffffff"}
-                      />
-                      <Text
-                        className="text-[8px] font-bold uppercase mt-1 text-center"
-                        style={{
-                          color: item.isAvailable
-                            ? theme.primary
-                            : theme.danger,
-                        }}
+                      <Pressable
+                        className="flex-1 mr-3 justify-center py-1"
+                        onPress={() =>
+                          router.push(
+                            `/(manager)/operations/item/${item.id}` as any,
+                          )
+                        }
                       >
-                        {item.isAvailable ? "In Stock" : "Out of Stock"}
-                      </Text>
-                    </View>
-                  </Card>
-                );
-              })
-            ) : (
-              <View
-                className="p-6 rounded-2xl border border-dashed items-center mt-2 mb-4"
-                style={{ borderColor: theme.border }}
-              >
-                <Text
-                  className="text-sm italic text-center"
-                  style={{ color: theme.muted }}
+                        <View className="flex-row items-center gap-2 mb-1">
+                          <Text className="text-xs">
+                            {item.dietaryPreference === "veg" ? "🟢" : "🔴"}
+                          </Text>
+                          <Text
+                            className="text-base font-bold flex-1"
+                            style={{ color: theme.text }}
+                            numberOfLines={1}
+                          >
+                            {item.name}
+                          </Text>
+                        </View>
+                        <View className="flex-row items-center gap-3 mb-2">
+                          <Text
+                            className="text-sm font-bold"
+                            style={{ color: theme.primary }}
+                          >
+                            ₹{hasOffer ? item.offerPrice : item.price}
+                          </Text>
+                          {hasOffer && (
+                            <Text
+                              className="text-xs line-through"
+                              style={{ color: theme.muted }}
+                            >
+                              ₹{item.price}
+                            </Text>
+                          )}
+                          {parentCategory && (
+                            <Text
+                              className="text-xs font-medium"
+                              style={{ color: theme.muted }}
+                            >
+                              {parentCategory.icon} {parentCategory.name}
+                            </Text>
+                          )}
+                        </View>
+                        <View className="flex-row items-center mt-1">
+                          <Pressable
+                            onPress={() => removeFromQuickInventory(item.id)}
+                            className="mr-3"
+                          >
+                            <Text
+                              className="text-xs font-bold"
+                              style={{ color: theme.danger }}
+                            >
+                              Remove from Quick
+                            </Text>
+                          </Pressable>
+                        </View>
+                      </Pressable>
+                      <View className="items-end w-30">
+                        <Switch
+                          value={item.isAvailable}
+                          onValueChange={() => toggleItemStock(item.id)}
+                          trackColor={{
+                            false: theme.border,
+                            true: theme.primary,
+                          }}
+                          thumbColor={"#ffffff"}
+                        />
+                        <Text
+                          className="text-[8px] font-bold uppercase mt-1 text-center"
+                          style={{
+                            color: item.isAvailable
+                              ? theme.primary
+                              : theme.danger,
+                          }}
+                        >
+                          {item.isAvailable ? "In Stock" : "Out of Stock"}
+                        </Text>
+                      </View>
+                    </Card>
+                  );
+                })
+              ) : (
+                <View
+                  className="p-6 rounded-2xl border border-dashed items-center mt-2 mb-4"
+                  style={{ borderColor: theme.border }}
                 >
-                  No items in quick inventory matching filters. Tap "+ Add Item"
-                  above.
-                </Text>
-              </View>
-            )}
+                  <Text
+                    className="text-sm italic text-center"
+                    style={{ color: theme.muted }}
+                  >
+                    No items in quick inventory matching filters. Tap "+ Add
+                    Item" above.
+                  </Text>
+                </View>
+              )}
+            </View>
+          </ScrollView>
+        ) : (
+          <View className="flex-1 px-6 justify-center items-center">
+            <Card
+              variant="default"
+              className="p-8 rounded-3xl border-0 items-center w-full shadow-lg"
+              style={{ backgroundColor: theme.card }}
+            >
+              <Text className="text-3xl mb-2">🔒</Text>
+              <Text
+                className="text-lg font-black mb-1 text-center"
+                style={{ color: theme.text }}
+              >
+                You are Checked Out
+              </Text>
+              <Text
+                className="text-xs font-medium text-center mb-4"
+                style={{ color: theme.muted }}
+              >
+                Toggle 'Check In' above to view and manage store inventory and
+                operations.
+              </Text>
+            </Card>
           </View>
-        </ScrollView>
+        )}
       </KeyboardAvoidingView>
 
       {/* ========================================================= */}

@@ -16,7 +16,10 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Card } from "../../../components/ui/Card";
-import { MANAGER_MOCK_DATA } from "../../../constants/managerMockData";
+import {
+  FINANCIAL_MOCK_STATE,
+  MANAGER_MOCK_DATA,
+} from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { useCurrentManager } from "../../../hooks/useCurrentManager";
 
@@ -25,6 +28,71 @@ export default function ManagerOrdersScreen() {
   const insets = useSafeAreaInsets();
   const theme = useAppTheme();
   const { currentManager } = useCurrentManager();
+
+  // Helper to get detailed breakdown for rendering purely from mockdata
+  const getOrderBreakdown = (order: any) => {
+    const taxSection = MANAGER_MOCK_DATA.storeDetails?.find(
+      (s: any) => s.id === "sd_tax",
+    );
+    const activeTaxOpt =
+      taxSection?.options?.find((o: any) => o.isActive) ||
+      taxSection?.options?.[0];
+    const taxStr = activeTaxOpt?.value || "5%";
+    const taxRate = parseFloat(taxStr.replace(/[^0-9.]/g, "")) / 100 || 0.05;
+
+    const chargesSection = MANAGER_MOCK_DATA.storeDetails?.find(
+      (s: any) => s.id === "sd_charges",
+    );
+    const activeChargesOpt =
+      chargesSection?.options?.find((o: any) => o.isActive) ||
+      chargesSection?.options?.[0];
+    const chargesText =
+      activeChargesOpt?.subValue || activeChargesOpt?.value || "";
+
+    // Parse charges directly from mockdata string
+    const getChargeVal = (prefix: string, defaultVal: number) => {
+      const regex = new RegExp(`${prefix}[^0-9]*([0-9]+)`, "i");
+      const match = chargesText.match(regex);
+      return match ? parseFloat(match[1]) : defaultVal;
+    };
+
+    const packaging = getChargeVal("Packaging", 20);
+    const platform = getChargeVal("Platform", 10);
+    const deliveryFeeBase = getChargeVal("Delivery", 30);
+
+    const itemSubtotal = order.items.reduce(
+      (sum: number, item: any) => sum + item.price * (item.qty || 1),
+      0,
+    );
+
+    const isDelivery = order.mode?.toLowerCase() === "delivery";
+    // Rule: If delivery order value is more than 99, delivery fee is 0 (FREE)
+    const deliveryFee = isDelivery
+      ? itemSubtotal > 99
+        ? 0
+        : deliveryFeeBase
+      : 0;
+    const packagingFee = packaging;
+    const platformFee = isDelivery ? platform : 0;
+    const gstAmount = Math.round(itemSubtotal * taxRate * 100) / 100;
+    const total =
+      itemSubtotal + packagingFee + platformFee + deliveryFee + gstAmount;
+
+    return {
+      itemSubtotal,
+      packagingFee,
+      platformFee,
+      deliveryFee,
+      deliveryFeeBase,
+      gstAmount,
+      taxStr,
+      total: Math.round(total * 100) / 100,
+    };
+  };
+
+  const calculateOrderTotal = (order: any) => {
+    return getOrderBreakdown(order).total;
+  };
 
   const assignedBranch =
     (currentManager as any)?.assignedBranch || "Hitech City Premium";
@@ -40,9 +108,20 @@ export default function ManagerOrdersScreen() {
   useEffect(() => {
     const timer = setInterval(() => {
       let updated = false;
+      const daysMap = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const liveDayStr = daysMap[new Date().getDay()];
+
       const newOrders = MANAGER_MOCK_DATA.orders.map((order) => {
         if (order.status === "out_for_delivery") {
           updated = true;
+          const orderTotal = calculateOrderTotal(order);
+          const todayTrend = FINANCIAL_MOCK_STATE.weeklyTrend.find(
+            (w) => w.day === liveDayStr,
+          );
+          if (todayTrend) {
+            todayTrend.amount += orderTotal;
+            todayTrend.delivery = (todayTrend.delivery || 0) + orderTotal;
+          }
           return { ...order, status: "completed" };
         }
         return order;
@@ -73,8 +152,36 @@ export default function ManagerOrdersScreen() {
   const updateOrderStatus = (orderId: string, nextStatus: string) => {
     const index = MANAGER_MOCK_DATA.orders.findIndex((o) => o.id === orderId);
     if (index > -1) {
+      const targetOrder = MANAGER_MOCK_DATA.orders[index];
+      const prevStatus = targetOrder.status;
+
       MANAGER_MOCK_DATA.orders[index].status = nextStatus;
       setOrders([...MANAGER_MOCK_DATA.orders]);
+
+      // If order just became completed, update weekly trend
+      if (prevStatus !== "completed" && nextStatus === "completed") {
+        const orderTotal = calculateOrderTotal(targetOrder);
+        const daysMap = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        const liveDayStr = daysMap[new Date().getDay()];
+        const todayTrend = FINANCIAL_MOCK_STATE.weeklyTrend.find(
+          (w) => w.day === liveDayStr,
+        );
+        const targetIdx = FINANCIAL_MOCK_STATE.weeklyTrend.findIndex(
+          (w) => w.day === liveDayStr,
+        );
+        if (todayTrend) {
+          todayTrend.amount += orderTotal;
+          if (targetOrder.mode?.toLowerCase() === "delivery") {
+            todayTrend.delivery = (todayTrend.delivery || 0) + orderTotal;
+          } else {
+            todayTrend.takeaway = (todayTrend.takeaway || 0) + orderTotal;
+          }
+        } else if (targetIdx > -1) {
+          FINANCIAL_MOCK_STATE.weeklyTrend[targetIdx].amount += orderTotal;
+        } else {
+          FINANCIAL_MOCK_STATE.weeklyTrend[4].amount += orderTotal;
+        }
+      }
     }
   };
 
@@ -280,7 +387,7 @@ export default function ManagerOrdersScreen() {
                       className="text-sm font-black"
                       style={{ color: theme.primary }}
                     >
-                      ₹{order.totalAmount}
+                      ₹{calculateOrderTotal(order)}
                     </Text>
                     <Text
                       className="text-[10px] font-bold uppercase tracking-wider"
@@ -318,7 +425,7 @@ export default function ManagerOrdersScreen() {
                   </View>
                 </View>
 
-                {/* Ordered Items */}
+                {/* Ordered Items & Charges Breakdown */}
                 <View className="mb-4 gap-1.5">
                   <Text
                     className="text-xs font-bold uppercase mb-1"
@@ -329,7 +436,7 @@ export default function ManagerOrdersScreen() {
                   {order.items.map((item: any, idx: number) => (
                     <View
                       key={idx}
-                      className="flex-row justify-between items-center"
+                      className="flex-row justify-between items-center py-0.5"
                     >
                       <Text
                         className="text-sm font-semibold"
@@ -345,6 +452,93 @@ export default function ManagerOrdersScreen() {
                       </Text>
                     </View>
                   ))}
+
+                  {/* Charges Breakdown */}
+                  {(() => {
+                    const b = getOrderBreakdown(order);
+                    return (
+                      <View
+                        className="mt-3 pt-3 border-t gap-1.5"
+                        style={{ borderTopColor: theme.border }}
+                      >
+                        <View className="flex-row justify-between items-center">
+                          <Text
+                            className="text-xs font-medium"
+                            style={{ color: theme.muted }}
+                          >
+                            Item Subtotal
+                          </Text>
+                          <Text
+                            className="text-xs font-bold"
+                            style={{ color: theme.text }}
+                          >
+                            ₹{b.itemSubtotal}
+                          </Text>
+                        </View>
+                        <View className="flex-row justify-between items-center">
+                          <Text
+                            className="text-xs font-medium"
+                            style={{ color: theme.muted }}
+                          >
+                            Packaging Charge
+                          </Text>
+                          <Text
+                            className="text-xs font-bold"
+                            style={{ color: theme.text }}
+                          >
+                            ₹{b.packagingFee}
+                          </Text>
+                        </View>
+                        {order.mode?.toLowerCase() === "delivery" && (
+                          <View className="flex-row justify-between items-center">
+                            <Text
+                              className="text-xs font-medium"
+                              style={{ color: theme.muted }}
+                            >
+                              Platform Fee
+                            </Text>
+                            <Text
+                              className="text-xs font-bold"
+                              style={{ color: theme.text }}
+                            >
+                              ₹{b.platformFee}
+                            </Text>
+                          </View>
+                        )}
+                        <View className="flex-row justify-between items-center">
+                          <Text
+                            className="text-xs font-medium"
+                            style={{ color: theme.muted }}
+                          >
+                            Delivery Fee {b.deliveryFee === 0 && "(Free > ₹99)"}
+                          </Text>
+                          <Text
+                            className="text-xs font-bold"
+                            style={{
+                              color:
+                                b.deliveryFee === 0 ? "#22c55e" : theme.text,
+                            }}
+                          >
+                            {b.deliveryFee === 0 ? "FREE" : `₹${b.deliveryFee}`}
+                          </Text>
+                        </View>
+                        <View className="flex-row justify-between items-center">
+                          <Text
+                            className="text-xs font-medium"
+                            style={{ color: theme.muted }}
+                          >
+                            GST ({b.taxStr})
+                          </Text>
+                          <Text
+                            className="text-xs font-bold"
+                            style={{ color: theme.text }}
+                          >
+                            ₹{b.gstAmount}
+                          </Text>
+                        </View>
+                      </View>
+                    );
+                  })()}
                 </View>
 
                 {/* Action Button or View-Only Notice */}
