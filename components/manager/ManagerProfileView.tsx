@@ -90,26 +90,45 @@ export default function ManagerProfileView({
   );
 
   const isFloor = role === "floor" || pathname?.includes("floor");
+  const isAdmin = role === "admin" || pathname?.includes("admin");
 
-  let matchedManager = (MANAGER_MOCK_DATA as any).managers?.find(
-    (m: any) => m.phone === phone || m.phone === currentManager?.phone,
-  );
+  let matchedManager = isAdmin
+    ? (MANAGER_MOCK_DATA as any).managers?.find(
+        (m: any) =>
+          m.role === "admin" ||
+          m.managerType === "admin" ||
+          m.phone === "+919999999990",
+      )
+    : (MANAGER_MOCK_DATA as any).managers?.find(
+        (m: any) => m.phone === phone || m.phone === currentManager?.phone,
+      );
 
   if (!matchedManager) {
-    const targetType = isFloor ? "floor" : "operations";
+    const targetType = isAdmin ? "admin" : isFloor ? "floor" : "operations";
     matchedManager = (MANAGER_MOCK_DATA as any).managers?.find(
-      (m: any) => m.managerType?.toLowerCase() === targetType,
+      (m: any) =>
+        m.managerType?.toLowerCase() === targetType ||
+        m.role?.toLowerCase() === targetType,
     );
   }
 
   const displayFirstName =
-    matchedManager?.name || (isFloor ? "Floor Manager" : "Operations Manager");
+    matchedManager?.name ||
+    (isAdmin
+      ? "Restaurant Admin"
+      : isFloor
+        ? "Floor Manager"
+        : "Operations Manager");
 
   const displayPhone =
     matchedManager?.phone ||
     matchedManager?.phoneNumber ||
     matchedManager?.mobile ||
-    (isFloor ? MANAGER_PHONES.floor_1 : MANAGER_PHONES.ops_1);
+    (isAdmin
+      ? MANAGER_PHONES.admin
+      : isFloor
+        ? MANAGER_PHONES.floor_1
+        : MANAGER_PHONES.ops_1);
 
   const handleLogout = () => {
     Alert.alert("Sign Out", "Are you sure you want to sign out?", [
@@ -168,10 +187,14 @@ export default function ManagerProfileView({
               icon={UserRoundPen}
               label="Personal Info"
               onPress={() => {
-                const targetQuery = phone
-                  ? `?phone=${encodeURIComponent(phone)}`
-                  : "";
-                if (isFloor) {
+                const targetQuery = displayPhone
+                  ? `?phone=${encodeURIComponent(displayPhone)}`
+                  : phone
+                    ? `?phone=${encodeURIComponent(phone)}`
+                    : "";
+                if (isAdmin) {
+                  router.push(`/(admin)/profile/personal${targetQuery}` as any);
+                } else if (isFloor) {
                   router.push(
                     `/(manager)/floor/profile/personal${targetQuery}` as any,
                   );
@@ -189,7 +212,9 @@ export default function ManagerProfileView({
               label="Store Details"
               onPress={() =>
                 router.push(
-                  "/(manager)/operations/profile/store-details" as any,
+                  (isAdmin
+                    ? "/(admin)/profile/store-details"
+                    : "/(manager)/operations/profile/store-details") as any,
                 )
               }
               theme={theme}
@@ -200,7 +225,9 @@ export default function ManagerProfileView({
               label="Storefront Display"
               onPress={() =>
                 router.push(
-                  "/(manager)/operations/profile/storefront-display" as any,
+                  (isAdmin
+                    ? "/(admin)/profile/storefront-display"
+                    : "/(manager)/operations/profile/storefront-display") as any,
                 )
               }
               theme={theme}
@@ -213,7 +240,9 @@ export default function ManagerProfileView({
                 const targetQuery = phone
                   ? `?phone=${encodeURIComponent(phone)}`
                   : "";
-                if (isFloor) {
+                if (isAdmin) {
+                  router.push(`/(admin)/profile/security${targetQuery}` as any);
+                } else if (isFloor) {
                   router.push(
                     `/(manager)/floor/profile/security${targetQuery}` as any,
                   );
@@ -226,12 +255,73 @@ export default function ManagerProfileView({
               theme={theme}
             />
 
+            {isAdmin && (
+              <SettingsRow
+                icon={Shield}
+                label="Add Admin"
+                onPress={() => {
+                  const targetQuery = displayPhone
+                    ? `?phone=${encodeURIComponent(displayPhone)}`
+                    : phone
+                      ? `?phone=${encodeURIComponent(phone)}`
+                      : "";
+                  router.push(
+                    `/(admin)/profile/add-admin${targetQuery}` as any,
+                  );
+                }}
+                theme={theme}
+              />
+            )}
+
             <SettingsRow
               icon={UserPlus}
               label="Add New Manager"
-              onPress={() =>
-                router.push("/(manager)/operations/profile/add-manager" as any)
-              }
+              onPress={() => {
+                const targetQuery = displayPhone
+                  ? `?phone=${encodeURIComponent(displayPhone)}`
+                  : phone
+                    ? `?phone=${encodeURIComponent(phone)}`
+                    : "";
+                if (isAdmin) {
+                  router.push(
+                    `/(admin)/profile/add-manager${targetQuery}` as any,
+                  );
+                } else if (isFloor) {
+                  router.push(
+                    `/(manager)/floor/profile/add-manager${targetQuery}` as any,
+                  );
+                } else {
+                  router.push(
+                    `/(manager)/operations/profile/add-manager${targetQuery}` as any,
+                  );
+                }
+              }}
+              theme={theme}
+            />
+
+            <SettingsRow
+              icon={UserPlus}
+              label="Add Waiter"
+              onPress={() => {
+                const targetQuery = displayPhone
+                  ? `?phone=${encodeURIComponent(displayPhone)}`
+                  : phone
+                    ? `?phone=${encodeURIComponent(phone)}`
+                    : "";
+                if (isAdmin) {
+                  router.push(
+                    `/(admin)/profile/add-waiter${targetQuery}` as any,
+                  );
+                } else if (isFloor) {
+                  router.push(
+                    `/(manager)/floor/profile/add-waiter${targetQuery}` as any,
+                  );
+                } else {
+                  router.push(
+                    `/(manager)/operations/profile/add-waiter${targetQuery}` as any,
+                  );
+                }
+              }}
               theme={theme}
             />
 
@@ -242,7 +332,11 @@ export default function ManagerProfileView({
                 const targetQuery = phone
                   ? `?phone=${encodeURIComponent(phone)}`
                   : "";
-                if (isFloor) {
+                if (isAdmin) {
+                  router.push(
+                    `/(admin)/profile/notifications${targetQuery}` as any,
+                  );
+                } else if (isFloor) {
                   router.push(
                     `/(manager)/floor/profile/notifications${targetQuery}` as any,
                   );

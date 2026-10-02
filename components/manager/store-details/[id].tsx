@@ -3,21 +3,21 @@ import * as Location from "expo-location";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
 import {
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    Pressable,
-    ScrollView,
-    Switch,
-    Text,
-    TextInput,
-    View,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  Switch,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
-    MANAGER_MOCK_DATA,
-    StoreDetailOption,
+  MANAGER_MOCK_DATA,
+  StoreDetailOption,
 } from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { Button } from "../../ui/Button";
@@ -134,10 +134,16 @@ export default function StoreDetailDetailComponent() {
   const openEditor = (opt?: StoreDetailOption) => {
     setEditingOption(opt || null);
     if (isTaxSection && opt) {
-      setAddressLine(opt.value ? opt.value.replace("%", "") : "");
-      setGpsCoordinates(
-        opt.subValue ? opt.subValue.replace(/[^0-9.]/g, "") : "",
+      const cgstMatch = opt.subValue
+        ? opt.subValue.match(/CGST:\s*([0-9.]+)/)
+        : null;
+      const sgstMatch = opt.subValue
+        ? opt.subValue.match(/SGST:\s*([0-9.]+)/)
+        : null;
+      setAddressLine(
+        cgstMatch ? cgstMatch[1] : opt.value ? opt.value.replace("%", "") : "",
       );
+      setGpsCoordinates(sgstMatch ? sgstMatch[1] : "");
       setThirdVal("");
       setFourthVal("");
     } else if (isChargesSection && opt) {
@@ -155,7 +161,8 @@ export default function StoreDetailDetailComponent() {
       setThirdVal(delMatch ? delMatch[1] : "");
       setFourthVal("");
     } else if (isDeliverySection && opt) {
-      setAddressLine(opt.value ? opt.value.split(" ")[0] : "");
+      const titleMatch = opt.value ? opt.value.match(/^(.*?)\s*\(/) : null;
+      setAddressLine(titleMatch ? titleMatch[1] : opt.value || "");
       const priceMatch = opt.value ? opt.value.match(/₹([0-9-]+)/) : null;
       setGpsCoordinates(priceMatch ? priceMatch[1] : "0");
       const subParts = opt.subValue ? opt.subValue.split("•") : [];
@@ -700,7 +707,7 @@ export default function StoreDetailDetailComponent() {
                       placeholder={
                         id === "sd_wifi"
                           ? "Network SSID (Name)..."
-                          : "Enter value..."
+                          : "Enter Name"
                       }
                       placeholderTextColor={theme.muted}
                       value={addressLine}

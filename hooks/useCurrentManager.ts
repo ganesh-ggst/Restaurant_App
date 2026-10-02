@@ -20,10 +20,17 @@ export function useCurrentManager() {
 
   if (!currentManager) {
     const isFloorRoute = pathname?.includes("floor");
-    const targetType = isFloorRoute ? "floor" : "operations";
+    const isAdminRoute = pathname?.includes("admin");
+    const targetType = isAdminRoute
+      ? "admin"
+      : isFloorRoute
+        ? "floor"
+        : "operations";
 
     currentManager = MANAGER_MOCK_DATA.managers?.find(
-      (m: any) => m.managerType?.toLowerCase() === targetType,
+      (m: any) =>
+        m.managerType?.toLowerCase() === targetType ||
+        m.role?.toLowerCase() === targetType,
     );
   }
 
@@ -34,8 +41,14 @@ export function useCurrentManager() {
   return {
     rawPhone: phone,
     normalizedPhone:
-      normalizedPhone || currentManager?.phone || MANAGER_PHONES.ops_1,
+      normalizedPhone ||
+      currentManager?.phone ||
+      MANAGER_PHONES.admin ||
+      MANAGER_PHONES.ops_1,
     currentManager,
+    isAdmin:
+      currentManager?.role === "admin" ||
+      currentManager?.managerType === "admin",
     isOperations: currentManager?.managerType === "operations",
     isFloor: currentManager?.managerType === "floor",
   };

@@ -7,6 +7,7 @@ import {
   Animated,
   Pressable,
   ScrollView,
+  Switch,
   Text,
   TextInput,
   View,
@@ -27,6 +28,42 @@ export default function FloorDashboard() {
   const theme = useAppTheme();
   const router = useRouter();
   const { currentManager, normalizedPhone } = useCurrentManager();
+
+  // Helper to ensure table total always includes GST correctly
+  const calculateTableTotal = (table: FloorTable) => {
+    if (!table.currentOrder) return 0;
+    const storedTotal = table.currentOrder.totalAmount || 0;
+    const items = table.currentOrder.items || [];
+
+    const itemSum =
+      items.length > 0
+        ? items.reduce((acc, item) => acc + (item.price || 0), 0)
+        : storedTotal;
+
+    const taxSection = MANAGER_MOCK_DATA.storeDetails?.find(
+      (s: any) => s.id === "sd_tax",
+    );
+    const activeTaxOpt =
+      taxSection?.options?.find((o: any) => o.isActive) ||
+      taxSection?.options?.[0];
+    const taxStr = activeTaxOpt?.value || "5%";
+    const taxRate = parseFloat(taxStr.replace(/[^0-9.]/g, "")) / 100 || 0.05;
+
+    // If itemSum is valid, compute total with GST
+    if (itemSum > 0) {
+      const calculatedWithGst =
+        Math.round((itemSum + itemSum * taxRate) * 100) / 100;
+      if (
+        storedTotal > itemSum &&
+        Math.abs(storedTotal - calculatedWithGst) < 2
+      ) {
+        return storedTotal;
+      }
+      return calculatedWithGst;
+    }
+
+    return storedTotal;
+  };
 
   const getTableNumber = (str: string) => {
     const match = String(str).match(/\d+/);
@@ -53,6 +90,9 @@ export default function FloorDashboard() {
 
   const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
   const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  // Check In / Check Out toggle state
+  const [isCheckedIn, setIsCheckedIn] = useState(true);
 
   useEffect(() => {
     if (hasUnreadNotifications) {
@@ -102,6 +142,58 @@ export default function FloorDashboard() {
       setHasUnreadNotifications(managerUnread);
     }, [currentManager]),
   );
+
+  const handleToggleCheckIn = (newValue: boolean) => {
+    if (!newValue) {
+      // 🔒 SECURITY CHECK: Ensure all assigned tables are free (available) before checking out
+      const busyTables = tables.filter((t) => t.status !== "available");
+      if (busyTables.length > 0) {
+        const tableDetailsList = busyTables
+          .map((t) => `• ${t.tableName} (${t.status.toUpperCase()})`)
+          .join("\n");
+        Alert.alert(
+          "⚠️ Cannot Check Out",
+          `All assigned tables must be cleared and marked as 'Free' before you can check out.\n\nActive/Billed Tables:\n${tableDetailsList}`,
+          [{ text: "OK", style: "default" }],
+        );
+        return;
+      }
+    }
+
+    Alert.alert(
+      newValue ? "Check In" : "Check Out",
+      `Are you sure you want to check ${newValue ? "IN" : "OUT"}?`,
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+          onPress: () => {},
+        },
+        {
+          text: "Confirm",
+          onPress: () => {
+            setIsCheckedIn(newValue);
+            // Update manager active/inactive status and unassign tables/waiters on check out
+            if (currentManager) {
+              const matchMgr = MANAGER_MOCK_DATA.managers?.find(
+                (m: any) =>
+                  m.id === currentManager.id ||
+                  m.phone === currentManager.phone,
+              );
+              if (matchMgr) {
+                matchMgr.isActive = newValue;
+                if (!newValue) {
+                  // Unassign tables and waiters when checked out so other managers can handle them
+                  matchMgr.assignedTables = [];
+                  matchMgr.assignedWaiters = [];
+                }
+              }
+            }
+          },
+        },
+      ],
+    );
+  };
 
   const handleTestFreeTable = () => {
     const freeTableIndex = INITIAL_FLOOR_TABLES.findIndex(
@@ -258,6 +350,39 @@ export default function FloorDashboard() {
           </View>
         </View>
 
+        {/* --- CHECK IN / CHECK OUT TOGGLE BAR --- */}
+        <Card
+          variant="default"
+          className="p-3.5 mb-4 rounded-2xl border-0 flex-row items-center justify-between"
+          style={{ backgroundColor: theme.card }}
+        >
+          <View className="flex-row items-center gap-2.5">
+            <View
+              className="w-3 h-3 rounded-full"
+              style={{ backgroundColor: isCheckedIn ? "#22c55e" : "#ef4444" }}
+            />
+            <View>
+              <Text
+                className="text-xs font-black uppercase"
+                style={{ color: theme.text }}
+              >
+                {isCheckedIn ? "CHECKED IN" : "CHECKED OUT"}
+              </Text>
+              <Text className="text-[10px]" style={{ color: theme.muted }}>
+                {isCheckedIn ? "On duty & managing floor" : "Off duty"}
+              </Text>
+            </View>
+          </View>
+
+          <Switch
+            value={isCheckedIn}
+            onValueChange={handleToggleCheckIn}
+            trackColor={{ false: theme.border, true: "#22c55e" }}
+            thumbColor={"#ffffff"}
+            style={{ transform: [{ scale: 0.8 }] }}
+          />
+        </Card>
+
         {/* --- TEST FREE TABLE BUTTON --- */}
         <Pressable
           onPress={handleTestFreeTable}
@@ -343,7 +468,7 @@ export default function FloorDashboard() {
               style={{ color: theme.muted }}
               numberOfLines={1}
             >
-              Free
+              Reserved
             </Text>
           </Card>
         </View>
@@ -399,123 +524,151 @@ export default function FloorDashboard() {
         </View>
       </View>
 
-      {/* --- TABLE GRID LIST --- */}
-      <ScrollView
-        className="flex-1 px-6"
-        contentContainerStyle={{ paddingBottom: 60 }}
-        showsVerticalScrollIndicator={false}
-      >
-        {filteredTables.length > 0 ? (
-          filteredTables.map((table) => {
-            const statusColor = getStatusColor(table.status);
-            const capacity = table.capacity;
-            const isBlocked = table.status !== "available";
+      {/* --- TABLE GRID LIST OR CHECKED OUT NOTICE --- */}
+      {isCheckedIn ? (
+        <ScrollView
+          className="flex-1 px-6"
+          contentContainerStyle={{ paddingBottom: 60 }}
+          showsVerticalScrollIndicator={false}
+        >
+          {filteredTables.length > 0 ? (
+            filteredTables.map((table) => {
+              const statusColor = getStatusColor(table.status);
+              const capacity = table.capacity;
+              const isBlocked = table.status !== "available";
 
-            return (
-              <Pressable key={table.id} onPress={() => handleTablePress(table)}>
-                <Card
-                  variant="default"
-                  className="p-4 mb-3 rounded-2xl border-0 flex-row justify-between items-center"
-                  style={{ backgroundColor: theme.card }}
+              return (
+                <Pressable
+                  key={table.id}
+                  onPress={() => handleTablePress(table)}
                 >
-                  <View className="flex-1 mr-3">
-                    <View className="flex-row items-center gap-2 mb-1">
-                      <Text
-                        className="text-lg font-black"
-                        style={{ color: theme.text }}
-                      >
-                        {table.tableName}
-                      </Text>
-                      <View
-                        className="px-2.5 py-0.5 rounded-full"
-                        style={{ backgroundColor: statusColor }}
-                      >
+                  <Card
+                    variant="default"
+                    className="p-4 mb-3 rounded-2xl border-0 flex-row justify-between items-center"
+                    style={{ backgroundColor: theme.card }}
+                  >
+                    <View className="flex-1 mr-3">
+                      <View className="flex-row items-center gap-2 mb-1">
                         <Text
-                          className="text-[10px] font-extrabold uppercase"
-                          style={{ color: "#ffffff" }}
+                          className="text-lg font-black"
+                          style={{ color: theme.text }}
                         >
-                          {table.status}
+                          {table.tableName}
                         </Text>
+                        <View
+                          className="px-2.5 py-0.5 rounded-full"
+                          style={{ backgroundColor: statusColor }}
+                        >
+                          <Text
+                            className="text-[10px] font-extrabold uppercase"
+                            style={{ color: "#ffffff" }}
+                          >
+                            {table.status}
+                          </Text>
+                        </View>
+
+                        <View
+                          className="px-2 py-0.5 rounded-full"
+                          style={{
+                            backgroundColor: isBlocked ? "#ef4444" : "#22c55e",
+                          }}
+                        >
+                          <Text className="text-[9px] font-bold text-white">
+                            {isBlocked ? "BLOCKED 🔒" : "OPEN 🔓"}
+                          </Text>
+                        </View>
                       </View>
 
-                      <View
-                        className="px-2 py-0.5 rounded-full"
-                        style={{
-                          backgroundColor: isBlocked ? "#ef4444" : "#22c55e",
-                        }}
-                      >
-                        <Text className="text-[9px] font-bold text-white">
-                          {isBlocked ? "BLOCKED 🔒" : "OPEN 🔓"}
-                        </Text>
-                      </View>
-                    </View>
-
-                    <Text
-                      className="text-xs font-medium mb-1"
-                      style={{ color: theme.muted }}
-                    >
-                      Capacity: {capacity} Guests Max
-                    </Text>
-
-                    {table.status === "reserved" || !table.currentOrder ? (
                       <Text
-                        className="text-xs italic"
+                        className="text-xs font-medium mb-1"
                         style={{ color: theme.muted }}
                       >
-                        Ready for seating
+                        Capacity: {capacity} Guests Max
                       </Text>
-                    ) : (
-                      (() => {
-                        const assignedWaiter = MANAGER_MOCK_DATA.waiters.find(
-                          (w: any) => w.id === table.currentOrder?.waiterId,
-                        );
-                        const waiterNameDisplay = assignedWaiter
-                          ? assignedWaiter.name
-                          : "";
-                        return (
-                          <Text
-                            className="text-xs font-bold"
-                            style={{ color: theme.text }}
-                          >
-                            {waiterNameDisplay
-                              ? `Waiter: ${waiterNameDisplay} • `
-                              : ""}
-                            {table.currentOrder.totalAmount > 0
-                              ? `₹${table.currentOrder.totalAmount}`
-                              : table.currentOrder.timeSeated}
-                          </Text>
-                        );
-                      })()
-                    )}
-                  </View>
 
-                  <View className="items-end">
-                    <Text
-                      className="text-sm font-bold"
-                      style={{ color: theme.primary }}
-                    >
-                      Manage →
-                    </Text>
-                  </View>
-                </Card>
-              </Pressable>
-            );
-          })
-        ) : (
+                      {table.status === "reserved" || !table.currentOrder ? (
+                        <Text
+                          className="text-xs italic"
+                          style={{ color: theme.muted }}
+                        >
+                          Ready for seating
+                        </Text>
+                      ) : (
+                        (() => {
+                          const assignedWaiter = MANAGER_MOCK_DATA.waiters.find(
+                            (w: any) => w.id === table.currentOrder?.waiterId,
+                          );
+                          const waiterNameDisplay = assignedWaiter
+                            ? assignedWaiter.name
+                            : "";
+                          return (
+                            <Text
+                              className="text-xs font-bold"
+                              style={{ color: theme.text }}
+                            >
+                              {waiterNameDisplay
+                                ? `Waiter: ${waiterNameDisplay} • `
+                                : ""}
+                              {calculateTableTotal(table) > 0
+                                ? `₹${calculateTableTotal(table)}`
+                                : table.currentOrder.timeSeated}
+                            </Text>
+                          );
+                        })()
+                      )}
+                    </View>
+
+                    <View className="items-end">
+                      <Text
+                        className="text-sm font-bold"
+                        style={{ color: theme.primary }}
+                      >
+                        Manage →
+                      </Text>
+                    </View>
+                  </Card>
+                </Pressable>
+              );
+            })
+          ) : (
+            <Card
+              variant="default"
+              className="p-8 rounded-2xl border border-dashed items-center mt-6"
+              style={{ borderColor: theme.border }}
+            >
+              <Text
+                className="text-sm italic text-center"
+                style={{ color: theme.muted }}
+              >
+                No tables found matching your filter.
+              </Text>
+            </Card>
+          )}
+        </ScrollView>
+      ) : (
+        <View className="flex-1 px-6 justify-center items-center">
           <Card
             variant="default"
-            className="p-8 rounded-2xl border border-dashed items-center mt-6"
-            style={{ borderColor: theme.border }}
+            className="p-8 rounded-3xl border-0 items-center w-full shadow-lg"
+            style={{ backgroundColor: theme.card }}
           >
+            <Text className="text-3xl mb-2">🔒</Text>
             <Text
-              className="text-sm italic text-center"
+              className="text-lg font-black mb-1 text-center"
+              style={{ color: theme.text }}
+            >
+              You are Checked Out
+            </Text>
+            <Text
+              className="text-xs font-medium text-center mb-4"
               style={{ color: theme.muted }}
             >
-              No tables found matching your filter.
+              Toggle 'Check In' above to view and manage your assigned floor
+              tables.
             </Text>
           </Card>
-        )}
-      </ScrollView>
+        </View>
+      )}
     </SafeAreaView>
   );
 }

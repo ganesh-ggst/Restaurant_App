@@ -34,7 +34,6 @@ export default function BasicDetailsScreen() {
     try {
       await api.completeProfile(phone, firstName.trim(), lastName.trim());
 
-      // TEMPORARILY ROUTING TO MANAGER FOR DEVELOPMENT
       router.replace(`/(manager)?phone=${phone}` as any);
     } catch (error) {
       console.error("Failed to save profile", error);
