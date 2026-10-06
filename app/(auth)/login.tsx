@@ -1,16 +1,22 @@
 import { useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Image,
-  KeyboardAvoidingView,
+  Keyboard,
   Platform,
   Pressable,
   Text,
+  TextInput,
   View,
+  useWindowDimensions,
 } from "react-native";
-import Animated, { FadeIn, FadeOut, Layout } from "react-native-reanimated";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
+import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
@@ -22,12 +28,18 @@ export default function LoginScreen() {
   const router = useRouter();
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
+  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
 
   const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
 
-  const inputRef = useRef<any>(null);
+  const inputRef = useRef<TextInput>(null);
+  const imageWidth = Math.max(0, windowWidth - 40);
+  const heroHeight = keyboardVisible
+    ? Math.max(88, Math.min(156, windowHeight * 0.16, imageWidth / 1.7))
+    : Math.max(150, Math.min(300, windowHeight * 0.28, imageWidth / 1.5));
 
   const validatePhone = (num: string) => {
     const regex = /^[6-9]\d{9}$/;
@@ -36,12 +48,33 @@ export default function LoginScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      setPhone("");
+      setError("");
+
       const timer = setTimeout(() => {
         inputRef.current?.focus();
       }, 50);
       return () => clearTimeout(timer);
     }, []),
   );
+
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const showSubscription = Keyboard.addListener(showEvent, () =>
+      setKeyboardVisible(true),
+    );
+    const hideSubscription = Keyboard.addListener(hideEvent, () =>
+      setKeyboardVisible(false),
+    );
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
 
   const handleSendOtp = async () => {
     if (!validatePhone(phone)) {
@@ -57,34 +90,88 @@ export default function LoginScreen() {
     try {
       await api.sendOtp(fullPhoneNumber);
 
-      router.push(`/(auth)/verify-otp?phone=${fullPhoneNumber}` as any);
+      router.push(
+        `/(auth)/verify-otp?phone=${encodeURIComponent(fullPhoneNumber)}` as any,
+      );
     } catch (err) {
-      setError("Failed to send OTP. Please try again.");
+      setError(
+        err instanceof Error ? err.message : "Failed to send OTP. Please try again.",
+      );
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSkip = () => {
+  const handleSkip = async () => {
     const guestPhone = "+910000000000";
-    router.replace(`/(home)?phone=${guestPhone}&isGuest=true` as any);
+    try {
+      await api.clearLocalSession();
+      router.replace(`/(home)?phone=${guestPhone}&isGuest=true` as any);
+    } catch (sessionError) {
+      setError(
+        sessionError instanceof Error
+          ? sessionError.message
+          : "Unable to start a guest session.",
+      );
+    }
   };
 
+  const legalNotice = (
+    <View className="items-center px-5 pt-1">
+      <Text
+        className="text-center text-[10px]"
+        style={{ color: theme.muted }}
+      >
+        By continuing, you agree to our
+      </Text>
+      <Pressable onPress={() => console.log("Terms of Use clicked")}>
+        <View className="mt-0.5 flex-row items-center justify-center">
+          <Text
+            className="text-[10px] font-bold"
+            style={{ color: theme.primary }}
+          >
+            Terms of Use
+          </Text>
+          <Text className="text-[10px]" style={{ color: theme.muted }}>
+            {" "}
+            &{" "}
+          </Text>
+          <Text
+            className="text-[10px] font-bold"
+            style={{ color: theme.primary }}
+          >
+            Privacy Policy
+          </Text>
+        </View>
+      </Pressable>
+    </View>
+  );
+
   return (
-    <View className="flex-1" style={{ backgroundColor: theme.bg }}>
+    <SafeAreaView
+      className="flex-1"
+      edges={["top", "left", "right"]}
+      style={{ backgroundColor: theme.bg }}
+    >
       <StatusBar style={theme.isDark ? "light" : "dark"} />
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      <KeyboardAwareScrollView
         className="flex-1"
+        contentContainerStyle={{ flexGrow: 1 }}
+        enableOnAndroid
+        extraScrollHeight={24}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
         <Animated.View
-          layout={Layout.springify()}
-          className="flex-1 justify-between pb-3"
+          className="flex-grow pb-3"
         >
           <View
-            className="relative w-full h-[28%] px-6"
-            style={{ marginTop: insets.top + 4 }}
+            className="relative w-full px-5"
+            style={{
+              height: heroHeight,
+              marginTop: 4,
+            }}
           >
             <Image
               source={require("../../assets/images/auth/login-hero.jpg")}
@@ -93,7 +180,10 @@ export default function LoginScreen() {
             />
           </View>
 
-          <Animated.View layout={Layout.springify()} className="px-6">
+          <Animated.View
+            className="px-5"
+            style={{ marginTop: keyboardVisible ? 18 : 34 }}
+          >
             <Text className="text-2xl font-bold" style={{ color: theme.text }}>
               Delicious food,{"\n"}
               <Text style={{ color: theme.primary }}>crafted for you.</Text>
@@ -127,7 +217,7 @@ export default function LoginScreen() {
                 }}
                 keyboardType={"number-pad" as any}
                 maxLength={10}
-                autoFocus={true}
+                autoFocus
                 prefix={
                   <View
                     className="flex-row items-center border-r pr-3 mr-1"
@@ -164,38 +254,24 @@ export default function LoginScreen() {
                 Skip for now <Text style={{ color: theme.primary }}>→</Text>
               </Text>
             </Pressable>
+
+            {keyboardVisible ? (
+              <View className="mt-0.5">{legalNotice}</View>
+            ) : null}
           </Animated.View>
 
-          <View className="px-6 items-center pt-1">
-            <Text
-              className="text-center text-[10px]"
-              style={{ color: theme.muted }}
+          {!keyboardVisible ? (
+            <View
+              className="pt-1"
+              style={{ marginTop: "auto", paddingBottom: insets.bottom + 8 }}
             >
-              By continuing, you agree to our
-            </Text>
-            <Pressable onPress={() => console.log("Terms of Use clicked")}>
-              <View className="flex-row items-center justify-center mt-0.5">
-                <Text
-                  className="text-[10px] font-bold"
-                  style={{ color: theme.primary }}
-                >
-                  Terms of Use
-                </Text>
-                <Text className="text-[10px]" style={{ color: theme.muted }}>
-                  {" "}
-                  &{" "}
-                </Text>
-                <Text
-                  className="text-[10px] font-bold"
-                  style={{ color: theme.primary }}
-                >
-                  Privacy Policy
-                </Text>
-              </View>
-            </Pressable>
-          </View>
+              {legalNotice}
+            </View>
+          ) : (
+            <View style={{ height: insets.bottom + 8 }} />
+          )}
         </Animated.View>
-      </KeyboardAvoidingView>
-    </View>
+      </KeyboardAwareScrollView>
+    </SafeAreaView>
   );
 }

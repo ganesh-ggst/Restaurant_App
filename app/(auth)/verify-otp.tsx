@@ -1,10 +1,9 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  BackHandler,
   Keyboard,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   Text,
   TextInput,
@@ -12,11 +11,12 @@ import {
 } from "react-native";
 import Animated, { FadeIn, FadeOut, Layout } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
 
 import { Button } from "../../components/ui/Button";
-import { MANAGER_MOCK_DATA } from "../../constants/managerMockData";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { api } from "../../services/api";
+import { getAuthDestination } from "../../services/authRouting";
 
 export default function VerifyOtpScreen() {
   const router = useRouter();
@@ -27,109 +27,115 @@ export default function VerifyOtpScreen() {
 
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [resendSeconds, setResendSeconds] = useState(0);
   const [error, setError] = useState<string>("");
 
   const inputRef = useRef<TextInput>(null);
+  const verificationInProgress = useRef(false);
 
-  useEffect(() => {
-    if (code.length === 6) {
-      handleVerifyCode(code);
-    }
-  }, [code]);
-
-  const handleVerifyCode = async (verificationCode: string) => {
-    setLoading(true);
-    setError("");
-    Keyboard.dismiss();
-
-    try {
-      const response: any = await api.verifyOtp(
-        normalizedPhone,
-        verificationCode,
-      );
-
-      const { token, user } = response;
-
-      console.log("[AUTH] Received JWT:", token);
-
-      const testManager = MANAGER_MOCK_DATA.managers.find(
-        (m) => m.phone === normalizedPhone,
-      );
-
-      if (testManager) {
-        if (
-          testManager.role === "admin" ||
-          testManager.managerType === "admin"
-        ) {
-          router.replace(
-            `/(admin)?phone=${encodeURIComponent(normalizedPhone)}` as any,
-          );
-        } else if (testManager.managerType === "floor") {
-          router.replace(
-            `/(manager)/floor?phone=${encodeURIComponent(normalizedPhone)}` as any,
-          );
-        } else if (testManager.managerType === "operations") {
-          router.replace(
-            `/(manager)/operations?phone=${encodeURIComponent(normalizedPhone)}` as any,
-          );
-        }
+  const handleVerifyCode = useCallback(
+    async (verificationCode: string) => {
+      if (verificationInProgress.current || verificationCode.length !== 6) {
         return;
       }
 
-      if (user.isNewUser) {
-        router.replace(
-          `/(auth)/basic-details?phone=${encodeURIComponent(normalizedPhone)}` as any,
-        );
-      } else {
-        switch (user.role) {
-          case "admin":
-            router.replace(
-              `/(admin)?phone=${encodeURIComponent(normalizedPhone)}` as any,
-            );
-            break;
-          case "manager":
-            router.replace(
-              `/(manager)/floor?phone=${encodeURIComponent(normalizedPhone)}` as any,
-            );
-            break;
-          case "waiter":
-            console.log("Routing to Waiter Dash (Coming Soon)");
-            break;
-          case "user":
-          default:
-            router.replace(
-              `/(manager)/floor?phone=${encodeURIComponent(normalizedPhone)}` as any,
-            );
-            break;
+      verificationInProgress.current = true;
+      setLoading(true);
+      setError("");
+      Keyboard.dismiss();
+
+      try {
+        const { user } = await api.verifyOtp(normalizedPhone, verificationCode);
+
+        if (!user.isProfileCompleted) {
+          router.replace(
+            `/(auth)/basic-details?phone=${encodeURIComponent(normalizedPhone)}` as any,
+          );
+        } else {
+          router.replace(
+            `${getAuthDestination(user.role)}?phone=${encodeURIComponent(normalizedPhone)}` as any,
+          );
         }
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Invalid code. Please try again.",
+        );
+        setTimeout(() => inputRef.current?.focus(), 100);
+      } finally {
+        verificationInProgress.current = false;
+        setLoading(false);
       }
-    } catch (err: any) {
-      setError(err.message || "Invalid code. Please try again.");
-      setTimeout(() => inputRef.current?.focus(), 100);
+    },
+    [normalizedPhone, router],
+  );
+
+  useEffect(() => {
+    if (resendSeconds === 0) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setResendSeconds((seconds) => Math.max(0, seconds - 1));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [resendSeconds]);
+
+  const handleResendCode = async () => {
+    if (resending || loading || resendSeconds > 0) {
+      return;
+    }
+
+    setResending(true);
+    setError("");
+    try {
+      const result = await api.resendOtp(normalizedPhone);
+      setCode("");
+      setResendSeconds(result.resendAvailableInSeconds);
+      inputRef.current?.focus();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to resend OTP. Please try again.",
+      );
     } finally {
-      setLoading(false);
+      setResending(false);
     }
   };
 
-  const handleResendCode = async () => {
-    setCode("");
-    setError("");
+  const goBackSafe = useCallback(() => {
+    if (verificationInProgress.current) {
+      return;
+    }
 
-    await api.sendOtp(normalizedPhone);
-    inputRef.current?.focus();
-  };
-
-  const goBackSafe = () => {
     Keyboard.dismiss();
-    setTimeout(() => router.back(), 100);
-  };
+    router.back();
+  }, [router]);
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        void goBackSafe();
+        return true;
+      },
+    );
+
+    return () => subscription.remove();
+  }, [goBackSafe]);
 
   return (
     <SafeAreaView className="flex-1" style={{ backgroundColor: theme.bg }}>
       <StatusBar style={theme.isDark ? "light" : "dark"} />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      <KeyboardAwareScrollView
         className="flex-1"
+        contentContainerStyle={{ flexGrow: 1 }}
+        enableOnAndroid
+        extraScrollHeight={24}
+        keyboardShouldPersistTaps="handled"
       >
         <Animated.View
           layout={Layout.springify()}
@@ -208,6 +214,9 @@ export default function VerifyOtpScreen() {
                   const num = text.replace(/[^0-9]/g, "");
                   setCode(num);
                   setError("");
+                  if (num.length === 6) {
+                    handleVerifyCode(num);
+                  }
                 }}
                 keyboardType="number-pad"
                 maxLength={6}
@@ -224,19 +233,32 @@ export default function VerifyOtpScreen() {
               className="py-3.5"
             />
             <View className="items-center mt-6">
-              <Pressable onPress={handleResendCode} className="px-4 py-2">
+              <Pressable
+                onPress={handleResendCode}
+                disabled={resending || loading || resendSeconds > 0}
+                className="px-4 py-2"
+              >
                 <Text
                   className="text-sm font-semibold"
-                  style={{ color: theme.primary }}
+                  style={{
+                    color:
+                      resending || loading || resendSeconds > 0
+                        ? theme.muted
+                        : theme.primary,
+                  }}
                 >
-                  Didn't receive the code? Resend
+                  {resending
+                    ? "Sending..."
+                    : resendSeconds > 0
+                      ? `Resend in ${resendSeconds}s`
+                      : "Didn't receive the code? Resend"}
                 </Text>
               </Pressable>
             </View>
           </View>
           <View className="flex-1" />
         </Animated.View>
-      </KeyboardAvoidingView>
+      </KeyboardAwareScrollView>
     </SafeAreaView>
   );
 }
