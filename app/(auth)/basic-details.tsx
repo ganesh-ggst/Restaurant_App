@@ -2,21 +2,22 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useState } from "react";
 import {
+  Alert,
   Keyboard,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   Text,
   View,
 } from "react-native";
 import Animated, { Layout } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
 
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
 import { Input } from "../../components/ui/Input";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { api } from "../../services/api";
+import { getAuthDestination } from "../../services/authRouting";
 
 export default function BasicDetailsScreen() {
   const router = useRouter();
@@ -26,33 +27,73 @@ export default function BasicDetailsScreen() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const handleSaveDetails = async () => {
     Keyboard.dismiss();
+    setError("");
     setLoading(true);
 
     try {
-      await api.completeProfile(phone, firstName.trim(), lastName.trim());
+      const result = await api.completeProfile(
+        firstName.trim(),
+        lastName.trim(),
+      );
 
-      router.replace(`/(manager)?phone=${phone}` as any);
-    } catch (error) {
-      console.error("Failed to save profile", error);
+      router.replace(
+        `${getAuthDestination(result.user.role)}?phone=${encodeURIComponent(phone)}` as any,
+      );
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Failed to save your profile. Please try again.",
+      );
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleAbandonSignup = () => {
+    Alert.alert("Cancel signup?", "Your incomplete signup will be deleted.", [
+      { text: "Keep signing up", style: "cancel" },
+      {
+        text: "Cancel signup",
+        style: "destructive",
+        onPress: async () => {
+          setError("");
+          setLoading(true);
+          try {
+            await api.abandonSignup();
+            router.replace("/(auth)/login" as any);
+          } catch (abandonError) {
+            setError(
+              abandonError instanceof Error
+                ? abandonError.message
+                : "Failed to cancel signup. Please try again.",
+            );
+          } finally {
+            setLoading(false);
+          }
+        },
+      },
+    ]);
   };
 
   return (
     <SafeAreaView className="flex-1" style={{ backgroundColor: theme.bg }}>
       <StatusBar style={theme.isDark ? "light" : "dark"} />
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      <KeyboardAwareScrollView
         className="flex-1"
+        contentContainerStyle={{ flexGrow: 1 }}
+        enableOnAndroid
+        extraScrollHeight={24}
+        keyboardShouldPersistTaps="handled"
       >
         <Animated.View
           layout={Layout.springify()}
-          className="flex-1 px-6 pt-4 pb-6"
+          className="flex-grow px-6 pt-4 pb-6"
         >
           <View className="flex-row items-center mb-8">
             <Pressable
@@ -82,6 +123,14 @@ export default function BasicDetailsScreen() {
           </View>
 
           <Card variant="default" className="p-3">
+            {error ? (
+              <Text
+                className="mb-3 text-sm font-medium"
+                style={{ color: theme.danger }}
+              >
+                {error}
+              </Text>
+            ) : null}
             <View className="mb-4">
               <Input
                 placeholder="First Name"
@@ -109,8 +158,20 @@ export default function BasicDetailsScreen() {
               className="py-2.5"
             />
           </Card>
+          <Pressable
+            onPress={handleAbandonSignup}
+            disabled={loading}
+            className="mt-5 self-center px-4 py-2"
+          >
+            <Text
+              className="text-sm font-semibold"
+              style={{ color: theme.danger }}
+            >
+              Cancel signup
+            </Text>
+          </Pressable>
         </Animated.View>
-      </KeyboardAvoidingView>
+      </KeyboardAwareScrollView>
     </SafeAreaView>
   );
 }
