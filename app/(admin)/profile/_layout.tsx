@@ -19,6 +19,7 @@ export default function AdminProfileLayout() {
       <Stack.Screen name="security" />
       <Stack.Screen name="notifications" />
       <Stack.Screen name="add-manager" />
+      <Stack.Screen name="tables" />
       <Stack.Screen name="store-details/index" />
       <Stack.Screen name="store-details/[id]" />
       <Stack.Screen name="storefront-display/index" />

@@ -1,7 +1,7 @@
-import { MANAGER_MOCK_DATA } from "@/constants/managerMockData";
 import { Feather } from "@expo/vector-icons";
-import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
-import { useState } from "react";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import * as SecureStore from "expo-secure-store";
+import { useCallback, useRef, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -15,7 +15,11 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAppTheme } from "../../hooks/useAppTheme";
-import { useCurrentManager } from "../../hooks/useCurrentManager";
+import {
+  AdminPerson,
+  AdminProfile,
+  adminProfileApi,
+} from "../../services/api/admin-profile";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 
@@ -34,40 +38,172 @@ const COUNTRIES = [
   { name: "Australia", code: "+61", flag: "🇦🇺", minLen: 9, maxLen: 9 },
 ];
 
+const ADMIN_NUMBER_PREFIX = "restaurant.adminDisplayNumber.";
+const ADMIN_NUMBER_COUNTER_KEY = "restaurant.adminDisplayNumber.next";
+
+async function getStoredAdminNumber(key: string): Promise<string | null> {
+  if (Platform.OS === "web") {
+    if (typeof localStorage === "undefined") {
+      throw new Error("Browser storage is unavailable for admin IDs.");
+    }
+    return localStorage.getItem(key);
+  }
+
+  return SecureStore.getItemAsync(key);
+}
+
+async function setStoredAdminNumber(key: string, value: string): Promise<void> {
+  if (Platform.OS === "web") {
+    if (typeof localStorage === "undefined") {
+      throw new Error("Browser storage is unavailable for admin IDs.");
+    }
+    localStorage.setItem(key, value);
+    return;
+  }
+
+  await SecureStore.setItemAsync(key, value);
+}
+
+async function getStableAdminNumbers(
+  admins: AdminPerson[],
+): Promise<Map<string, number>> {
+  const sortedAdmins = [...admins].sort((first, second) =>
+    first.id.localeCompare(second.id),
+  );
+  const numbersById = new Map<string, number>();
+  const storedNumbers = await Promise.all(
+    sortedAdmins.map(async (admin) => ({
+      id: admin.id,
+      value: await getStoredAdminNumber(
+        `${ADMIN_NUMBER_PREFIX}${encodeURIComponent(admin.id)}`,
+      ),
+    })),
+  );
+  let nextNumber =
+    Number(await getStoredAdminNumber(ADMIN_NUMBER_COUNTER_KEY)) || 0;
+
+  storedNumbers.forEach(({ id, value }) => {
+    const number = Number(value);
+    if (Number.isSafeInteger(number) && number > 0) {
+      numbersById.set(id, number);
+      nextNumber = Math.max(nextNumber, number);
+    }
+  });
+
+  for (const admin of sortedAdmins) {
+    if (numbersById.has(admin.id)) continue;
+    nextNumber += 1;
+    await setStoredAdminNumber(
+      `${ADMIN_NUMBER_PREFIX}${encodeURIComponent(admin.id)}`,
+      String(nextNumber),
+    );
+    numbersById.set(admin.id, nextNumber);
+  }
+
+  await setStoredAdminNumber(ADMIN_NUMBER_COUNTER_KEY, String(nextNumber));
+  return numbersById;
+}
+
 export default function AddAdminModal() {
   const router = useRouter();
-  const pathname = usePathname();
   const params = useLocalSearchParams<{ phone?: string }>();
   const insets = useSafeAreaInsets();
   const theme = useAppTheme();
-  const { currentManager } = useCurrentManager();
-
-  const loggedInPhone =
-    params.phone ||
-    currentManager?.phone ||
-    MANAGER_MOCK_DATA.managers?.find(
-      (m: any) => m.role === "admin" || m.managerType === "admin",
-    )?.phone;
-
   const [activeTab, setActiveTab] = useState<"add" | "showAll">("add");
-  const [adminName, setAdminName] = useState("");
+  const [adminFirstName, setAdminFirstName] = useState("");
+  const [adminLastName, setAdminLastName] = useState("");
+  const [adminIsActive, setAdminIsActive] = useState(true);
   const [selectedCountry, setSelectedCountry] = useState(COUNTRIES[0]);
   const [phoneNumber, setPhoneNumber] = useState("");
   const [isModalVisible, setIsModalVisible] = useState(false);
+  const [adminSearch, setAdminSearch] = useState("");
+  const [adminStatusFilter, setAdminStatusFilter] = useState<
+    "all" | "active" | "inactive"
+  >("all");
 
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editedName, setEditedName] = useState("");
+  const [editedFirstName, setEditedFirstName] = useState("");
+  const [editedLastName, setEditedLastName] = useState("");
   const [editedPhone, setEditedPhone] = useState("");
-  const [, forceUpdate] = useState({});
+  const [editedIsActive, setEditedIsActive] = useState(true);
+  const [adminsList, setAdminsList] = useState<AdminPerson[]>([]);
+  const [adminNumbersById, setAdminNumbersById] = useState<Map<string, number>>(
+    () => new Map(),
+  );
+  const [loggedInAdmin, setLoggedInAdmin] = useState<AdminProfile>();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const hasLoadedRef = useRef(false);
+
+  const loadAdmins = useCallback(async () => {
+    if (!hasLoadedRef.current) setLoading(true);
+    try {
+      const [admins, { admin }] = await Promise.all([
+        adminProfileApi.getAdmins(),
+        adminProfileApi.getProfile(),
+      ]);
+      const numbers = await getStableAdminNumbers(admins);
+      setAdminNumbersById(numbers);
+      setAdminsList(admins);
+      setLoggedInAdmin(admin);
+      hasLoadedRef.current = true;
+    } catch (error) {
+      Alert.alert(
+        "Unable to load admins",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadAdmins();
+    }, [loadAdmins]),
+  );
 
   const cleanPhone = (str: string) =>
     String(str || "")
       .replace(/\D/g, "")
       .slice(-10);
 
-  const handleSaveAdmin = () => {
-    if (!adminName.trim()) {
-      Alert.alert("Error", "Admin Name is mandatory!");
+  const getAdminName = (admin: AdminPerson) =>
+    [admin.firstName, admin.lastName].filter(Boolean).join(" ") ||
+    admin.name ||
+    "Admin";
+  const isLoggedInAdmin = (admin: AdminPerson) =>
+    Boolean(
+      (loggedInAdmin?.id && admin.id === loggedInAdmin.id) ||
+      ((params.phone || loggedInAdmin?.phone) &&
+        admin.phone &&
+        cleanPhone(admin.phone) ===
+          cleanPhone(params.phone || loggedInAdmin?.phone || "")),
+    );
+  const sortedAdmins = [...adminsList].sort((first, second) => {
+    const selfOrder =
+      Number(!isLoggedInAdmin(first)) - Number(!isLoggedInAdmin(second));
+    if (selfOrder !== 0) return selfOrder;
+    return (
+      (adminNumbersById.get(first.id) ?? Number.MAX_SAFE_INTEGER) -
+        (adminNumbersById.get(second.id) ?? Number.MAX_SAFE_INTEGER) ||
+      first.id.localeCompare(second.id)
+    );
+  });
+  const filteredAdmins = sortedAdmins.filter(
+    (admin) =>
+      (adminStatusFilter === "all" ||
+        (adminStatusFilter === "active"
+          ? admin.isActive !== false
+          : admin.isActive === false)) &&
+      JSON.stringify(admin)
+        .toLowerCase()
+        .includes(adminSearch.trim().toLowerCase()),
+  );
+
+  const handleSaveAdmin = async () => {
+    if (!adminFirstName.trim()) {
+      Alert.alert("Error", "First name is mandatory.");
       return;
     }
 
@@ -88,46 +224,48 @@ export default function AddAdminModal() {
       return;
     }
 
-    const fullPhoneNumber = `${selectedCountry.code} ${phoneNumber.trim()}`;
-    const newId = `admin_${Date.now()}`;
-
-    const newAdminObj = {
-      id: newId,
-      name: adminName.trim(),
-      phone: fullPhoneNumber,
-      role: "admin",
-      managerType: "admin",
-      assignedTables: [],
-      assignedWaiters: [],
-    };
-
-    if (!MANAGER_MOCK_DATA.managers) {
-      MANAGER_MOCK_DATA.managers = [];
+    setSaving(true);
+    try {
+      await adminProfileApi.createAdmin(
+        adminFirstName.trim(),
+        adminLastName.trim(),
+        cleanedNumber,
+        adminIsActive,
+      );
+      await loadAdmins();
+      setAdminFirstName("");
+      setAdminLastName("");
+      setAdminIsActive(true);
+      setPhoneNumber("");
+      setActiveTab("showAll");
+      Alert.alert(
+        "Success",
+        `${[adminFirstName.trim(), adminLastName.trim()].filter(Boolean).join(" ")} added successfully.`,
+      );
+    } catch (error) {
+      Alert.alert(
+        "Unable to add admin",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setSaving(false);
     }
-    MANAGER_MOCK_DATA.managers.push(newAdminObj as any);
-
-    Alert.alert("Success", `Admin "${adminName.trim()}" added successfully!`, [
-      {
-        text: "OK",
-        onPress: () => {
-          setAdminName("");
-          setPhoneNumber("");
-          setActiveTab("showAll");
-          forceUpdate({});
-        },
-      },
-    ]);
   };
 
-  const handleStartEdit = (adm: any) => {
+  const handleStartEdit = (adm: AdminPerson) => {
     setEditingId(adm.id);
-    setEditedName(adm.name);
+    const [fallbackFirstName = "", ...fallbackLastName] = String(
+      adm.name || "",
+    ).split(/\s+/);
+    setEditedFirstName(adm.firstName || fallbackFirstName);
+    setEditedLastName(adm.lastName || fallbackLastName.join(" "));
     setEditedPhone(adm.phone || "");
+    setEditedIsActive(adm.isActive !== false);
   };
 
-  const handleSaveEdit = (admId: string) => {
-    if (!editedName.trim()) {
-      Alert.alert("Error", "Admin name cannot be empty.");
+  const handleSaveEdit = async (admId: string) => {
+    if (!editedFirstName.trim()) {
+      Alert.alert("Error", "First name cannot be empty.");
       return;
     }
 
@@ -136,25 +274,39 @@ export default function AddAdminModal() {
       return;
     }
 
-    const adm = MANAGER_MOCK_DATA.managers?.find((m: any) => m.id === admId);
-    if (adm) {
-      adm.name = editedName.trim();
-      const isSelf = Boolean(
-        (currentManager?.id && adm.id === currentManager.id) ||
-        (loggedInPhone &&
-          adm.phone &&
-          cleanPhone(adm.phone) === cleanPhone(loggedInPhone)),
+    const adm = adminsList.find((admin) => admin.id === admId);
+    const isSelf = Boolean(
+      (loggedInAdmin?.id && adm?.id === loggedInAdmin.id) ||
+      ((params.phone || loggedInAdmin?.phone) &&
+        adm?.phone &&
+        cleanPhone(adm.phone) ===
+          cleanPhone(params.phone || loggedInAdmin?.phone || "")),
+    );
+    const firstName = editedFirstName.trim();
+    const lastName = editedLastName.trim();
+    setSaving(true);
+    try {
+      await adminProfileApi.updateAdmin(admId, {
+        firstName,
+        lastName,
+        name: [firstName, lastName].filter(Boolean).join(" "),
+        isActive: editedIsActive,
+        ...(!isSelf ? { phone: editedPhone.trim() } : {}),
+      });
+      await loadAdmins();
+      setEditingId(null);
+      setEditedFirstName("");
+      setEditedLastName("");
+      setEditedPhone("");
+      setEditedIsActive(true);
+    } catch (error) {
+      Alert.alert(
+        "Unable to update admin",
+        error instanceof Error ? error.message : "Please try again.",
       );
-
-      if (!isSelf && editedPhone.trim()) {
-        adm.phone = editedPhone.trim();
-      }
+    } finally {
+      setSaving(false);
     }
-
-    setEditingId(null);
-    setEditedName("");
-    setEditedPhone("");
-    forceUpdate({});
   };
 
   const handleDeleteAdmin = (admId: string) => {
@@ -163,20 +315,22 @@ export default function AddAdminModal() {
       {
         text: "Delete",
         style: "destructive",
-        onPress: () => {
-          MANAGER_MOCK_DATA.managers = (
-            MANAGER_MOCK_DATA.managers || []
-          ).filter((m: any) => m.id !== admId);
-          if (editingId === admId) setEditingId(null);
-          forceUpdate({});
+        onPress: async () => {
+          try {
+            await adminProfileApi.deleteAdmin(admId);
+            if (editingId === admId) setEditingId(null);
+            await loadAdmins();
+            Alert.alert("Admin deleted", "The admin was deleted successfully.");
+          } catch (error) {
+            Alert.alert(
+              "Unable to remove admin",
+              error instanceof Error ? error.message : "Please try again.",
+            );
+          }
         },
       },
     ]);
   };
-
-  const adminsList = (MANAGER_MOCK_DATA.managers || []).filter(
-    (m: any) => m.role === "admin" || m.managerType === "admin",
-  );
 
   return (
     <View
@@ -246,6 +400,82 @@ export default function AddAdminModal() {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         className="flex-1"
       >
+        {activeTab === "showAll" && (
+          <View
+            className="mx-5 mt-4 gap-3"
+            style={{
+              backgroundColor: theme.bg,
+              elevation: 8,
+              paddingBottom: 12,
+              zIndex: 10,
+            }}
+          >
+            <View
+              className="flex-row items-center rounded-xl border px-3"
+              style={{
+                backgroundColor: theme.card,
+                borderColor: theme.border,
+              }}
+            >
+              <Feather name="search" size={18} color={theme.muted} />
+              <TextInput
+                value={adminSearch}
+                onChangeText={setAdminSearch}
+                placeholder="Search by any admin detail"
+                placeholderTextColor={theme.muted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                returnKeyType="search"
+                accessibilityLabel="Search administrators"
+                className="flex-1 px-3 py-3"
+                style={{ color: theme.text, fontSize: 15 }}
+              />
+              {adminSearch.length > 0 && (
+                <Pressable
+                  onPress={() => setAdminSearch("")}
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear administrator search"
+                  hitSlop={10}
+                >
+                  <Feather name="x-circle" size={18} color={theme.muted} />
+                </Pressable>
+              )}
+            </View>
+            <View className="flex-row gap-2">
+              {(["all", "active", "inactive"] as const).map((filter) => {
+                const selected = adminStatusFilter === filter;
+                const label =
+                  filter === "all"
+                    ? "All"
+                    : filter === "active"
+                      ? "Active"
+                      : "Inactive";
+                return (
+                  <Pressable
+                    key={filter}
+                    onPress={() => setAdminStatusFilter(filter)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    className="flex-1 items-center rounded-xl border py-2.5"
+                    style={{
+                      backgroundColor: selected ? theme.primary : theme.card,
+                      borderColor: selected ? theme.primary : theme.border,
+                    }}
+                  >
+                    <Text
+                      className="font-bold"
+                      style={{
+                        color: selected ? theme.primaryForeground : theme.muted,
+                      }}
+                    >
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        )}
         <ScrollView
           contentContainerStyle={{ padding: 20, paddingBottom: 300 }}
           keyboardShouldPersistTaps="handled"
@@ -260,13 +490,34 @@ export default function AddAdminModal() {
                 className="text-xs font-bold mb-1 uppercase"
                 style={{ color: theme.muted }}
               >
-                Admin Full Name *
+                First Name *
               </Text>
               <TextInput
-                placeholder="e.g. Authorized Admin"
+                placeholder="e.g. Siva"
                 placeholderTextColor={theme.muted + "44"}
-                value={adminName}
-                onChangeText={setAdminName}
+                value={adminFirstName}
+                onChangeText={setAdminFirstName}
+                autoCapitalize="words"
+                className="px-4 rounded-xl mb-4 font-bold"
+                style={{
+                  backgroundColor: theme.bg,
+                  color: theme.text,
+                  fontSize: 16,
+                  height: 52,
+                }}
+              />
+              <Text
+                className="text-xs font-bold mb-1 uppercase"
+                style={{ color: theme.muted }}
+              >
+                Last Name
+              </Text>
+              <TextInput
+                placeholder="e.g. Kumar"
+                placeholderTextColor={theme.muted + "44"}
+                value={adminLastName}
+                onChangeText={setAdminLastName}
+                autoCapitalize="words"
                 className="px-4 rounded-xl mb-4 font-bold"
                 style={{
                   backgroundColor: theme.bg,
@@ -319,9 +570,54 @@ export default function AddAdminModal() {
                 />
               </View>
 
+              <Text
+                className="text-xs font-bold mb-2 uppercase"
+                style={{ color: theme.muted }}
+              >
+                Admin Status
+              </Text>
+              <View className="flex-row gap-3 mb-6">
+                {[true, false].map((isActive) => (
+                  <Pressable
+                    key={String(isActive)}
+                    onPress={() => setAdminIsActive(isActive)}
+                    accessibilityRole="button"
+                    accessibilityState={{
+                      selected: adminIsActive === isActive,
+                    }}
+                    className="flex-1 items-center rounded-xl border py-3"
+                    style={{
+                      borderColor:
+                        adminIsActive === isActive
+                          ? isActive
+                            ? theme.primary
+                            : theme.danger
+                          : theme.border,
+                      backgroundColor:
+                        adminIsActive === isActive
+                          ? isActive
+                            ? theme.primary
+                            : theme.danger
+                          : theme.bg,
+                    }}
+                  >
+                    <Text
+                      className="font-bold"
+                      style={{
+                        color:
+                          adminIsActive === isActive ? "#fff" : theme.muted,
+                      }}
+                    >
+                      {isActive ? "Active" : "Inactive"}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
               <Button
                 title="Save & Grant Admin Access"
                 onPress={handleSaveAdmin}
+                loading={saving}
                 className="py-4 w-full"
               />
             </Card>
@@ -334,22 +630,33 @@ export default function AddAdminModal() {
                 All Registered Administrators
               </Text>
 
-              {adminsList.length === 0 ? (
+              {loading ? (
+                <Text
+                  className="text-base text-center py-8"
+                  style={{ color: theme.muted }}
+                >
+                  Loading admins...
+                </Text>
+              ) : adminsList.length === 0 ? (
                 <Text
                   className="text-base text-center py-8"
                   style={{ color: theme.muted }}
                 >
                   No admins found.
                 </Text>
+              ) : filteredAdmins.length === 0 ? (
+                <Text
+                  className="text-base text-center py-8"
+                  style={{ color: theme.muted }}
+                >
+                  No admins match “{adminSearch.trim()}”.
+                </Text>
               ) : (
-                adminsList.map((adm: any) => {
+                filteredAdmins.map((adm) => {
+                  const adminNumber = adminNumbersById.get(adm.id);
                   const isEditing = editingId === adm.id;
-                  const isSelf = Boolean(
-                    (currentManager?.id && adm.id === currentManager.id) ||
-                    (loggedInPhone &&
-                      adm.phone &&
-                      cleanPhone(adm.phone) === cleanPhone(loggedInPhone)),
-                  );
+                  const isActive = adm.isActive !== false;
+                  const isSelf = isLoggedInAdmin(adm);
 
                   return (
                     <View
@@ -357,26 +664,33 @@ export default function AddAdminModal() {
                       className="p-4 rounded-2xl border gap-3"
                       style={{
                         backgroundColor: theme.card,
-                        borderColor: theme.border,
+                        borderColor: isSelf ? theme.primary : theme.border,
+                        borderWidth: isSelf ? 2 : 1,
                       }}
                     >
-                      <View className="flex-row items-center justify-between">
-                        <View>
+                      <View className="flex-row items-start justify-between gap-2">
+                        <View className="flex-1 pt-2">
                           <Text
                             className="text-xs font-bold"
                             style={{ color: theme.primary }}
+                            numberOfLines={1}
                           >
-                            ID: {adm.id} | Role: ADMIN {isSelf ? "(You)" : ""}
+                            Admin A-{String(adminNumber ?? 0).padStart(3, "0")}
+                            {isSelf ? " · You" : ""}
                           </Text>
                         </View>
 
-                        <View className="flex-row items-center gap-2">
+                        <View className="flex-row items-center gap-2 shrink-0">
                           {isEditing ? (
                             <>
                               <Pressable
                                 onPress={() => handleSaveEdit(adm.id)}
+                                disabled={saving}
                                 className="p-2 rounded-xl"
-                                style={{ backgroundColor: theme.primary }}
+                                style={{
+                                  backgroundColor: theme.primary,
+                                  opacity: saving ? 0.6 : 1,
+                                }}
                               >
                                 <Feather name="check" size={18} color="#fff" />
                               </Pressable>
@@ -417,6 +731,9 @@ export default function AddAdminModal() {
                               {!isSelf && adminsList.length > 1 && (
                                 <Pressable
                                   onPress={() => handleDeleteAdmin(adm.id)}
+                                  disabled={saving}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Delete ${getAdminName(adm)}`}
                                   className="p-2 rounded-xl border"
                                   style={{
                                     borderColor: theme.border,
@@ -442,11 +759,12 @@ export default function AddAdminModal() {
                               className="text-xs font-bold mb-1"
                               style={{ color: theme.muted }}
                             >
-                              Admin Name
+                              First Name
                             </Text>
                             <TextInput
-                              value={editedName}
-                              onChangeText={setEditedName}
+                              value={editedFirstName}
+                              onChangeText={setEditedFirstName}
+                              autoCapitalize="words"
                               style={{
                                 backgroundColor: theme.bg,
                                 borderColor: theme.primary,
@@ -458,6 +776,29 @@ export default function AddAdminModal() {
                               }}
                               className="rounded-xl border"
                               autoFocus={true}
+                            />
+                          </View>
+                          <View>
+                            <Text
+                              className="text-xs font-bold mb-1"
+                              style={{ color: theme.muted }}
+                            >
+                              Last Name
+                            </Text>
+                            <TextInput
+                              value={editedLastName}
+                              onChangeText={setEditedLastName}
+                              autoCapitalize="words"
+                              style={{
+                                backgroundColor: theme.bg,
+                                borderColor: theme.primary,
+                                color: theme.text,
+                                paddingVertical: 8,
+                                paddingHorizontal: 10,
+                                fontSize: 16,
+                                fontWeight: "600",
+                              }}
+                              className="rounded-xl border"
                             />
                           </View>
 
@@ -509,6 +850,53 @@ export default function AddAdminModal() {
                               />
                             )}
                           </View>
+                          <View>
+                            <Text
+                              className="text-xs font-bold mb-2"
+                              style={{ color: theme.muted }}
+                            >
+                              Admin Status
+                            </Text>
+                            <View className="flex-row gap-3">
+                              {[true, false].map((active) => (
+                                <Pressable
+                                  key={String(active)}
+                                  onPress={() => setEditedIsActive(active)}
+                                  accessibilityRole="button"
+                                  accessibilityState={{
+                                    selected: editedIsActive === active,
+                                  }}
+                                  className="flex-1 items-center rounded-xl border py-3"
+                                  style={{
+                                    borderColor:
+                                      editedIsActive === active
+                                        ? active
+                                          ? theme.primary
+                                          : theme.danger
+                                        : theme.border,
+                                    backgroundColor:
+                                      editedIsActive === active
+                                        ? active
+                                          ? theme.primary
+                                          : theme.danger
+                                        : theme.bg,
+                                  }}
+                                >
+                                  <Text
+                                    className="font-bold"
+                                    style={{
+                                      color:
+                                        editedIsActive === active
+                                          ? "#fff"
+                                          : theme.muted,
+                                    }}
+                                  >
+                                    {active ? "Active" : "Inactive"}
+                                  </Text>
+                                </Pressable>
+                              ))}
+                            </View>
+                          </View>
                         </View>
                       ) : (
                         <View className="gap-1 mt-0.5">
@@ -516,13 +904,21 @@ export default function AddAdminModal() {
                             className="text-lg font-bold"
                             style={{ color: theme.text }}
                           >
-                            {adm.name}
+                            {getAdminName(adm)}
                           </Text>
                           <Text
                             className="text-sm font-medium"
                             style={{ color: theme.muted }}
                           >
-                            📱 {adm.phone}
+                            {adm.phone ? `📱 ${adm.phone}` : "No phone number"}
+                          </Text>
+                          <Text
+                            className="text-xs font-semibold mt-1"
+                            style={{
+                              color: isActive ? theme.primary : theme.danger,
+                            }}
+                          >
+                            {isActive ? "Active" : "Inactive"}
                           </Text>
                         </View>
                       )}

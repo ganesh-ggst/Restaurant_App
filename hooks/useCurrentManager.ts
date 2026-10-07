@@ -1,55 +1,63 @@
-import { useLocalSearchParams, usePathname } from "expo-router";
-import {
-  MANAGER_MOCK_DATA,
-  MANAGER_PHONES,
-} from "../constants/managerMockData";
+import { useEffect, useState } from "react";
+
+import { type UserProfile, profileApi } from "../services/api/profile";
+
+type CurrentManager = Pick<
+  UserProfile,
+  "id" | "firstName" | "lastName" | "phone" | "role" | "managerType" | "branchId" | "isActive"
+> & {
+  name: string;
+  assignedTables?: string[];
+  assignedWaiters?: string[];
+};
 
 export function useCurrentManager() {
-  const { phone } = useLocalSearchParams<{ phone: string }>();
-  const pathname = usePathname();
+  const [currentManager, setCurrentManager] =
+    useState<CurrentManager | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const normalizedPhone = phone?.replace(/\s/g, "+") || "";
+  useEffect(() => {
+    let isCurrent = true;
 
-  let currentManager = MANAGER_MOCK_DATA.managers?.find(
-    (m: any) =>
-      m.phone === normalizedPhone ||
-      m.phoneNumber === normalizedPhone ||
-      m.mobile === normalizedPhone ||
-      m.id === normalizedPhone,
-  );
+    profileApi
+      .getMyProfile()
+      .then((profile) => {
+        if (!isCurrent) return;
+        setCurrentManager({
+          ...profile,
+          name: [profile.firstName, profile.lastName].filter(Boolean).join(" "),
+        });
+        setError("");
+      })
+      .catch((loadError: unknown) => {
+        if (!isCurrent) return;
+        setCurrentManager(null);
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Unable to verify your account.",
+        );
+      })
+      .finally(() => {
+        if (isCurrent) setLoading(false);
+      });
 
-  if (!currentManager) {
-    const isFloorRoute = pathname?.includes("floor");
-    const isAdminRoute = pathname?.includes("admin");
-    const targetType = isAdminRoute
-      ? "admin"
-      : isFloorRoute
-        ? "floor"
-        : "operations";
-
-    currentManager = MANAGER_MOCK_DATA.managers?.find(
-      (m: any) =>
-        m.managerType?.toLowerCase() === targetType ||
-        m.role?.toLowerCase() === targetType,
-    );
-  }
-
-  if (!currentManager) {
-    currentManager = MANAGER_MOCK_DATA.managers?.[0];
-  }
+    return () => {
+      isCurrent = false;
+    };
+  }, []);
 
   return {
-    rawPhone: phone,
-    normalizedPhone:
-      normalizedPhone ||
-      currentManager?.phone ||
-      MANAGER_PHONES.admin ||
-      MANAGER_PHONES.ops_1,
+    rawPhone: currentManager?.phone,
+    normalizedPhone: currentManager?.phone || "",
     currentManager,
+    loading,
+    error,
     isAdmin:
-      currentManager?.role === "admin" ||
-      currentManager?.managerType === "admin",
-    isOperations: currentManager?.managerType === "operations",
-    isFloor: currentManager?.managerType === "floor",
+      currentManager?.role?.toLowerCase() === "admin" &&
+      currentManager.isActive !== false,
+    isOperations: currentManager?.managerType?.toLowerCase() === "operations",
+    isFloor: currentManager?.managerType?.toLowerCase() === "floor",
   };
 }

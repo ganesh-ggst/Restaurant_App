@@ -1,130 +1,133 @@
 import { Feather } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { useCallback, useRef, useState } from "react";
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
 import { Card } from "../../../components/ui/Card";
-import { FINANCIAL_MOCK_STATE } from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
+import {
+  adminDashboardApi,
+  type AdminWeeklyTrend,
+} from "../../../services/api/admin-profile";
+
+const formatINR = (amount: number) =>
+  `₹${amount.toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 
 export default function WeeklyTrendDetail() {
   const router = useRouter();
   const theme = useAppTheme();
+  const [data, setData] = useState<AdminWeeklyTrend | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+  const hasLoaded = useRef(false);
 
-  const [weeklyTrend, setWeeklyTrend] = useState<any[]>(
-    FINANCIAL_MOCK_STATE.weeklyTrend || [],
-  );
+  const load = useCallback(async (forceRefresh = false) => {
+    if (forceRefresh && hasLoaded.current) setRefreshing(true);
+    else setLoading(true);
+    setError("");
+    try {
+      setData(await adminDashboardApi.getWeeklyTrend(forceRefresh));
+      hasLoaded.current = true;
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Unable to load weekly revenue analytics.",
+      );
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
-      const trend = (FINANCIAL_MOCK_STATE.weeklyTrend || []).map((w: any) => {
-        const dineIn = w.dineIn || Math.round(w.amount * 0.6);
-        const delivery = w.delivery || Math.round(w.amount * 0.25);
-        const takeaway =
-          w.takeaway || Math.max(0, w.amount - dineIn - delivery);
-        return {
-          ...w,
-          dineIn,
-          delivery,
-          takeaway,
-        };
-      });
-      setWeeklyTrend(trend);
-    }, []),
+      void load(true);
+    }, [load]),
   );
 
-  const dayMap: Record<string, string> = {
-    Mon: "Monday",
-    Tue: "Tuesday",
-    Wed: "Wednesday",
-    Thu: "Thursday",
-    Fri: "Friday",
-    Sat: "Saturday",
-    Sun: "Sunday",
-  };
-
-  const daysList = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const liveDayStr = daysList[new Date().getDay()];
-
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+    <SafeAreaView className="flex-1" style={{ backgroundColor: theme.bg }}>
       <View
-        className="flex-row items-center px-4 py-4 border-b"
+        className="flex-row items-center border-b px-4 py-4"
         style={{ backgroundColor: theme.card, borderBottomColor: theme.border }}
       >
-        <Pressable onPress={() => router.back()} className="mr-4 p-1">
+        <Pressable onPress={() => router.back()} className="mr-4 p-1" accessibilityRole="button">
           <Feather name="arrow-left" size={24} color={theme.text} />
         </Pressable>
         <Text className="text-xl font-black" style={{ color: theme.text }}>
-          Weekly Trend Deep-Dive
+          Weekly Revenue Deep-Dive
         </Text>
       </View>
-      <ScrollView contentContainerStyle={{ padding: 20 }}>
-        <Card
-          variant="default"
-          className="p-5 rounded-3xl border-0 mb-4 shadow-lg"
-          style={{ backgroundColor: theme.card }}
-        >
-          <Text
-            className="text-base font-black mb-4"
-            style={{ color: theme.text }}
-          >
-            Detailed Daily Breakdown
-          </Text>
-          {weeklyTrend.map((w: any, i: number) => {
-            const isToday = w.day === liveDayStr;
-            const isPeak = i === 5;
-            const dayName = dayMap[w.day] || w.day;
-            return (
-              <View
-                key={i}
-                className="py-4 px-4 mb-3 rounded-2xl border flex-row justify-between items-center"
-                style={{
-                  backgroundColor: isToday
-                    ? theme.isDark
-                      ? "rgba(59, 130, 246, 0.12)"
-                      : "rgba(59, 130, 246, 0.06)"
-                    : theme.bg,
-                  borderColor: isToday ? theme.primary : theme.border,
-                }}
-              >
-                <View className="flex-1 mr-3">
-                  <View className="flex-row items-center gap-2 mb-0.5">
-                    <Text
-                      className="text-sm font-bold"
-                      style={{ color: isToday ? theme.primary : theme.text }}
-                    >
-                      {dayName} {isPeak && "(Peak)"}
+      <ScrollView
+        contentContainerStyle={{ padding: 20, paddingBottom: 36 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void load(true)}
+            tintColor={theme.primary}
+            colors={[theme.primary]}
+          />
+        }
+      >
+        {loading ? (
+          <ActivityIndicator className="mt-8" size="large" color={theme.primary} />
+        ) : error && !data ? (
+          <View className="items-center py-8">
+            <Text className="mb-4 text-center" style={{ color: theme.danger }}>{error}</Text>
+            <Pressable onPress={() => void load(true)} accessibilityRole="button">
+              <Text className="font-bold" style={{ color: theme.primary }}>Try again</Text>
+            </Pressable>
+          </View>
+        ) : data ? (
+          <>
+            {error ? (
+              <Text className="mb-4 text-sm" style={{ color: theme.danger }}>
+                Could not refresh the latest trend: {error}
+              </Text>
+            ) : null}
+            <Card
+              variant="default"
+              className="mb-4 rounded-3xl border-0 p-5"
+              style={{ backgroundColor: theme.card }}
+            >
+              <Text className="mb-4 text-base font-black" style={{ color: theme.text }}>
+                Daily Breakdown · Week starts {data.weekStartsOn}
+              </Text>
+              {data.days.map((day) => (
+                <View
+                  key={day.date}
+                  className="mb-3 rounded-2xl border px-4 py-4"
+                  style={{
+                    backgroundColor: day.isLiveDay ? theme.secondaryBg : theme.bg,
+                    borderColor: day.isLiveDay ? theme.primary : theme.border,
+                  }}
+                >
+                  <View className="mb-2 flex-row items-center justify-between">
+                    <Text className="text-sm font-bold" style={{ color: theme.text }}>
+                      {day.day} · {day.date}
+                      {day.isLiveDay ? "  LIVE" : ""}
                     </Text>
-                    {isToday && (
-                      <Text className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-500">
-                        LIVE DAY
-                      </Text>
-                    )}
+                    <Text className="text-sm font-black" style={{ color: theme.primary }}>
+                      {formatINR(day.totalRevenue)}
+                    </Text>
                   </View>
-                  <Text
-                    className="text-xs font-semibold"
-                    style={{ color: theme.muted }}
-                  >
-                    Dine-In: ₹{w.dineIn.toLocaleString("en-IN")} • Takeaway: ₹
-                    {w.takeaway.toLocaleString("en-IN")} • Delivery: ₹
-                    {w.delivery.toLocaleString("en-IN")}
+                  <Text className="text-xs font-semibold" style={{ color: theme.muted }}>
+                    Dine-in {formatINR(day.dineInRevenue)} · Takeaway {formatINR(day.takeawayRevenue)} · Delivery {formatINR(day.deliveryRevenue)}
+                  </Text>
+                  <Text className="mt-1 text-xs" style={{ color: theme.muted }}>
+                    {day.orderCount} orders
                   </Text>
                 </View>
-                <Text
-                  className="text-base font-black"
-                  style={{ color: isToday ? theme.primary : theme.text }}
-                >
-                  ₹
-                  {w.amount.toLocaleString("en-IN", {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}
-                </Text>
-              </View>
-            );
-          })}
-        </Card>
+              ))}
+            </Card>
+          </>
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );

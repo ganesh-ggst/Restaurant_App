@@ -5,7 +5,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Animated,
+  ActivityIndicator,
   Pressable,
+  RefreshControl,
   ScrollView,
   Switch,
   Text,
@@ -14,108 +16,47 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Card } from "../../components/ui/Card";
-import {
-  FINANCIAL_MOCK_STATE,
-  INITIAL_FLOOR_TABLES,
-  INITIAL_REVENUE_NOTIFICATIONS,
-  MANAGER_MOCK_DATA,
-} from "../../constants/managerMockData";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { useCurrentManager } from "../../hooks/useCurrentManager";
+import {
+  adminDashboardApi,
+  adminNotificationsApi,
+  type AdminDashboardData,
+} from "../../services/api/admin-profile";
 
 export default function AdminDashboard() {
   const theme = useAppTheme();
   const router = useRouter();
-  const { currentManager } = useCurrentManager();
+  const { currentManager, loading: authLoading, isAdmin } = useCurrentManager();
 
   const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-
-  const calculateOrderTotal = (order: any) => {
-    const taxSection = MANAGER_MOCK_DATA.storeDetails?.find(
-      (s: any) => s.id === "sd_tax",
-    );
-    const activeTaxOpt =
-      taxSection?.options?.find((o: any) => o.isActive) ||
-      taxSection?.options?.[0];
-    const taxStr = activeTaxOpt?.value || "5%";
-    const taxRate = parseFloat(taxStr.replace(/[^0-9.]/g, "")) / 100 || 0.05;
-
-    const chargesSection = MANAGER_MOCK_DATA.storeDetails?.find(
-      (s: any) => s.id === "sd_charges",
-    );
-    const activeChargesOpt =
-      chargesSection?.options?.find((o: any) => o.isActive) ||
-      chargesSection?.options?.[0];
-    const chargesText =
-      activeChargesOpt?.subValue || activeChargesOpt?.value || "";
-
-    const getChargeVal = (prefix: string, defaultVal: number) => {
-      const regex = new RegExp(`${prefix}[^0-9]*([0-9]+)`, "i");
-      const match = chargesText.match(regex);
-      return match ? parseFloat(match[1]) : defaultVal;
-    };
-
-    const packaging = getChargeVal("Packaging", 20);
-    const platform = getChargeVal("Platform", 10);
-    const deliveryFeeBase = getChargeVal("Delivery", 30);
-
-    const itemSubtotal = order.items.reduce(
-      (sum: number, item: any) => sum + item.price * (item.qty || 1),
-      0,
-    );
-
-    const isDelivery = order.mode?.toLowerCase() === "delivery";
-    const deliveryFee = isDelivery
-      ? itemSubtotal > 99
-        ? 0
-        : deliveryFeeBase
-      : 0;
-    const packagingFee = packaging;
-    const platformFee = isDelivery ? platform : 0;
-    const gstAmount = Math.round(itemSubtotal * taxRate * 100) / 100;
-    const total =
-      itemSubtotal + packagingFee + platformFee + deliveryFee + gstAmount;
-
-    return Math.round(total * 100) / 100;
-  };
-
-  const [activeManagersCount, setActiveManagersCount] = useState(0);
-  const [activeWaitersCount, setActiveWaitersCount] = useState(0);
-  const [todaysRevenue, setTodaysRevenue] = useState(
-    FINANCIAL_MOCK_STATE.todayBaseRevenue +
-      FINANCIAL_MOCK_STATE.completedTableBills,
-  );
-  const [monthlySales, setMonthlySales] = useState(
-    FINANCIAL_MOCK_STATE.monthlySalesBase,
-  );
-  const [yearlyRevenue, setYearlyRevenue] = useState(
-    FINANCIAL_MOCK_STATE.yearlyRevenueBase,
-  );
-  const [weeklyTrend, setWeeklyTrend] = useState(
-    FINANCIAL_MOCK_STATE.weeklyTrend,
-  );
-  const [salesDist, setSalesDist] = useState(
-    FINANCIAL_MOCK_STATE.salesDistribution,
-  );
-
-  const [isBranchLive, setIsBranchLive] = useState(true);
-
-  const restNameOpt = MANAGER_MOCK_DATA.storeDetails
-    ?.find((s) => s.id === "sd_rest")
-    ?.options?.find((o) => o.isActive);
-  const restName = restNameOpt ? restNameOpt.value : "Foodie Verse";
-
-  const addressOpt = MANAGER_MOCK_DATA.storeDetails
-    ?.find((s) => s.id === "sd_address")
-    ?.options?.find((o) => o.isActive);
-  const branchAddress = addressOpt
-    ? addressOpt.value
-    : "Hitech City, Hyderabad";
+  const [pulseAnim] = useState(() => new Animated.Value(1));
+  const dashboardLoaded = useRef(false);
+  const [dashboard, setDashboard] = useState<AdminDashboardData | null>(null);
+  const [dashboardLoading, setDashboardLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [dashboardError, setDashboardError] = useState("");
+  const [notificationsError, setNotificationsError] = useState("");
+  const [branchUpdating, setBranchUpdating] = useState(false);
+  const isBranchLive = dashboard?.branch.isActive ?? false;
+  const weeklyTrend =
+    dashboard?.weeklyRevenueTrend.days.map((day) => ({
+      day: day.day.slice(0, 3),
+      amount: day.revenue,
+    })) || [];
+  const branchToday = dashboard
+    ? new Intl.DateTimeFormat("en-CA", {
+        timeZone: dashboard.revenueDefinition.timeZone,
+      }).format(new Date())
+    : "";
+  const distributionItem = (type: string) =>
+    dashboard?.salesDistribution.items.find(
+      (item) => item.fulfillmentType === type,
+    ) || { label: "", percentage: 0, revenue: 0, orderCount: 0 };
 
   useEffect(() => {
     if (hasUnreadNotifications) {
-      Animated.loop(
+      const animation = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
             toValue: 1.35,
@@ -128,169 +69,118 @@ export default function AdminDashboard() {
             useNativeDriver: true,
           }),
         ]),
-      ).start();
+      );
+      animation.start();
+      return () => animation.stop();
     }
+    pulseAnim.setValue(1);
+    return undefined;
   }, [hasUnreadNotifications, pulseAnim]);
 
   useFocusEffect(
     useCallback(() => {
-      const hasUnread = INITIAL_REVENUE_NOTIFICATIONS.some((n) => !n.isRead);
-      setHasUnreadNotifications(hasUnread);
+      let isCurrent = true;
+      if (authLoading) return () => {
+        isCurrent = false;
+      };
+      if (!isAdmin) {
+        router.replace("/(auth)/login" as any);
+        return () => {
+          isCurrent = false;
+        };
+      }
 
-      const managers = (MANAGER_MOCK_DATA.managers || []).filter(
-        (m: any) =>
-          m.role !== "admin" &&
-          m.managerType !== "admin" &&
-          m.isActive !== false,
-      );
-      setActiveManagersCount(managers.length);
-
-      const waiters = (MANAGER_MOCK_DATA.waiters || []).filter(
-        (w: any) => w.isActive !== false,
-      );
-      setActiveWaitersCount(waiters.length);
-
-      let tableCompletedSum = 0;
-      INITIAL_FLOOR_TABLES.forEach((t) => {
-        if (t.status === "available" && t.currentOrder?.totalAmount) {
-          tableCompletedSum += t.currentOrder.totalAmount;
-        }
-      });
-
-      let completedOrdersSum = 0;
-      let deliveryOrdersSum = 0;
-      let deliveryOrdersCount = 0;
-      let takeawayOrdersSum = 0;
-      let takeawayOrdersCount = 0;
-
-      (MANAGER_MOCK_DATA.orders || []).forEach((o: any) => {
-        if (o.status === "completed") {
-          const ordTotal = calculateOrderTotal(o);
-          completedOrdersSum += ordTotal;
-          const mode = o.mode?.trim().toLowerCase();
-          if (mode === "delivery") {
-            deliveryOrdersSum += ordTotal;
-            deliveryOrdersCount += 1;
-          } else if (mode === "takeaway") {
-            takeawayOrdersSum += ordTotal;
-            takeawayOrdersCount += 1;
+      const showInitialLoading = !dashboardLoaded.current;
+      if (showInitialLoading) {
+        setDashboardLoading(true);
+        setDashboardError("");
+      }
+      void adminDashboardApi
+        .getDashboard()
+        .then((result) => {
+          dashboardLoaded.current = true;
+          if (isCurrent) {
+            setDashboard(result);
+            setDashboardError("");
           }
-        }
-      });
+        })
+        .catch((error: unknown) => {
+          if (isCurrent) {
+            setDashboardError(
+              error instanceof Error
+                ? error.message
+                : "Unable to load dashboard data.",
+            );
+          }
+        })
+        .finally(() => {
+          if (isCurrent && showInitialLoading) setDashboardLoading(false);
+        });
 
-      const calculatedToday =
-        FINANCIAL_MOCK_STATE.todayBaseRevenue +
-        FINANCIAL_MOCK_STATE.completedTableBills +
-        tableCompletedSum +
-        completedOrdersSum;
-      setTodaysRevenue(calculatedToday);
+      void adminNotificationsApi
+        .getAdminNotifications()
+        .then(({ unreadCount }) => {
+          if (isCurrent) {
+            setHasUnreadNotifications(unreadCount > 0);
+            setNotificationsError("");
+          }
+        })
+        .catch((error: unknown) => {
+          if (isCurrent) {
+            setNotificationsError(
+              error instanceof Error
+                ? error.message
+                : "Unable to load notification status.",
+            );
+          }
+        });
 
-      const calculatedMonthly =
-        FINANCIAL_MOCK_STATE.monthlySalesBase +
-        FINANCIAL_MOCK_STATE.completedTableBills +
-        completedOrdersSum;
-      setMonthlySales(calculatedMonthly);
-
-      const calculatedYearly =
-        FINANCIAL_MOCK_STATE.yearlyRevenueBase +
-        FINANCIAL_MOCK_STATE.completedTableBills +
-        completedOrdersSum;
-      setYearlyRevenue(calculatedYearly);
-
-      setWeeklyTrend([...FINANCIAL_MOCK_STATE.weeklyTrend]);
-
-      let completedTableCount =
-        (FINANCIAL_MOCK_STATE as any).completedTableTransactions?.length || 0;
-      INITIAL_FLOOR_TABLES.forEach((t) => {
-        if (t.status === "available" && t.currentOrder?.totalAmount) {
-          completedTableCount += 1;
-        }
-      });
-
-      const dineInBaseAmt =
-        FINANCIAL_MOCK_STATE.salesDistribution.dineIn.amount +
-        (FINANCIAL_MOCK_STATE.completedTableBills || 0) +
-        tableCompletedSum;
-      const dineInOrders =
-        FINANCIAL_MOCK_STATE.salesDistribution.dineIn.orders +
-        completedTableCount;
-
-      const deliveryBaseAmt =
-        FINANCIAL_MOCK_STATE.salesDistribution.delivery.amount +
-        deliveryOrdersSum;
-      const deliveryOrders =
-        FINANCIAL_MOCK_STATE.salesDistribution.delivery.orders +
-        deliveryOrdersCount;
-
-      const takeawayBaseAmt =
-        FINANCIAL_MOCK_STATE.salesDistribution.takeaway.amount +
-        takeawayOrdersSum;
-      const takeawayOrders =
-        FINANCIAL_MOCK_STATE.salesDistribution.takeaway.orders +
-        takeawayOrdersCount;
-
-      const totalDistAmt = dineInBaseAmt + deliveryBaseAmt + takeawayBaseAmt;
-
-      const dineInPct =
-        totalDistAmt > 0
-          ? Math.round((dineInBaseAmt / totalDistAmt) * 100)
-          : 60;
-      const deliveryPct =
-        totalDistAmt > 0
-          ? Math.round((deliveryBaseAmt / totalDistAmt) * 100)
-          : 25;
-      const takeawayPct = Math.max(0, 100 - (dineInPct + deliveryPct));
-
-      setSalesDist({
-        dineIn: {
-          percentage: dineInPct,
-          amount: dineInBaseAmt,
-          orders: dineInOrders,
-        },
-        delivery: {
-          percentage: deliveryPct,
-          amount: deliveryBaseAmt,
-          orders: deliveryOrders,
-        },
-        takeaway: {
-          percentage: takeawayPct,
-          amount: takeawayBaseAmt,
-          orders: takeawayOrders,
-        },
-      });
-    }, []),
+    return () => {
+      isCurrent = false;
+    };
+    }, [authLoading, isAdmin, router]),
   );
 
+  const reloadDashboard = async (isPullRefresh = false) => {
+    if (isPullRefresh) setRefreshing(true);
+    else if (!dashboard) setDashboardLoading(true);
+    setDashboardError("");
+    const [dashboardResult, notificationsResult] = await Promise.allSettled([
+      adminDashboardApi.getDashboard(true),
+      adminNotificationsApi.getAdminNotifications(1, 20, true),
+    ]);
+
+    if (dashboardResult.status === "fulfilled") {
+      dashboardLoaded.current = true;
+      setDashboard(dashboardResult.value);
+      setDashboardError("");
+    } else {
+      setDashboardError(
+        dashboardResult.reason instanceof Error
+          ? dashboardResult.reason.message
+          : "Unable to load dashboard data.",
+      );
+    }
+
+    if (notificationsResult.status === "fulfilled") {
+      setHasUnreadNotifications(notificationsResult.value.unreadCount > 0);
+      setNotificationsError("");
+    } else {
+      setNotificationsError(
+        notificationsResult.reason instanceof Error
+          ? notificationsResult.reason.message
+          : "Unable to load notification status.",
+      );
+    }
+    setDashboardLoading(false);
+    setRefreshing(false);
+  };
+
   const handleToggleBranchLive = (newValue: boolean) => {
-    if (!newValue) {
-      const busyTables = INITIAL_FLOOR_TABLES.filter(
-        (t) => t.status !== "available",
-      );
-      const activeOrders = (MANAGER_MOCK_DATA.orders || []).filter(
-        (o: any) => o.status !== "completed",
-      );
-
-      if (busyTables.length > 0 || activeOrders.length > 0) {
-        const tableList = busyTables
-          .map((t) => `${t.tableName} (${t.status.toUpperCase()})`)
-          .join(", ");
-        const orderList = activeOrders
-          .map(
-            (o: any) =>
-              `${o.customerName} [${o.mode}: ${o.status.toUpperCase()}]`,
-          )
-          .join(", ");
-
-        let message =
-          "Please complete all active tables and pending orders before going offline.\n";
-        if (busyTables.length > 0) message += `\nTables: ${tableList}`;
-        if (activeOrders.length > 0) message += `\nOrders: ${orderList}`;
-
-        Alert.alert("⚠️ Cannot Go Offline", message, [
-          { text: "OK", style: "default" },
-        ]);
-        return;
-      }
+    const branchId = dashboard?.branch.id || currentManager?.branchId;
+    if (!branchId || branchUpdating) {
+      Alert.alert("Unable to update branch", "Branch information is not available. Refresh and try again.");
+      return;
     }
 
     Alert.alert(
@@ -304,72 +194,37 @@ export default function AdminDashboard() {
         },
         {
           text: "Confirm",
-          onPress: () => {
-            setIsBranchLive(newValue);
-            if (!newValue) {
-              const tableCompletedSum = INITIAL_FLOOR_TABLES.reduce(
-                (acc, t) =>
-                  acc +
-                  (t.status === "available" && t.currentOrder?.totalAmount
-                    ? t.currentOrder.totalAmount
-                    : 0),
-                0,
+          onPress: async () => {
+            setBranchUpdating(true);
+            try {
+              await adminDashboardApi.setBranchOnlineStatus(
+                branchId,
+                newValue,
               );
-              let completedOrdersSum = 0;
-              (MANAGER_MOCK_DATA.orders || []).forEach((o: any) => {
-                if (o.status === "completed") {
-                  completedOrdersSum += calculateOrderTotal(o);
-                }
-              });
-
-              const calculatedToday =
-                FINANCIAL_MOCK_STATE.todayBaseRevenue +
-                FINANCIAL_MOCK_STATE.completedTableBills +
-                tableCompletedSum +
-                completedOrdersSum;
-
-              INITIAL_REVENUE_NOTIFICATIONS.unshift({
-                id: `n_day_${Date.now()}`,
-                title: "🟢 End-of-Day Total Revenue Report",
-                subtitle: "Daily Closing Summary",
-                amount: `₹${calculatedToday.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-                description: `Today's shift closed successfully. Total revenue of ₹${calculatedToday.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} processed across storefront, dine-in tables, delivery, and takeaway orders.`,
-                timestamp: "Just now",
-                type: "day",
-                isRead: false,
-              });
-
-              const calculatedMonthly =
-                FINANCIAL_MOCK_STATE.monthlySalesBase +
-                FINANCIAL_MOCK_STATE.completedTableBills +
-                completedOrdersSum;
-              INITIAL_REVENUE_NOTIFICATIONS.unshift({
-                id: `n_month_${Date.now()}`,
-                title: "📊 Month-End Total Revenue Report",
-                subtitle: "March 2026 Summary",
-                amount: `₹${calculatedMonthly.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-                description: `Monthly financial audit complete. Dine-In, Online Delivery, and Takeaway totals fully audited.`,
-                timestamp: "Just now",
-                type: "month",
-                isRead: false,
-              });
-
-              const calculatedYearly =
-                FINANCIAL_MOCK_STATE.yearlyRevenueBase +
-                FINANCIAL_MOCK_STATE.completedTableBills +
-                completedOrdersSum;
-              INITIAL_REVENUE_NOTIFICATIONS.unshift({
-                id: `n_year_${Date.now()}`,
-                title: "📅 Year-End Total Revenue Report",
-                subtitle: "Fiscal Year 2025-2026 Summary",
-                amount: `₹${(calculatedYearly / 100000).toFixed(2)}L`,
-                description: `Total annual revenue successfully processed across all channels. 14% growth compared to previous fiscal year.`,
-                timestamp: "Just now",
-                type: "year",
-                isRead: false,
-              });
-
-              setHasUnreadNotifications(true);
+              setDashboard((current) =>
+                current
+                  ? {
+                      ...current,
+                      branch: { ...current.branch, isActive: newValue },
+                    }
+                  : current,
+              );
+            } catch (error) {
+              const serverMessage =
+                error instanceof Error ? error.message : "";
+              const blockedByActiveWork =
+                !newValue &&
+                /active tables|pending orders|go offline/i.test(serverMessage);
+              Alert.alert(
+                blockedByActiveWork
+                  ? "Your branch is still serving guests"
+                  : "We couldn’t update the branch",
+                blockedByActiveWork
+                  ? "Please complete active tables and pending orders before taking the branch offline."
+                  : "Please try again in a moment.",
+              );
+            } finally {
+              setBranchUpdating(false);
             }
           },
         },
@@ -378,6 +233,7 @@ export default function AdminDashboard() {
   };
 
   const formatINR = (num: number) => {
+    if (!Number.isFinite(num)) return "₹0.00";
     if (num >= 10000000) {
       const val = Math.floor((num / 10000000) * 100) / 100;
       return `₹${val.toFixed(2)}Cr`;
@@ -404,14 +260,22 @@ export default function AdminDashboard() {
               style={{ color: theme.text }}
               numberOfLines={1}
             >
-              {restName} 👑
+              {dashboard?.branch.name || "Admin Dashboard"} 👑
             </Text>
             <Text
               className="text-xs font-semibold mt-0.5"
               style={{ color: theme.muted }}
               numberOfLines={1}
             >
-              {branchAddress}
+              {dashboard
+                ? [
+                    dashboard.branch.address,
+                    dashboard.branch.city,
+                    dashboard.branch.state,
+                  ]
+                    .filter(Boolean)
+                    .join(", ")
+                : " "}
             </Text>
           </View>
 
@@ -480,6 +344,7 @@ export default function AdminDashboard() {
           <Switch
             value={isBranchLive}
             onValueChange={handleToggleBranchLive}
+            disabled={dashboardLoading || branchUpdating || !dashboard}
             trackColor={{ false: theme.border, true: "#22c55e" }}
             thumbColor={"#ffffff"}
             style={{ transform: [{ scale: 0.8 }] }}
@@ -492,7 +357,45 @@ export default function AdminDashboard() {
         className="flex-1 px-6"
         contentContainerStyle={{ paddingBottom: 60 }}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void reloadDashboard(true)}
+            tintColor={theme.primary}
+            colors={[theme.primary]}
+          />
+        }
       >
+        {dashboardLoading ? (
+          <ActivityIndicator
+            className="mb-4"
+            size="small"
+            color={theme.primary}
+          />
+        ) : null}
+        {dashboardError ? (
+          <View
+            className="mb-4 rounded-2xl border p-4"
+            style={{ backgroundColor: theme.dangerBg, borderColor: theme.border }}
+          >
+            <Text className="mb-3" style={{ color: theme.danger }}>
+              {dashboardError}
+            </Text>
+            <Pressable
+              onPress={() => void reloadDashboard()}
+              accessibilityRole="button"
+            >
+              <Text className="font-bold" style={{ color: theme.primary }}>
+                Reload dashboard
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
+        {notificationsError ? (
+          <Text className="mb-4 text-xs" style={{ color: theme.danger }}>
+            Notification status unavailable: {notificationsError}
+          </Text>
+        ) : null}
         {/* --- REVENUE HIGHLIGHT CARDS (TODAY & MONTHLY) --- */}
         <View className="flex-row gap-3 mb-4">
           <Pressable
@@ -510,7 +413,7 @@ export default function AdminDashboard() {
                   style={{ color: theme.muted }}
                   numberOfLines={1}
                 >
-                  TODAY'S REV
+                  TODAY&apos;S REV
                 </Text>
                 <Text className="text-xs">{isBranchLive ? "🟢" : "🔴"}</Text>
               </View>
@@ -521,7 +424,7 @@ export default function AdminDashboard() {
                   numberOfLines={1}
                   style={{ color: theme.text }}
                 >
-                  {formatINR(todaysRevenue)}
+                  {formatINR(dashboard?.stats.todayRevenue ?? 0)}
                 </Text>
                 <Text
                   className="text-[11px] font-semibold"
@@ -560,7 +463,7 @@ export default function AdminDashboard() {
                   numberOfLines={1}
                   style={{ color: theme.text }}
                 >
-                  {formatINR(monthlySales)}
+                  {formatINR(dashboard?.stats.monthlySales ?? 0)}
                 </Text>
                 <Text
                   className="text-[11px] font-semibold"
@@ -590,17 +493,21 @@ export default function AdminDashboard() {
                 style={{ color: theme.muted }}
                 numberOfLines={1}
               >
-                Yearly Revenue (Fiscal 2025-2026)
+                Yearly Revenue (Fiscal {dashboard?.stats.fiscalYear || "—"})
               </Text>
               <Text
                 className="text-2xl font-black"
                 style={{ color: theme.text }}
                 numberOfLines={1}
               >
-                {formatINR(yearlyRevenue)}{" "}
-                <Text className="text-xs font-semibold text-yellow-500">
-                  ("+14% YoY")
-                </Text>
+                {formatINR(dashboard?.stats.yearlyRevenue ?? 0)}{" "}
+                {dashboard?.stats.yearOverYearChangePercentage !== null &&
+                dashboard?.stats.yearOverYearChangePercentage !== undefined ? (
+                  <Text className="text-xs font-semibold text-yellow-500">
+                    ({dashboard.stats.yearOverYearChangePercentage >= 0 ? "+" : ""}
+                    {dashboard.stats.yearOverYearChangePercentage}% YoY)
+                  </Text>
+                ) : null}
               </Text>
             </View>
             <View className="w-11 h-11 rounded-2xl items-center justify-center bg-yellow-500/15 shrink-0">
@@ -626,7 +533,7 @@ export default function AdminDashboard() {
               className="text-2xl font-black"
               style={{ color: theme.primary }}
             >
-              {activeManagersCount}
+              {dashboard?.stats.activeManagers ?? 0}
             </Text>
           </Card>
 
@@ -642,7 +549,7 @@ export default function AdminDashboard() {
               Active Waiters
             </Text>
             <Text className="text-2xl font-black" style={{ color: "#22c55e" }}>
-              {activeWaitersCount}
+              {dashboard?.stats.activeWaiters ?? 0}
             </Text>
           </Card>
         </View>
@@ -689,20 +596,12 @@ export default function AdminDashboard() {
             {(() => {
               const maxAmt = Math.max(
                 ...weeklyTrend.map((w) => w.amount),
-                10000,
+                1,
               );
               return weeklyTrend.map((bar, index) => {
-                const daysMap = [
-                  "Sun",
-                  "Mon",
-                  "Tue",
-                  "Wed",
-                  "Thu",
-                  "Fri",
-                  "Sat",
-                ];
-                const liveDayStr = daysMap[new Date().getDay()];
-                const isToday = bar.day === liveDayStr;
+                const isToday =
+                  dashboard?.weeklyRevenueTrend.days[index]?.date ===
+                  branchToday;
                 return (
                   <View
                     key={index}
@@ -711,7 +610,7 @@ export default function AdminDashboard() {
                     <View
                       className="w-full rounded-t-xl items-center justify-center overflow-hidden py-2"
                       style={{
-                        height: `${Math.min(100, Math.max(20, (bar.amount / maxAmt) * 100))}%`,
+                        height: `${bar.amount > 0 ? Math.max(5, (bar.amount / maxAmt) * 100) : 0}%`,
                         backgroundColor: isToday ? "#eab308" : theme.primary,
                       }}
                     >
@@ -737,28 +636,10 @@ export default function AdminDashboard() {
           </View>
           <View className="flex-row justify-between items-center mt-3 pt-1">
             {(() => {
-              const peakObj = weeklyTrend.reduce(
-                (max, curr) => (curr.amount > max.amount ? curr : max),
-                weeklyTrend[0] || { day: "Sat", amount: 0 },
-              );
-              const dayMap: Record<string, string> = {
-                Mon: "Monday",
-                Tue: "Tuesday",
-                Wed: "Wednesday",
-                Thu: "Thursday",
-                Fri: "Friday",
-                Sat: "Saturday",
-                Sun: "Sunday",
-              };
-              const peakName = peakObj
-                ? dayMap[peakObj.day] || peakObj.day
-                : "Saturday";
-              const totalAmt = weeklyTrend.reduce(
-                (sum, w) => sum + w.amount,
-                0,
-              );
+              const peakName =
+                dashboard?.weeklyRevenueTrend.peakDay.day || "—";
               const avgAmt =
-                weeklyTrend.length > 0 ? totalAmt / weeklyTrend.length : 0;
+                dashboard?.weeklyRevenueTrend.averageDailyRevenue ?? 0;
               return (
                 <>
                   <Text
@@ -820,20 +701,20 @@ export default function AdminDashboard() {
             {[
               {
                 label: "Dine-In Tables",
-                pct: `${salesDist.dineIn.percentage}%`,
-                amount: `₹${salesDist.dineIn.amount.toLocaleString("en-IN")}`,
+                pct: `${distributionItem("dine_in").percentage}%`,
+                amount: `₹${distributionItem("dine_in").revenue.toLocaleString("en-IN")}`,
                 color: theme.primary,
               },
               {
                 label: "Online Delivery",
-                pct: `${salesDist.delivery.percentage}%`,
-                amount: `₹${salesDist.delivery.amount.toLocaleString("en-IN")}`,
+                pct: `${distributionItem("delivery").percentage}%`,
+                amount: `₹${distributionItem("delivery").revenue.toLocaleString("en-IN")}`,
                 color: "#22c55e",
               },
               {
                 label: "Takeaway Orders",
-                pct: `${salesDist.takeaway.percentage}%`,
-                amount: `₹${salesDist.takeaway.amount.toLocaleString("en-IN")}`,
+                pct: `${distributionItem("takeaway").percentage}%`,
+                amount: `₹${distributionItem("takeaway").revenue.toLocaleString("en-IN")}`,
                 color: "#eab308",
               },
             ].map((item, idx) => (

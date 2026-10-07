@@ -691,6 +691,12 @@ export const MANAGER_MOCK_DATA: {
   ],
 };
 
+export function updateMockManagerName(id: string, name: string): void {
+  MANAGER_MOCK_DATA.managers = MANAGER_MOCK_DATA.managers.map((manager) =>
+    manager.id === id ? { ...manager, name } : manager,
+  );
+}
+
 export interface FloorTable {
   id: string;
   tableName: string;

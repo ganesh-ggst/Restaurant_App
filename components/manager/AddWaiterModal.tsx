@@ -1,6 +1,14 @@
-import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
-import { ArrowLeft, Check, Edit2, Trash2, X } from "lucide-react-native";
-import { useState } from "react";
+import { useFocusEffect, useRouter, useSegments } from "expo-router";
+import * as SecureStore from "expo-secure-store";
+import {
+  ArrowLeft,
+  Check,
+  Edit2,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react-native";
+import { useCallback, useRef, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -13,35 +21,152 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import {
-  MANAGER_MOCK_DATA,
-  MANAGER_PHONES,
-} from "../../constants/managerMockData";
+import { MANAGER_MOCK_DATA } from "../../constants/managerMockData";
 import { useAppTheme } from "../../hooks/useAppTheme";
-import { useCurrentManager } from "../../hooks/useCurrentManager";
+import { AdminWaiter, adminProfileApi } from "../../services/api/admin-profile";
+
+const WAITER_NUMBER_PREFIX = "restaurant.waiterDisplayNumber.";
+const WAITER_NUMBER_COUNTER_KEY = "restaurant.waiterDisplayNumber.next";
+
+async function getStoredWaiterNumber(key: string): Promise<string | null> {
+  if (Platform.OS === "web") {
+    if (typeof localStorage === "undefined") {
+      throw new Error("Browser storage is unavailable for waiter IDs.");
+    }
+    return localStorage.getItem(key);
+  }
+
+  return SecureStore.getItemAsync(key);
+}
+
+async function setStoredWaiterNumber(
+  key: string,
+  value: string,
+): Promise<void> {
+  if (Platform.OS === "web") {
+    if (typeof localStorage === "undefined") {
+      throw new Error("Browser storage is unavailable for waiter IDs.");
+    }
+    localStorage.setItem(key, value);
+    return;
+  }
+
+  await SecureStore.setItemAsync(key, value);
+}
+
+async function getStableWaiterNumbers(
+  waiters: AdminWaiter[],
+): Promise<Map<string, number>> {
+  const sortedWaiters = [...waiters].sort((first, second) =>
+    first.id.localeCompare(second.id),
+  );
+  const numbersById = new Map<string, number>();
+  const storedNumbers = await Promise.all(
+    sortedWaiters.map(async (waiter) => ({
+      id: waiter.id,
+      value: await getStoredWaiterNumber(
+        `${WAITER_NUMBER_PREFIX}${encodeURIComponent(waiter.id)}`,
+      ),
+    })),
+  );
+  let nextNumber =
+    Number(await getStoredWaiterNumber(WAITER_NUMBER_COUNTER_KEY)) || 0;
+
+  storedNumbers.forEach(({ id, value }) => {
+    const number = Number(value);
+    if (Number.isSafeInteger(number) && number > 0) {
+      numbersById.set(id, number);
+      nextNumber = Math.max(nextNumber, number);
+    }
+  });
+
+  for (const waiter of sortedWaiters) {
+    if (numbersById.has(waiter.id)) continue;
+    nextNumber += 1;
+    await setStoredWaiterNumber(
+      `${WAITER_NUMBER_PREFIX}${encodeURIComponent(waiter.id)}`,
+      String(nextNumber),
+    );
+    numbersById.set(waiter.id, nextNumber);
+  }
+
+  await setStoredWaiterNumber(WAITER_NUMBER_COUNTER_KEY, String(nextNumber));
+  return numbersById;
+}
 
 export default function AddWaiterModal() {
   const router = useRouter();
-  const pathname = usePathname();
-  const params = useLocalSearchParams<{ phone?: string }>();
+  const segments = useSegments();
   const insets = useSafeAreaInsets();
   const theme = useAppTheme();
-  const { currentManager } = useCurrentManager();
-
-  const loggedInPhone =
-    params.phone || currentManager?.phone || MANAGER_PHONES.admin;
+  const isAdmin = segments[0] === "(admin)";
 
   const [activeTab, setActiveTab] = useState<"add" | "showAll">("add");
   const [waiterName, setWaiterName] = useState("");
+  const [waiterSearch, setWaiterSearch] = useState("");
+  const [waiterStatusFilter, setWaiterStatusFilter] = useState<
+    "all" | "active" | "inactive"
+  >("all");
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editedName, setEditedName] = useState("");
   const [editedIsActive, setEditedIsActive] = useState<boolean>(true);
+  const [adminWaiters, setAdminWaiters] = useState<AdminWaiter[]>([]);
+  const [adminWaiterNumbers, setAdminWaiterNumbers] = useState<
+    Map<string, number>
+  >(() => new Map());
+  const hasLoadedAdminWaiters = useRef(false);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [, forceUpdate] = useState({});
 
-  const handleSave = () => {
+  const loadWaiters = useCallback(async () => {
+    if (!isAdmin) return;
+    if (!hasLoadedAdminWaiters.current) setLoading(true);
+    try {
+      const waiters = await adminProfileApi.getWaiters();
+      const numbers = await getStableWaiterNumbers(waiters);
+      setAdminWaiterNumbers(numbers);
+      setAdminWaiters(waiters);
+      hasLoadedAdminWaiters.current = true;
+    } catch (error) {
+      Alert.alert(
+        "Unable to load waiters",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [isAdmin]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadWaiters();
+    }, [loadWaiters]),
+  );
+
+  const handleSave = async () => {
     if (!waiterName.trim()) {
       Alert.alert("Error", "Please enter waiter name.");
+      return;
+    }
+
+    if (isAdmin) {
+      setSaving(true);
+      try {
+        await adminProfileApi.createWaiter(waiterName.trim());
+        await loadWaiters();
+        setWaiterName("");
+        setActiveTab("showAll");
+        Alert.alert("Success", "Waiter added & access granted successfully!");
+      } catch (error) {
+        Alert.alert(
+          "Unable to add waiter",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      } finally {
+        setSaving(false);
+      }
       return;
     }
 
@@ -70,7 +195,10 @@ export default function AddWaiterModal() {
         },
       ]);
     } catch (error) {
-      Alert.alert("Error", "Failed to add waiter.");
+      Alert.alert(
+        "Error",
+        error instanceof Error ? error.message : "Failed to add waiter.",
+      );
     }
   };
 
@@ -80,9 +208,38 @@ export default function AddWaiterModal() {
     setEditedIsActive(waiter.isActive !== false);
   };
 
-  const handleSaveEdit = (waiterId: string) => {
+  const handleSaveEdit = async (waiterId: string) => {
     if (!editedName.trim()) {
       Alert.alert("Error", "Waiter name cannot be empty.");
+      return;
+    }
+
+    if (isAdmin) {
+      setSaving(true);
+      try {
+        const waiter = adminWaiters.find((item) => item.id === waiterId);
+        const status = editedIsActive
+          ? waiter?.status === "off_duty"
+            ? "available"
+            : waiter?.status || "available"
+          : "off_duty";
+        await adminProfileApi.updateWaiter(waiterId, {
+          name: editedName.trim(),
+          isActive: editedIsActive,
+          status,
+        });
+        await loadWaiters();
+        setEditingId(null);
+        setEditedName("");
+        setEditedIsActive(true);
+      } catch (error) {
+        Alert.alert(
+          "Unable to update waiter",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      } finally {
+        setSaving(false);
+      }
       return;
     }
 
@@ -117,19 +274,57 @@ export default function AddWaiterModal() {
         {
           text: "Delete",
           style: "destructive",
-          onPress: () => {
+          onPress: async () => {
+            if (isAdmin) {
+              try {
+                await adminProfileApi.deleteWaiter(waiterId);
+                if (editingId === waiterId) setEditingId(null);
+                await loadWaiters();
+              } catch (error) {
+                Alert.alert(
+                  "Unable to delete waiter",
+                  error instanceof Error ? error.message : "Please try again.",
+                );
+              }
+              return;
+            }
+
             MANAGER_MOCK_DATA.waiters = (
               MANAGER_MOCK_DATA.waiters || []
             ).filter((w: any) => w.id !== waiterId);
             if (editingId === waiterId) setEditingId(null);
-            forceUpdate({});
           },
         },
       ],
     );
   };
 
-  const waitersList = MANAGER_MOCK_DATA.waiters || [];
+  const waitersList = isAdmin ? adminWaiters : MANAGER_MOCK_DATA.waiters || [];
+  const waiterNumbersById = isAdmin
+    ? adminWaiterNumbers
+    : new Map(
+        [...waitersList]
+          .sort((first: any, second: any) =>
+            String(first.id).localeCompare(String(second.id)),
+          )
+          .map((waiter: any, index: number) => [waiter.id, index + 1]),
+      );
+  const sortedWaiters = [...waitersList].sort(
+    (first: any, second: any) =>
+      (waiterNumbersById.get(first.id) ?? Number.MAX_SAFE_INTEGER) -
+        (waiterNumbersById.get(second.id) ?? Number.MAX_SAFE_INTEGER) ||
+      String(first.id).localeCompare(String(second.id)),
+  );
+  const filteredWaiters = sortedWaiters.filter(
+    (waiter: any) =>
+      (waiterStatusFilter === "all" ||
+        (waiterStatusFilter === "active"
+          ? waiter.isActive !== false
+          : waiter.isActive === false)) &&
+      JSON.stringify(waiter)
+        .toLowerCase()
+        .includes(waiterSearch.trim().toLowerCase()),
+  );
 
   return (
     <View
@@ -196,8 +391,88 @@ export default function AddWaiterModal() {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         className="flex-1"
       >
+        {activeTab === "showAll" && (
+          <View
+            className="mx-5 mt-4 gap-3"
+            style={{
+              backgroundColor: theme.bg,
+              elevation: 8,
+              paddingBottom: 12,
+              zIndex: 10,
+            }}
+          >
+            <View
+              className="flex-row items-center rounded-xl border px-3"
+              style={{
+                backgroundColor: theme.card,
+                borderColor: theme.border,
+              }}
+            >
+              <Search size={18} color={theme.muted} />
+              <TextInput
+                value={waiterSearch}
+                onChangeText={setWaiterSearch}
+                placeholder="Search by any waiter detail"
+                placeholderTextColor={theme.muted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                returnKeyType="search"
+                accessibilityLabel="Search waiters"
+                className="flex-1 px-3 py-3"
+                style={{ color: theme.text, fontSize: 15 }}
+              />
+              {waiterSearch.length > 0 && (
+                <Pressable
+                  onPress={() => setWaiterSearch("")}
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear waiter search"
+                  hitSlop={10}
+                >
+                  <X size={18} color={theme.muted} />
+                </Pressable>
+              )}
+            </View>
+            <View className="flex-row gap-2">
+              {(["all", "active", "inactive"] as const).map((filter) => {
+                const selected = waiterStatusFilter === filter;
+                const label =
+                  filter === "all"
+                    ? "All"
+                    : filter === "active"
+                      ? "Active"
+                      : "Inactive";
+                return (
+                  <Pressable
+                    key={filter}
+                    onPress={() => setWaiterStatusFilter(filter)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    className="flex-1 items-center rounded-xl border py-2.5"
+                    style={{
+                      backgroundColor: selected ? theme.primary : theme.card,
+                      borderColor: selected ? theme.primary : theme.border,
+                    }}
+                  >
+                    <Text
+                      className="font-bold"
+                      style={{
+                        color: selected ? theme.primaryForeground : theme.muted,
+                      }}
+                    >
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        )}
         <ScrollView
-          contentContainerStyle={{ padding: 20, paddingBottom: 300 }}
+          contentContainerStyle={{
+            padding: 20,
+            paddingTop: activeTab === "showAll" ? 12 : 20,
+            paddingBottom: 300,
+          }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
@@ -230,11 +505,12 @@ export default function AddWaiterModal() {
 
               <Pressable
                 onPress={handleSave}
+                disabled={saving}
                 style={{ backgroundColor: theme.primary }}
                 className="py-4 rounded-2xl items-center shadow-sm mt-4"
               >
                 <Text className="text-white font-black text-base">
-                  Save & Grant Access
+                  {saving ? "Saving..." : "Save & Grant Access"}
                 </Text>
               </Pressable>
             </View>
@@ -244,18 +520,33 @@ export default function AddWaiterModal() {
                 className="text-xs font-bold mb-1 ml-1 uppercase tracking-wider"
                 style={{ color: theme.muted }}
               >
-                All Registered Waiters (with IDs & Status)
+                All Registered Waiters
               </Text>
 
-              {waitersList.length === 0 ? (
+              {loading ? (
                 <Text
                   className="text-base text-center py-8"
                   style={{ color: theme.muted }}
                 >
-                  No waiters found. Add one from the "Add Waiter" tab.
+                  Loading waiters...
+                </Text>
+              ) : waitersList.length === 0 ? (
+                <Text
+                  className="text-base text-center py-8"
+                  style={{ color: theme.muted }}
+                >
+                  No waiters found. Add one from the Add Waiter tab.
+                </Text>
+              ) : filteredWaiters.length === 0 ? (
+                <Text
+                  className="text-base text-center py-8"
+                  style={{ color: theme.muted }}
+                >
+                  No waiters match “{waiterSearch.trim()}”.
                 </Text>
               ) : (
-                waitersList.map((waiter: any) => {
+                filteredWaiters.map((waiter: any) => {
+                  const waiterNumber = waiterNumbersById.get(waiter.id);
                   const isEditing = editingId === waiter.id;
                   const isActive = waiter.isActive !== false;
 
@@ -268,23 +559,29 @@ export default function AddWaiterModal() {
                         borderColor: theme.border,
                       }}
                     >
-                      <View className="flex-row items-center justify-between">
-                        <View>
+                      <View className="flex-row items-start justify-between gap-2">
+                        <View className="flex-1 pt-2">
                           <Text
                             className="text-xs font-bold"
                             style={{ color: theme.primary }}
+                            numberOfLines={1}
                           >
-                            ID: {waiter.id}
+                            Waiter W-
+                            {String(waiterNumber ?? 0).padStart(3, "0")}
                           </Text>
                         </View>
 
-                        <View className="flex-row items-center gap-2">
+                        <View className="flex-row items-center gap-2 shrink-0">
                           {isEditing ? (
                             <>
                               <Pressable
                                 onPress={() => handleSaveEdit(waiter.id)}
+                                disabled={saving}
                                 className="p-2 rounded-xl"
-                                style={{ backgroundColor: theme.primary }}
+                                style={{
+                                  backgroundColor: theme.primary,
+                                  opacity: saving ? 0.6 : 1,
+                                }}
                               >
                                 <Check size={18} color="#fff" />
                               </Pressable>
@@ -316,6 +613,9 @@ export default function AddWaiterModal() {
                               </Pressable>
                               <Pressable
                                 onPress={() => handleDeleteWaiter(waiter.id)}
+                                disabled={saving}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Delete ${waiter.name}`}
                                 className="p-2 rounded-xl border"
                                 style={{
                                   borderColor: theme.border,
@@ -362,84 +662,71 @@ export default function AddWaiterModal() {
                             >
                               Waiter Status (Manager / Admin Controlled)
                             </Text>
-                            <Pressable
-                              onPress={() => setEditedIsActive(!editedIsActive)}
-                              className="py-3 px-4 rounded-2xl border flex-row items-center justify-between"
-                              style={{
-                                backgroundColor: editedIsActive
-                                  ? "rgba(34, 197, 94, 0.1)"
-                                  : "rgba(239, 68, 68, 0.1)",
-                                borderColor: editedIsActive
-                                  ? "#22c55e"
-                                  : "#ef4444",
-                              }}
-                            >
-                              <View className="flex-row items-center gap-2">
-                                <View
-                                  className="w-3 h-3 rounded-full"
-                                  style={{
-                                    backgroundColor: editedIsActive
-                                      ? "#22c55e"
-                                      : "#ef4444",
+                            <View className="flex-row gap-3">
+                              {[true, false].map((isActive) => (
+                                <Pressable
+                                  key={String(isActive)}
+                                  onPress={() => setEditedIsActive(isActive)}
+                                  accessibilityRole="button"
+                                  accessibilityState={{
+                                    selected: editedIsActive === isActive,
                                   }}
-                                />
-                                <Text
-                                  className="text-sm font-bold"
-                                  style={{ color: theme.text }}
+                                  className="flex-1 items-center rounded-xl border py-3"
+                                  style={{
+                                    borderColor:
+                                      editedIsActive === isActive
+                                        ? isActive
+                                          ? theme.primary
+                                          : theme.danger
+                                        : theme.border,
+                                    backgroundColor:
+                                      editedIsActive === isActive
+                                        ? isActive
+                                          ? theme.primary
+                                          : theme.danger
+                                        : theme.bg,
+                                  }}
                                 >
-                                  {editedIsActive
-                                    ? "Active (On Duty)"
-                                    : "Inactive (On Leave)"}
-                                </Text>
-                              </View>
-                              <Text
-                                className="text-xs font-bold px-2.5 py-1 rounded-lg"
-                                style={{
-                                  backgroundColor: editedIsActive
-                                    ? "#22c55e"
-                                    : "#ef4444",
-                                  color: "#fff",
-                                }}
-                              >
-                                {editedIsActive ? "ACTIVE" : "INACTIVE"}
-                              </Text>
-                            </Pressable>
+                                  <Text
+                                    className="font-bold"
+                                    style={{
+                                      color:
+                                        editedIsActive === isActive
+                                          ? "#fff"
+                                          : theme.muted,
+                                    }}
+                                  >
+                                    {isActive ? "Active" : "Inactive"}
+                                  </Text>
+                                </Pressable>
+                              ))}
+                            </View>
                           </View>
                         </View>
                       ) : (
-                        <View className="flex-row items-center justify-between mt-0.5">
+                        <View className="gap-1 mt-0.5">
                           <Text
                             className="text-lg font-bold"
                             style={{ color: theme.text }}
                           >
-                            {waiter.name}
+                            {waiter.name || "Unnamed waiter"}
                           </Text>
-                          <View
-                            className="px-2.5 py-1 rounded-full flex-row items-center gap-1.5 border"
+                          {waiter.phone ? (
+                            <Text
+                              className="text-sm font-medium"
+                              style={{ color: theme.muted }}
+                            >
+                              📱 {waiter.phone}
+                            </Text>
+                          ) : null}
+                          <Text
+                            className="text-xs font-semibold mt-1"
                             style={{
-                              backgroundColor: isActive
-                                ? "rgba(34, 197, 94, 0.1)"
-                                : "rgba(239, 68, 68, 0.1)",
-                              borderColor: isActive ? "#22c55e" : "#ef4444",
+                              color: isActive ? theme.primary : theme.danger,
                             }}
                           >
-                            <View
-                              className="w-2 h-2 rounded-full"
-                              style={{
-                                backgroundColor: isActive
-                                  ? "#22c55e"
-                                  : "#ef4444",
-                              }}
-                            />
-                            <Text
-                              className="text-xs font-bold"
-                              style={{
-                                color: isActive ? "#22c55e" : "#ef4444",
-                              }}
-                            >
-                              {isActive ? "Active" : "Inactive"}
-                            </Text>
-                          </View>
+                            {isActive ? "Active" : "Inactive"}
+                          </Text>
                         </View>
                       )}
                     </View>

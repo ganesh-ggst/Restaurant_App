@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useRouter, useSegments } from "expo-router";
 import { useCallback, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
@@ -9,21 +9,47 @@ import {
     StoreDetailSection,
 } from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
+import { adminProfileApi } from "../../../services/api/admin-profile";
 import { Card } from "../../ui/Card";
+import { mapAdminStoreDetails } from "../adminProfileSections";
 
 export default function StoreDetailsIndexComponent() {
   const router = useRouter();
+  const segments = useSegments();
   const insets = useSafeAreaInsets();
   const theme = useAppTheme();
+  const isAdmin = segments[0] === "(admin)";
 
   const [storeDetails, setStoreDetails] = useState<StoreDetailSection[]>(
-    MANAGER_MOCK_DATA.storeDetails,
+    isAdmin ? [] : MANAGER_MOCK_DATA.storeDetails,
   );
 
   useFocusEffect(
     useCallback(() => {
-      setStoreDetails([...MANAGER_MOCK_DATA.storeDetails]);
-    }, []),
+      if (!isAdmin) {
+        setStoreDetails([...MANAGER_MOCK_DATA.storeDetails]);
+        return;
+      }
+
+      let isCurrent = true;
+      adminProfileApi
+        .getStoreDetails()
+        .then((data) => {
+          if (isCurrent) setStoreDetails(mapAdminStoreDetails(data));
+        })
+        .catch((error: unknown) => {
+          if (isCurrent) {
+            Alert.alert(
+              "Unable to load store details",
+              error instanceof Error ? error.message : "Please try again.",
+            );
+          }
+        });
+
+      return () => {
+        isCurrent = false;
+      };
+    }, [isAdmin]),
   );
 
   return (
@@ -63,7 +89,7 @@ export default function StoreDetailsIndexComponent() {
               key={section.id}
               onPress={() =>
                 router.push(
-                  `/(manager)/operations/profile/store-details/${section.id}` as any,
+                  `${isAdmin ? "/(admin)" : "/(manager)/operations"}/profile/store-details/${section.id}` as any,
                 )
               }
             >
