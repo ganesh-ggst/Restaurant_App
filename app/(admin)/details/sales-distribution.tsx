@@ -1,223 +1,134 @@
 import { Feather } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
 import { Card } from "../../../components/ui/Card";
-import {
-  FINANCIAL_MOCK_STATE,
-  INITIAL_FLOOR_TABLES,
-  MANAGER_MOCK_DATA,
-} from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
+import {
+  adminDashboardApi,
+  type AdminSalesDistribution,
+} from "../../../services/api/admin-profile";
+
+const formatINR = (amount: number) =>
+  `₹${amount.toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 
 export default function SalesDistributionDetail() {
   const router = useRouter();
   const theme = useAppTheme();
+  const [data, setData] = useState<AdminSalesDistribution | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
 
-  const calculateOrderTotal = (order: any) => {
-    const taxSection = MANAGER_MOCK_DATA.storeDetails?.find(
-      (s: any) => s.id === "sd_tax",
-    );
-    const activeTaxOpt =
-      taxSection?.options?.find((o: any) => o.isActive) ||
-      taxSection?.options?.[0];
-    const taxStr = activeTaxOpt?.value || "5%";
-    const taxRate = parseFloat(taxStr.replace(/[^0-9.]/g, "")) / 100 || 0.05;
-
-    const chargesSection = MANAGER_MOCK_DATA.storeDetails?.find(
-      (s: any) => s.id === "sd_charges",
-    );
-    const activeChargesOpt =
-      chargesSection?.options?.find((o: any) => o.isActive) ||
-      chargesSection?.options?.[0];
-    const chargesText =
-      activeChargesOpt?.subValue || activeChargesOpt?.value || "";
-
-    const getChargeVal = (prefix: string, defaultVal: number) => {
-      const regex = new RegExp(`${prefix}[^0-9]*([0-9]+)`, "i");
-      const match = chargesText.match(regex);
-      return match ? parseFloat(match[1]) : defaultVal;
-    };
-
-    const packaging = getChargeVal("Packaging", 20);
-    const platform = getChargeVal("Platform", 10);
-    const deliveryFeeBase = getChargeVal("Delivery", 30);
-
-    const itemSubtotal = order.items.reduce(
-      (sum: number, item: any) => sum + item.price * (item.qty || 1),
-      0,
-    );
-
-    const isDelivery = order.mode?.toLowerCase() === "delivery";
-    const deliveryFee = isDelivery
-      ? itemSubtotal > 99
-        ? 0
-        : deliveryFeeBase
-      : 0;
-    const packagingFee = packaging;
-    const platformFee = isDelivery ? platform : 0;
-    const gstAmount = Math.round(itemSubtotal * taxRate * 100) / 100;
-    const total =
-      itemSubtotal + packagingFee + platformFee + deliveryFee + gstAmount;
-
-    return Math.round(total * 100) / 100;
-  };
-
-  const [channels, setChannels] = useState<any[]>([]);
+  const load = useCallback(async (forceRefresh = false) => {
+    if (forceRefresh) setRefreshing(true);
+    else if (!data) setLoading(true);
+    setError("");
+    try {
+      setData(await adminDashboardApi.getSalesDistribution(forceRefresh));
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Unable to load sales distribution.",
+      );
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [data]);
 
   useFocusEffect(
     useCallback(() => {
-      let tableCompletedSum = FINANCIAL_MOCK_STATE.completedTableBills || 0;
-      let completedTableCount =
-        (FINANCIAL_MOCK_STATE as any).completedTableTransactions?.length || 0;
-
-      INITIAL_FLOOR_TABLES.forEach((t) => {
-        if (t.status === "available" && t.currentOrder?.totalAmount) {
-          tableCompletedSum += t.currentOrder.totalAmount;
-          completedTableCount += 1;
-        }
-      });
-
-      const baseDineInAmt =
-        FINANCIAL_MOCK_STATE.salesDistribution.dineIn.amount +
-        tableCompletedSum;
-      const baseDineInOrders =
-        FINANCIAL_MOCK_STATE.salesDistribution.dineIn.orders +
-        completedTableCount;
-
-      let deliveryOrdersSum = 0;
-      let deliveryOrdersCount = 0;
-      let takeawayOrdersSum = 0;
-      let takeawayOrdersCount = 0;
-
-      (MANAGER_MOCK_DATA.orders || []).forEach((o: any) => {
-        if (o.status === "completed") {
-          const ordTotal = calculateOrderTotal(o);
-          const mode = o.mode?.trim().toLowerCase();
-          if (mode === "delivery") {
-            deliveryOrdersSum += ordTotal;
-            deliveryOrdersCount += 1;
-          } else if (mode === "takeaway") {
-            takeawayOrdersSum += ordTotal;
-            takeawayOrdersCount += 1;
-          }
-        }
-      });
-
-      const deliveryAmt =
-        FINANCIAL_MOCK_STATE.salesDistribution.delivery.amount +
-        deliveryOrdersSum;
-      const deliveryOrders =
-        FINANCIAL_MOCK_STATE.salesDistribution.delivery.orders +
-        deliveryOrdersCount;
-
-      const takeawayAmt =
-        FINANCIAL_MOCK_STATE.salesDistribution.takeaway.amount +
-        takeawayOrdersSum;
-      const takeawayOrders =
-        FINANCIAL_MOCK_STATE.salesDistribution.takeaway.orders +
-        takeawayOrdersCount;
-
-      const totalRevenue = baseDineInAmt + deliveryAmt + takeawayAmt;
-
-      const dineInPct =
-        totalRevenue > 0
-          ? Math.round((baseDineInAmt / totalRevenue) * 100)
-          : 60;
-      const deliveryPct =
-        totalRevenue > 0 ? Math.round((deliveryAmt / totalRevenue) * 100) : 25;
-      const takeawayPct = Math.max(0, 100 - dineInPct - deliveryPct);
-
-      setChannels([
-        {
-          channel: "Dine-In Tables",
-          share: `${dineInPct}%`,
-          rev: `₹${baseDineInAmt.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-          orders: `${baseDineInOrders} Orders`,
-          color: theme.primary,
-        },
-        {
-          channel: "Online Delivery",
-          share: `${deliveryPct}%`,
-          rev: `₹${deliveryAmt.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-          orders: `${deliveryOrders} Orders`,
-          color: "#22c55e",
-        },
-        {
-          channel: "Takeaway Orders",
-          share: `${takeawayPct}%`,
-          rev: `₹${takeawayAmt.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-          orders: `${takeawayOrders} Orders`,
-          color: "#eab308",
-        },
-      ]);
-    }, []),
+      if (!data) void load();
+    }, [data, load]),
   );
 
+  const colors = [theme.primary, "#22c55e", "#eab308"];
+
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+    <SafeAreaView className="flex-1" style={{ backgroundColor: theme.bg }}>
       <View
-        className="flex-row items-center px-4 py-4 border-b"
+        className="flex-row items-center border-b px-4 py-4"
         style={{ backgroundColor: theme.card, borderBottomColor: theme.border }}
       >
-        <Pressable onPress={() => router.back()} className="mr-4 p-1">
+        <Pressable onPress={() => router.back()} className="mr-4 p-1" accessibilityRole="button">
           <Feather name="arrow-left" size={24} color={theme.text} />
         </Pressable>
         <Text className="text-xl font-black" style={{ color: theme.text }}>
-          Sales Distribution Breakdown
+          Sales Distribution
         </Text>
       </View>
-      <ScrollView contentContainerStyle={{ padding: 20 }}>
-        <Card
-          variant="default"
-          className="p-5 rounded-3xl border-0 mb-4 shadow-lg"
-          style={{ backgroundColor: theme.card }}
-        >
-          <Text
-            className="text-base font-black mb-4"
-            style={{ color: theme.text }}
+      <ScrollView
+        contentContainerStyle={{ padding: 20, paddingBottom: 36 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void load(true)}
+            tintColor={theme.primary}
+            colors={[theme.primary]}
+          />
+        }
+      >
+        {loading ? (
+          <ActivityIndicator className="mt-8" size="large" color={theme.primary} />
+        ) : error ? (
+          <View className="items-center py-8">
+            <Text className="mb-4 text-center" style={{ color: theme.danger }}>{error}</Text>
+            <Pressable onPress={() => void load(true)} accessibilityRole="button">
+              <Text className="font-bold" style={{ color: theme.primary }}>Try again</Text>
+            </Pressable>
+          </View>
+        ) : data ? (
+          <Card
+            variant="default"
+            className="mb-4 rounded-3xl border-0 p-5"
+            style={{ backgroundColor: theme.card }}
           >
-            Channel-wise Contribution (Live)
-          </Text>
-          {channels.map((c, i) => (
-            <View
-              key={i}
-              className="py-4 border-b"
-              style={{ borderBottomColor: theme.border }}
-            >
-              <View className="flex-row justify-between mb-1 items-center">
-                <Text
-                  className="text-sm font-bold"
-                  style={{ color: theme.text }}
-                >
-                  {c.channel} ({c.share})
-                </Text>
-                <Text className="text-sm font-black" style={{ color: c.color }}>
-                  {c.rev}
-                </Text>
-              </View>
-              <Text
-                className="text-xs font-semibold mb-2"
-                style={{ color: theme.muted }}
-              >
-                Volume: {c.orders}
-              </Text>
+            <Text className="mb-1 text-xs font-bold uppercase" style={{ color: theme.muted }}>
+              {data.period.replace(/_/g, " ")} · Total revenue
+            </Text>
+            <Text className="mb-1 text-3xl font-black" style={{ color: theme.primary }}>
+              {formatINR(data.totalRevenue)}
+            </Text>
+            <Text className="mb-4 text-sm font-semibold" style={{ color: theme.muted }}>
+              {data.totalOrderCount} orders
+            </Text>
+            {data.items.map((item, index) => (
               <View
-                className="h-2.5 rounded-full overflow-hidden"
-                style={{ backgroundColor: theme.bg }}
+                key={item.fulfillmentType}
+                className="border-b py-4"
+                style={{ borderBottomColor: theme.border }}
               >
-                <View
-                  className="h-full rounded-full"
-                  style={{
-                    width: c.share as any,
-                    backgroundColor: c.color,
-                  }}
-                />
+                <View className="mb-2 flex-row items-center justify-between">
+                  <Text className="mr-3 flex-1 text-sm font-bold" style={{ color: theme.text }}>
+                    {item.label} ({item.percentage}%)
+                  </Text>
+                  <Text className="text-sm font-black" style={{ color: colors[index % colors.length] }}>
+                    {formatINR(item.revenue)}
+                  </Text>
+                </View>
+                <Text className="mb-2 text-xs font-semibold" style={{ color: theme.muted }}>
+                  {item.orderCount} orders{item.volume === undefined ? "" : ` · Volume ${item.volume}`}
+                </Text>
+                <View className="h-2.5 overflow-hidden rounded-full" style={{ backgroundColor: theme.bg }}>
+                  <View
+                    className="h-full rounded-full"
+                    style={{
+                      width: `${Math.max(0, Math.min(100, item.percentage))}%`,
+                      backgroundColor: colors[index % colors.length],
+                    }}
+                  />
+                </View>
               </View>
-            </View>
-          ))}
-        </Card>
+            ))}
+          </Card>
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );

@@ -16,6 +16,8 @@ export interface UserProfile {
   role: string;
   managerType: string | null;
   branchId: string | null;
+  assignedTables?: string[];
+  assignedWaiters?: string[];
   avatarUrl: string;
   isProfileCompleted: boolean;
   isActive: boolean;
@@ -79,6 +81,9 @@ export interface NotificationPage {
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL?.trim().replace(/\/+$/, "");
 const REQUEST_TIMEOUT_MS = 15_000;
+let cachedUserProfile: UserProfile | null = null;
+let cachedUserProfileToken: string | null = null;
+let userProfileRequest: Promise<UserProfile> | null = null;
 
 async function request<T>(
   method: "GET" | "POST" | "PATCH" | "DELETE",
@@ -151,10 +156,30 @@ function requireData<T>(
 
 export const profileApi = {
   async getMyProfile(): Promise<UserProfile> {
-    return requireData(
-      await request<UserProfile>("GET", "/users/me"),
-      "The server did not return your profile.",
-    );
+    const token = await authApi.getAccessToken();
+    if (!token) {
+      throw new Error("Your login session is missing. Please sign in again.");
+    }
+    if (token !== cachedUserProfileToken) {
+      cachedUserProfile = null;
+      userProfileRequest = null;
+      cachedUserProfileToken = token;
+    }
+    if (cachedUserProfile) return cachedUserProfile;
+    if (userProfileRequest) return userProfileRequest;
+
+    userProfileRequest = request<UserProfile>("GET", "/users/me")
+      .then((profile) =>
+        requireData(profile, "The server did not return your profile."),
+      )
+      .then((profile) => {
+        if (cachedUserProfileToken === token) cachedUserProfile = profile;
+        return profile;
+      })
+      .finally(() => {
+        userProfileRequest = null;
+      });
+    return userProfileRequest;
   },
 
   async updateMyProfile(
@@ -162,6 +187,7 @@ export const profileApi = {
     lastName: string,
   ): Promise<UserProfile> {
     await request("PATCH", "/users/me", { firstName, lastName });
+    cachedUserProfile = null;
     return profileApi.getMyProfile();
   },
 

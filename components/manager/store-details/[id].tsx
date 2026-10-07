@@ -1,7 +1,11 @@
 import { Feather } from "@expo/vector-icons";
 import * as Location from "expo-location";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import { useState } from "react";
+import {
+  useLocalSearchParams,
+  useRouter,
+  useSegments,
+} from "expo-router";
+import { useEffect, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -18,25 +22,40 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   MANAGER_MOCK_DATA,
   StoreDetailOption,
+  StoreDetailSection,
 } from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
+import { adminProfileApi } from "../../../services/api/admin-profile";
 import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
+import {
+  createMockProfileItemId,
+  getStoreDetailDefinition,
+  mapAdminStoreDetailSection,
+  updateMockStoreDetailOptions,
+} from "../adminProfileSections";
 
 export default function StoreDetailDetailComponent() {
   const router = useRouter();
+  const segments = useSegments();
   const insets = useSafeAreaInsets();
   const theme = useAppTheme();
   const { id } = useLocalSearchParams<{ id: string }>();
+  const isAdmin = segments[0] === "(admin)";
 
-  const sectionIndex = MANAGER_MOCK_DATA.storeDetails.findIndex(
-    (s) => s.id === id,
-  );
-  const section = MANAGER_MOCK_DATA.storeDetails[sectionIndex];
+  const sectionIndex = isAdmin
+    ? -1
+    : MANAGER_MOCK_DATA.storeDetails.findIndex((s) => s.id === id);
+  const mockSection = isAdmin
+    ? undefined
+    : MANAGER_MOCK_DATA.storeDetails[sectionIndex];
 
   const [options, setOptions] = useState<StoreDetailOption[]>(
-    section?.options || [],
+    mockSection?.options || [],
   );
+  const [adminSection, setAdminSection] = useState<StoreDetailSection>();
+  const [loading, setLoading] = useState(isAdmin);
+  const [saving, setSaving] = useState(false);
   const [editingOption, setEditingOption] = useState<StoreDetailOption | null>(
     null,
   );
@@ -46,8 +65,56 @@ export default function StoreDetailDetailComponent() {
   const [gpsCoordinates, setGpsCoordinates] = useState("");
   const [thirdVal, setThirdVal] = useState("");
   const [fourthVal, setFourthVal] = useState("");
+  const section = isAdmin ? adminSection : mockSection;
+
+  useEffect(() => {
+    if (!isAdmin || !id) return;
+    const definition = getStoreDetailDefinition(id);
+    if (!definition) return;
+
+    let isCurrent = true;
+    adminProfileApi
+      .getStoreDetailSection(definition.key)
+      .then((data) => {
+        if (!isCurrent) return;
+        const nextSection = mapAdminStoreDetailSection(id, data);
+        if (nextSection) {
+          setAdminSection(nextSection);
+          setOptions(nextSection.options);
+        }
+      })
+      .catch((error: unknown) => {
+        if (isCurrent) {
+          Alert.alert(
+            "Unable to load store-detail section",
+            error instanceof Error ? error.message : "Please try again.",
+          );
+        }
+      })
+      .finally(() => {
+        if (isCurrent) setLoading(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [id, isAdmin]);
 
   if (!section) {
+    if (isAdmin && loading) {
+      return (
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: theme.bg,
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <Text style={{ color: theme.muted }}>Loading store details...</Text>
+        </View>
+      );
+    }
     return (
       <View
         style={{
@@ -115,20 +182,59 @@ export default function StoreDetailDetailComponent() {
     } catch (error) {
       Alert.alert(
         "Error",
-        "Could not fetch current location. Please ensure GPS is enabled.",
+        error instanceof Error
+          ? error.message
+          : "Could not fetch current location. Please ensure GPS is enabled.",
       );
     }
   };
 
-  const toggleOption = (optionId: string) => {
-    if (section.selectionType === "single") {
-      section.options.forEach((opt) => (opt.isActive = opt.id === optionId));
-    } else {
-      const opt = section.options.find((o) => o.id === optionId);
-      if (opt) opt.isActive = !opt.isActive;
+  const refreshAdminSection = async () => {
+    if (!isAdmin) return;
+    const definition = getStoreDetailDefinition(id);
+    if (!definition) return;
+    const data = await adminProfileApi.getStoreDetailSection(definition.key);
+    const nextSection = mapAdminStoreDetailSection(id, data);
+    if (nextSection) {
+      setAdminSection(nextSection);
+      setOptions(nextSection.options);
     }
-    MANAGER_MOCK_DATA.storeDetails[sectionIndex] = { ...section };
-    setOptions([...section.options]);
+  };
+
+  const toggleOption = async (optionId: string) => {
+    if (isAdmin) {
+      const definition = getStoreDetailDefinition(id);
+      const option = options.find((item) => item.id === optionId);
+      if (!definition || !option) return;
+      try {
+        await adminProfileApi.setStoreDetailActive(
+          definition.key,
+          optionId,
+          !option.isActive,
+        );
+        await refreshAdminSection();
+      } catch (error) {
+        Alert.alert(
+          "Unable to update active store detail",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      }
+      return;
+    }
+
+    const nextOptions =
+      section.selectionType === "single"
+        ? section.options.map((option) => ({
+            ...option,
+            isActive: option.id === optionId,
+          }))
+        : section.options.map((option) =>
+            option.id === optionId
+              ? { ...option, isActive: !option.isActive }
+              : option,
+          );
+    updateMockStoreDetailOptions(id, nextOptions);
+    setOptions(nextOptions);
   };
 
   const openEditor = (opt?: StoreDetailOption) => {
@@ -156,10 +262,13 @@ export default function StoreDetailDetailComponent() {
       const delMatch = opt.subValue
         ? opt.subValue.match(/Base Delivery Fee: ₹([0-9.]+)/)
         : null;
+      const descriptionMatch = opt.subValue
+        ? opt.subValue.match(/Base Delivery Fee: ₹[0-9.]+(?:\s*•\s*(.*))?$/)
+        : null;
       setAddressLine(packMatch ? packMatch[1] : "");
       setGpsCoordinates(platMatch ? platMatch[1] : "");
       setThirdVal(delMatch ? delMatch[1] : "");
-      setFourthVal("");
+      setFourthVal(descriptionMatch?.[1] || "");
     } else if (isDeliverySection && opt) {
       const titleMatch = opt.value ? opt.value.match(/^(.*?)\s*\(/) : null;
       setAddressLine(titleMatch ? titleMatch[1] : opt.value || "");
@@ -182,7 +291,7 @@ export default function StoreDetailDetailComponent() {
     setIsEditorOpen(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!addressLine.trim() && !isChargesSection && !isDeliverySection) {
       Alert.alert("Error", "Please enter a valid value.");
       return;
@@ -215,30 +324,102 @@ export default function StoreDetailDetailComponent() {
       finalSubValue = `${subtitle} • ${time}`;
     }
 
-    if (editingOption) {
-      const idx = section.options.findIndex((o) => o.id === editingOption.id);
-      if (idx > -1) {
-        section.options[idx].value = finalValue;
-        section.options[idx].subValue = finalSubValue;
-      }
-    } else {
-      const isSingle = section.selectionType === "single";
-      if (isSingle) {
-        section.options.forEach((o) => (o.isActive = false));
+    if (isAdmin) {
+      const definition = getStoreDetailDefinition(id);
+      if (!definition) return;
+
+      let body: Record<string, unknown>;
+      if (id === "sd_rest") {
+        body = { name: addressLine.trim() };
+      } else if (isAddressSection) {
+        const coordinates = gpsCoordinates.match(/-?\d+(?:\.\d+)?/g) || [];
+        body = {
+          address: addressLine.trim(),
+          ...(coordinates.length >= 2
+            ? {
+                location: {
+                  lat: Number(coordinates[0]),
+                  lng: Number(coordinates[1]),
+                },
+              }
+            : {}),
+        };
+      } else if (isTaxSection) {
+        body = {
+          cgstPercentage: Number(addressLine) || 0,
+          sgstPercentage: Number(gpsCoordinates) || 0,
+        };
+      } else if (isWifiSection) {
+        body = { name: addressLine.trim(), password: gpsCoordinates.trim() };
+      } else if (isChargesSection) {
+        body = {
+          packaging: Number(addressLine) || 0,
+          platform: Number(gpsCoordinates) || 0,
+          delivery: Number(thirdVal) || 0,
+          description: fourthVal.trim(),
+        };
+      } else if (isDeliverySection) {
+        body = {
+          name: addressLine.trim(),
+          title: addressLine.trim(),
+          price: Number(gpsCoordinates) || 0,
+          description: thirdVal.trim(),
+          estimatedTimeRange: fourthVal.trim(),
+        };
+      } else {
+        Alert.alert("Unsupported store detail", "This section cannot be saved.");
+        return;
       }
 
-      section.options.unshift({
-        id: `opt_${Date.now()}`,
-        value: finalValue,
-        subValue:
-          finalSubValue ||
-          (isAddressSection ? "GPS: 17.4483° N, 78.3915° E" : ""),
-        isActive: true,
-      });
+      setSaving(true);
+      try {
+        if (editingOption) {
+          await adminProfileApi.updateStoreDetail(
+            definition.key,
+            editingOption.id,
+            body,
+          );
+        } else {
+          await adminProfileApi.createStoreDetail(definition.key, body);
+        }
+        await refreshAdminSection();
+        setIsEditorOpen(false);
+      } catch (error) {
+        Alert.alert(
+          "Unable to save store detail",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      } finally {
+        setSaving(false);
+      }
+      return;
     }
 
-    MANAGER_MOCK_DATA.storeDetails[sectionIndex] = { ...section };
-    setOptions([...section.options]);
+    const nextOptions = editingOption
+      ? section.options.map((option) =>
+          option.id === editingOption.id
+            ? { ...option, value: finalValue, subValue: finalSubValue }
+            : option,
+        )
+      : [
+          {
+            id: createMockProfileItemId(),
+            value: finalValue,
+            subValue:
+              finalSubValue ||
+              (isAddressSection ? "GPS: 17.4483° N, 78.3915° E" : ""),
+            isActive: true,
+          },
+          ...(section.selectionType === "single"
+            ? section.options.map((option) => ({
+                ...option,
+                isActive: false,
+              }))
+            : section.options),
+        ];
+
+    updateMockStoreDetailOptions(id, nextOptions);
+    setOptions(nextOptions);
     setIsEditorOpen(false);
   };
 
@@ -253,16 +434,39 @@ export default function StoreDetailDetailComponent() {
       {
         text: "Delete",
         style: "destructive",
-        onPress: () => {
-          section.options = section.options.filter((o) => o.id !== optionId);
-          if (
-            !section.options.some((o) => o.isActive) &&
-            section.options.length > 0
-          ) {
-            section.options[0].isActive = true;
+      onPress: async () => {
+        if (isAdmin) {
+          const definition = getStoreDetailDefinition(id);
+          if (!definition) return;
+          try {
+            await adminProfileApi.deleteStoreDetail(
+              definition.key,
+              optionId,
+            );
+            await refreshAdminSection();
+          } catch (error) {
+            Alert.alert(
+              "Unable to delete store detail",
+              error instanceof Error ? error.message : "Please try again.",
+            );
           }
-          MANAGER_MOCK_DATA.storeDetails[sectionIndex] = { ...section };
-          setOptions([...section.options]);
+          return;
+        }
+
+        let nextOptions = section.options.filter(
+          (option) => option.id !== optionId,
+        );
+        if (
+          !nextOptions.some((option) => option.isActive) &&
+          nextOptions.length > 0
+        ) {
+          nextOptions = nextOptions.map((option, index) => ({
+            ...option,
+            isActive: index === 0,
+          }));
+        }
+        updateMockStoreDetailOptions(id, nextOptions);
+        setOptions(nextOptions);
         },
       },
     ]);
@@ -292,15 +496,23 @@ export default function StoreDetailDetailComponent() {
         </Text>
         <Pressable
           onPress={() => openEditor()}
+          disabled={loading || saving}
           className="px-3 py-1.5 rounded-xl"
-          style={{ backgroundColor: theme.primary }}
+          style={{ backgroundColor: theme.primary, opacity: loading ? 0.6 : 1 }}
         >
           <Text className="text-xs font-bold text-white">+ Add</Text>
         </Pressable>
       </View>
 
       <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 100 }}>
-        {options.map((opt) => (
+        {loading ? (
+          <Text
+            className="text-base text-center py-8"
+            style={{ color: theme.muted }}
+          >
+            Loading store details...
+          </Text>
+        ) : options.map((opt) => (
           <Card
             key={opt.id}
             variant="default"
@@ -532,6 +744,25 @@ export default function StoreDetailDetailComponent() {
                         %
                       </Text>
                     </View>
+                    <Text
+                      className="text-xs font-bold mb-1 uppercase"
+                      style={{ color: theme.muted }}
+                    >
+                      Description
+                    </Text>
+                    <TextInput
+                      placeholder="Optional charge description"
+                      placeholderTextColor={theme.muted}
+                      value={fourthVal}
+                      onChangeText={setFourthVal}
+                      className="px-4 rounded-xl mb-6 font-semibold"
+                      style={{
+                        backgroundColor: theme.bg,
+                        color: theme.text,
+                        fontSize: 16,
+                        height: 52,
+                      }}
+                    />
                   </>
                 ) : isChargesSection ? (
                   <>
@@ -747,8 +978,9 @@ export default function StoreDetailDetailComponent() {
                     className="py-3 px-6"
                   />
                   <Button
-                    title="Save"
+                    title={saving ? "Saving..." : "Save"}
                     onPress={handleSave}
+                    disabled={saving}
                     className="py-3 px-8"
                   />
                 </View>

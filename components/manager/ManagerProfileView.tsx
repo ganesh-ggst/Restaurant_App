@@ -1,7 +1,5 @@
 import {
   useFocusEffect,
-  useLocalSearchParams,
-  usePathname,
   useRouter,
 } from "expo-router";
 import {
@@ -27,15 +25,24 @@ import {
 } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
 import { useCallback, useState } from "react";
-import { Alert, Modal, Pressable, ScrollView, Text, View } from "react-native";
+import {
+  Alert,
+  Image,
+  Modal,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import {
-  MANAGER_MOCK_DATA,
-  MANAGER_PHONES,
-} from "../../constants/managerMockData";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { useCurrentManager } from "../../hooks/useCurrentManager";
+import {
+  AdminProfile,
+  adminProfileApi,
+  getLocalAdminAvatarUri,
+} from "../../services/api/admin-profile";
 import { Card } from "../ui/Card";
 
 interface ManagerProfileViewProps {
@@ -66,69 +73,77 @@ const SettingsRow = ({
 );
 
 export default function ManagerProfileView({
-  role,
   title = "Manager Profile",
 }: ManagerProfileViewProps) {
   const { colorScheme, setColorScheme } = useColorScheme();
   const currentThemeMode = (colorScheme as string) || "light";
   const router = useRouter();
-  const pathname = usePathname();
-  const { phone } = useLocalSearchParams<{ phone: string }>();
 
   const theme = useAppTheme();
   const dangerColor =
     currentThemeMode === "dark" ? "hsl(7, 85%, 76%)" : "hsl(6, 74%, 54%)";
 
-  const { currentManager } = useCurrentManager();
+  const { currentManager, isAdmin } = useCurrentManager();
+  const phone = currentManager?.phone || "";
   const [showThemeModal, setShowThemeModal] = useState(false);
   const [, forceUpdate] = useState({});
+  const isFloor = currentManager?.managerType?.toLowerCase() === "floor";
+  const [adminProfile, setAdminProfile] = useState<AdminProfile | null>(null);
+  const [adminAvatarUri, setAdminAvatarUri] = useState<string | null>(null);
+  const [profileError, setProfileError] = useState("");
 
   useFocusEffect(
     useCallback(() => {
-      forceUpdate({});
-    }, []),
+      if (!isAdmin) {
+        forceUpdate({});
+        return;
+      }
+
+      let isCurrent = true;
+      adminProfileApi
+        .getProfile()
+        .then(({ admin }) => {
+          if (isCurrent) {
+            setAdminProfile(admin);
+            setAdminAvatarUri(getLocalAdminAvatarUri(admin.id));
+            setProfileError("");
+          }
+        })
+        .catch((error: unknown) => {
+          if (isCurrent) {
+            setProfileError(
+              error instanceof Error
+                ? error.message
+                : "Unable to load the admin profile.",
+            );
+          }
+        });
+
+      return () => {
+        isCurrent = false;
+      };
+    }, [isAdmin]),
   );
 
-  const isFloor = role === "floor" || pathname?.includes("floor");
-  const isAdmin = role === "admin" || pathname?.includes("admin");
-
-  let matchedManager = isAdmin
-    ? (MANAGER_MOCK_DATA as any).managers?.find(
-        (m: any) =>
-          m.role === "admin" ||
-          m.managerType === "admin" ||
-          m.phone === "+919999999990",
-      )
-    : (MANAGER_MOCK_DATA as any).managers?.find(
-        (m: any) => m.phone === phone || m.phone === currentManager?.phone,
-      );
-
-  if (!matchedManager) {
-    const targetType = isAdmin ? "admin" : isFloor ? "floor" : "operations";
-    matchedManager = (MANAGER_MOCK_DATA as any).managers?.find(
-      (m: any) =>
-        m.managerType?.toLowerCase() === targetType ||
-        m.role?.toLowerCase() === targetType,
-    );
-  }
+  const matchedManager = isAdmin ? undefined : currentManager;
 
   const displayFirstName =
-    matchedManager?.name ||
     (isAdmin
-      ? "Restaurant Admin"
+      ? adminProfile?.name ||
+        [adminProfile?.firstName, adminProfile?.lastName]
+          .filter(Boolean)
+          .join(" ")
+      : matchedManager?.name) ||
+    (isAdmin
+      ? "Admin Profile"
       : isFloor
         ? "Floor Manager"
         : "Operations Manager");
 
-  const displayPhone =
-    matchedManager?.phone ||
-    matchedManager?.phoneNumber ||
-    matchedManager?.mobile ||
-    (isAdmin
-      ? MANAGER_PHONES.admin
-      : isFloor
-        ? MANAGER_PHONES.floor_1
-        : MANAGER_PHONES.ops_1);
+  const displayPhone = isAdmin
+    ? adminProfile?.phone || phone
+    : matchedManager?.phone || phone;
+  const displayedAvatar = adminAvatarUri || adminProfile?.avatarUrl;
 
   const handleLogout = () => {
     Alert.alert("Sign Out", "Are you sure you want to sign out?", [
@@ -163,20 +178,39 @@ export default function ManagerProfileView({
             className="w-24 h-24 rounded-full items-center justify-center mb-5 border-[2px]"
             style={{ backgroundColor: theme.bg, borderColor: theme.primary }}
           >
-            <UserRound size={40} color={theme.primary} strokeWidth={1.5} />
+            {isAdmin && displayedAvatar ? (
+              <Image
+                source={{ uri: displayedAvatar }}
+                className="w-full h-full rounded-full"
+                resizeMode="cover"
+              />
+            ) : (
+              <UserRound size={40} color={theme.primary} strokeWidth={1.5} />
+            )}
           </View>
           <Text
             className="text-2xl font-black mb-1"
             style={{ color: theme.text }}
+            numberOfLines={1}
           >
             {displayFirstName}
           </Text>
-          {displayPhone ? (
+          <View style={{ minHeight: 20, justifyContent: "center" }}>
+            {displayPhone ? (
+              <Text
+                className="text-sm font-semibold tracking-wide"
+                style={{ color: theme.muted }}
+              >
+                {displayPhone}
+              </Text>
+            ) : null}
+          </View>
+          {isAdmin && profileError ? (
             <Text
-              className="text-sm font-semibold tracking-wide"
-              style={{ color: theme.muted }}
+              className="text-xs text-center mt-2"
+              style={{ color: theme.danger }}
             >
-              {displayPhone}
+              {profileError}
             </Text>
           ) : null}
         </View>
@@ -324,6 +358,15 @@ export default function ManagerProfileView({
               }}
               theme={theme}
             />
+
+            {isAdmin && (
+              <SettingsRow
+                icon={Store}
+                label="Manage Tables"
+                onPress={() => router.push("/(admin)/profile/tables" as any)}
+                theme={theme}
+              />
+            )}
 
             <SettingsRow
               icon={Bell}

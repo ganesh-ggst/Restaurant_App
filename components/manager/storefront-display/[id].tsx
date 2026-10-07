@@ -1,7 +1,11 @@
 import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import { useState } from "react";
+import {
+  useLocalSearchParams,
+  useRouter,
+  useSegments,
+} from "expo-router";
+import { useEffect, useState } from "react";
 import {
   Alert,
   Image,
@@ -19,24 +23,41 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   MANAGER_MOCK_DATA,
   StoreDetailOption,
+  StoreDetailSection,
 } from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
+import { adminProfileApi } from "../../../services/api/admin-profile";
 import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
+import {
+  createMockProfileItemId,
+  getStorefrontDefinition,
+  mapAdminStorefrontSection,
+  updateMockStorefrontOptions,
+} from "../adminProfileSections";
 
 export default function StorefrontDisplayDetailComponent() {
   const router = useRouter();
+  const segments = useSegments();
   const insets = useSafeAreaInsets();
   const theme = useAppTheme();
   const { id } = useLocalSearchParams<{ id: string }>();
+  const isAdmin = segments[0] === "(admin)";
 
-  const displayList = (MANAGER_MOCK_DATA as any).storefrontDisplay || [];
-  const sectionIndex = displayList.findIndex((s: any) => s.id === id);
-  const section = displayList[sectionIndex];
+  const mockDisplayList = isAdmin
+    ? []
+    : (MANAGER_MOCK_DATA as any).storefrontDisplay || [];
+  const sectionIndex = isAdmin
+    ? -1
+    : mockDisplayList.findIndex((item: any) => item.id === id);
+  const mockSection = isAdmin ? undefined : mockDisplayList[sectionIndex];
 
   const [options, setOptions] = useState<StoreDetailOption[]>(
-    section?.options || [],
+    mockSection?.options || [],
   );
+  const [adminSection, setAdminSection] = useState<StoreDetailSection>();
+  const [loading, setLoading] = useState(isAdmin);
+  const [saving, setSaving] = useState(false);
   const [editingOption, setEditingOption] = useState<StoreDetailOption | null>(
     null,
   );
@@ -45,8 +66,58 @@ export default function StorefrontDisplayDetailComponent() {
   const [val1, setVal1] = useState("");
   const [val2, setVal2] = useState("");
   const [mediaUri, setMediaUri] = useState("");
+  const section = isAdmin ? adminSection : mockSection;
+
+  useEffect(() => {
+    if (!isAdmin || !id) return;
+    const definition = getStorefrontDefinition(id);
+    if (!definition) return;
+
+    let isCurrent = true;
+    adminProfileApi
+      .getStorefrontSection(definition.key)
+      .then((data) => {
+        if (!isCurrent) return;
+        const nextSection = mapAdminStorefrontSection(id, data);
+        if (nextSection) {
+          setAdminSection(nextSection);
+          setOptions(nextSection.options);
+        }
+      })
+      .catch((error: unknown) => {
+        if (isCurrent) {
+          Alert.alert(
+            "Unable to load storefront section",
+            error instanceof Error ? error.message : "Please try again.",
+          );
+        }
+      })
+      .finally(() => {
+        if (isCurrent) setLoading(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [id, isAdmin]);
 
   if (!section) {
+    if (isAdmin && loading) {
+      return (
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: theme.bg,
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <Text style={{ color: theme.muted }}>
+            Loading storefront settings...
+          </Text>
+        </View>
+      );
+    }
     return (
       <View
         style={{
@@ -87,17 +158,52 @@ export default function StorefrontDisplayDetailComponent() {
     }
   };
 
-  const toggleOption = (optionId: string) => {
-    if (section.selectionType === "single") {
-      section.options.forEach(
-        (opt: any) => (opt.isActive = opt.id === optionId),
-      );
-    } else {
-      const opt = section.options.find((o: any) => o.id === optionId);
-      if (opt) opt.isActive = !opt.isActive;
+  const refreshAdminSection = async () => {
+    if (!isAdmin) return;
+    const definition = getStorefrontDefinition(id);
+    if (!definition) return;
+    const data = await adminProfileApi.getStorefrontSection(definition.key);
+    const nextSection = mapAdminStorefrontSection(id, data);
+    if (nextSection) {
+      setAdminSection(nextSection);
+      setOptions(nextSection.options);
     }
-    displayList[sectionIndex] = { ...section };
-    setOptions([...section.options]);
+  };
+
+  const toggleOption = async (optionId: string) => {
+    if (isAdmin) {
+      const definition = getStorefrontDefinition(id);
+      const option = options.find((item) => item.id === optionId);
+      if (!definition || !option) return;
+      try {
+        await adminProfileApi.setStorefrontItemActive(
+          definition.key,
+          optionId,
+          !option.isActive,
+        );
+        await refreshAdminSection();
+      } catch (error) {
+        Alert.alert(
+          "Unable to update storefront item",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      }
+      return;
+    }
+
+    const nextOptions =
+      section.selectionType === "single"
+        ? section.options.map((option: StoreDetailOption) => ({
+            ...option,
+            isActive: option.id === optionId,
+          }))
+        : section.options.map((option: StoreDetailOption) =>
+            option.id === optionId
+              ? { ...option, isActive: !option.isActive }
+              : option,
+          );
+    updateMockStorefrontOptions(id, nextOptions);
+    setOptions(nextOptions);
   };
 
   const openEditor = (opt?: StoreDetailOption) => {
@@ -119,7 +225,7 @@ export default function StorefrontDisplayDetailComponent() {
     setIsEditorOpen(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     let finalValue = val1.trim();
     let finalSubValue = val2.trim();
 
@@ -148,6 +254,13 @@ export default function StorefrontDisplayDetailComponent() {
         );
         return;
       }
+      if (isAdmin && !/^https?:\/\//i.test(mediaUri.trim())) {
+        Alert.alert(
+          "Image URL required",
+          "Enter a public http or https image URL to save featured content.",
+        );
+        return;
+      }
       finalSubValue = `${val2.trim()} • ${mediaUri}`;
     } else if (isEmptySection) {
       if (!val1.trim() || !val2.trim()) {
@@ -168,30 +281,76 @@ export default function StorefrontDisplayDetailComponent() {
       }
     }
 
-    if (editingOption) {
-      const idx = section.options.findIndex(
-        (o: any) => o.id === editingOption.id,
-      );
-      if (idx > -1) {
-        section.options[idx].value = finalValue;
-        section.options[idx].subValue = finalSubValue;
-      }
-    } else {
-      const isSingle = section.selectionType === "single";
-      if (isSingle) {
-        section.options.forEach((o: any) => (o.isActive = false));
+    if (isAdmin) {
+      const definition = getStorefrontDefinition(id);
+      if (!definition) return;
+
+      let body: Record<string, unknown>;
+      if (id === "sf_greetings" || id === "sf_search") {
+        body = { text: val1.trim() };
+      } else if (isFeaturedSection) {
+        body = {
+          title: val1.trim(),
+          subtitle: val2.trim(),
+          imageUrl: mediaUri.trim(),
+          ...(!editingOption ? { badge: "FEATURED", displayOrder: 1 } : {}),
+        };
+      } else if (isEmptySection) {
+        body = { title: val1.trim(), description: val2.trim() };
+      } else if (isCelebrationsSection) {
+        body = { emoji: val1.trim() };
+      } else {
+        Alert.alert("Unsupported storefront section", "This section cannot be saved.");
+        return;
       }
 
-      section.options.unshift({
-        id: `opt_${Date.now()}`,
-        value: finalValue,
-        subValue: finalSubValue,
-        isActive: true,
-      });
+      setSaving(true);
+      try {
+        if (editingOption) {
+          await adminProfileApi.updateStorefrontItem(
+            definition.key,
+            editingOption.id,
+            body,
+          );
+        } else {
+          await adminProfileApi.createStorefrontItem(definition.key, body);
+        }
+        await refreshAdminSection();
+        setIsEditorOpen(false);
+      } catch (error) {
+        Alert.alert(
+          "Unable to save storefront item",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      } finally {
+        setSaving(false);
+      }
+      return;
     }
 
-    displayList[sectionIndex] = { ...section };
-    setOptions([...section.options]);
+    const nextOptions = editingOption
+      ? section.options.map((option: StoreDetailOption) =>
+          option.id === editingOption.id
+            ? { ...option, value: finalValue, subValue: finalSubValue }
+            : option,
+        )
+      : [
+          {
+            id: createMockProfileItemId(),
+            value: finalValue,
+            subValue: finalSubValue,
+            isActive: true,
+          },
+          ...(section.selectionType === "single"
+            ? section.options.map((option: StoreDetailOption) => ({
+                ...option,
+                isActive: false,
+              }))
+            : section.options),
+        ];
+
+    updateMockStorefrontOptions(id, nextOptions);
+    setOptions(nextOptions);
     setIsEditorOpen(false);
   };
 
@@ -206,18 +365,41 @@ export default function StorefrontDisplayDetailComponent() {
       {
         text: "Delete",
         style: "destructive",
-        onPress: () => {
-          section.options = section.options.filter(
-            (o: any) => o.id !== optionId,
+        onPress: async () => {
+          if (isAdmin) {
+            const definition = getStorefrontDefinition(id);
+            if (!definition) return;
+            try {
+              await adminProfileApi.deleteStorefrontItem(
+                definition.key,
+                optionId,
+              );
+              await refreshAdminSection();
+            } catch (error) {
+              Alert.alert(
+                "Unable to delete storefront item",
+                error instanceof Error ? error.message : "Please try again.",
+              );
+            }
+            return;
+          }
+
+          let nextOptions = section.options.filter(
+            (option: StoreDetailOption) => option.id !== optionId,
           );
           if (
-            !section.options.some((o: any) => o.isActive) &&
-            section.options.length > 0
+            !nextOptions.some((option: StoreDetailOption) => option.isActive) &&
+            nextOptions.length > 0
           ) {
-            section.options[0].isActive = true;
+            nextOptions = nextOptions.map(
+              (option: StoreDetailOption, index: number) => ({
+                ...option,
+                isActive: index === 0,
+              }),
+            );
           }
-          displayList[sectionIndex] = { ...section };
-          setOptions([...section.options]);
+          updateMockStorefrontOptions(id, nextOptions);
+          setOptions(nextOptions);
         },
       },
     ]);
@@ -247,15 +429,23 @@ export default function StorefrontDisplayDetailComponent() {
         </Text>
         <Pressable
           onPress={() => openEditor()}
+          disabled={loading || saving}
           className="px-3 py-1.5 rounded-xl"
-          style={{ backgroundColor: theme.primary }}
+          style={{ backgroundColor: theme.primary, opacity: loading ? 0.6 : 1 }}
         >
           <Text className="text-xs font-bold text-white">+ Add</Text>
         </Pressable>
       </View>
 
       <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 100 }}>
-        {options.map((opt) => (
+        {loading ? (
+          <Text
+            className="text-base text-center py-8"
+            style={{ color: theme.muted }}
+          >
+            Loading storefront settings...
+          </Text>
+        ) : options.map((opt) => (
           <Card
             key={opt.id}
             variant="default"
@@ -432,38 +622,56 @@ export default function StorefrontDisplayDetailComponent() {
                       className="text-xs font-bold mb-1 uppercase"
                       style={{ color: theme.muted }}
                     >
-                      Media File (Image / Video) *
+                      {isAdmin ? "Image URL *" : "Media File (Image / Video) *"}
                     </Text>
-                    <Pressable
-                      onPress={pickMedia}
-                      className="p-4 rounded-xl items-center justify-center border border-dashed mb-6"
-                      style={{
-                        borderColor: theme.primary,
-                        backgroundColor: theme.bg,
-                      }}
-                    >
-                      {mediaUri ? (
-                        <View className="items-center">
-                          <Image
-                            source={{ uri: mediaUri }}
-                            className="w-24 h-24 rounded-xl mb-2"
-                          />
+                    {isAdmin ? (
+                      <TextInput
+                        placeholder="https://example.com/image.jpg"
+                        placeholderTextColor={theme.muted + "44"}
+                        value={mediaUri}
+                        onChangeText={setMediaUri}
+                        autoCapitalize="none"
+                        keyboardType="url"
+                        className="px-4 rounded-xl mb-6 font-semibold"
+                        style={{
+                          backgroundColor: theme.bg,
+                          color: theme.text,
+                          fontSize: 16,
+                          height: 52,
+                        }}
+                      />
+                    ) : (
+                      <Pressable
+                        onPress={pickMedia}
+                        className="p-4 rounded-xl items-center justify-center border border-dashed mb-6"
+                        style={{
+                          borderColor: theme.primary,
+                          backgroundColor: theme.bg,
+                        }}
+                      >
+                        {mediaUri ? (
+                          <View className="items-center">
+                            <Image
+                              source={{ uri: mediaUri }}
+                              className="w-24 h-24 rounded-xl mb-2"
+                            />
+                            <Text
+                              className="text-xs font-bold"
+                              style={{ color: theme.primary }}
+                            >
+                              Change Media File 📁
+                            </Text>
+                          </View>
+                        ) : (
                           <Text
                             className="text-xs font-bold"
                             style={{ color: theme.primary }}
                           >
-                            Change Media File 📁
+                            📷 Select Image or Video *
                           </Text>
-                        </View>
-                      ) : (
-                        <Text
-                          className="text-xs font-bold"
-                          style={{ color: theme.primary }}
-                        >
-                          📷 Select Image or Video *
-                        </Text>
-                      )}
-                    </Pressable>
+                        )}
+                      </Pressable>
+                    )}
                   </>
                 ) : isEmptySection ? (
                   <>
@@ -583,8 +791,9 @@ export default function StorefrontDisplayDetailComponent() {
                     className="py-3 px-6"
                   />
                   <Button
-                    title="Save"
+                    title={saving ? "Saving..." : "Save"}
                     onPress={handleSave}
+                    disabled={saving}
                     className="py-3 px-8"
                   />
                 </View>

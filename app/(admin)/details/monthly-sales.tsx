@@ -1,201 +1,138 @@
 import { Feather } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
 import { Card } from "../../../components/ui/Card";
-import {
-  FINANCIAL_MOCK_STATE,
-  INITIAL_FLOOR_TABLES,
-  MANAGER_MOCK_DATA,
-} from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
+import {
+  adminDashboardApi,
+  type AdminMonthlySales,
+} from "../../../services/api/admin-profile";
+
+const formatINR = (amount: number) =>
+  `₹${amount.toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 
 export default function MonthlySalesDetail() {
   const router = useRouter();
   const theme = useAppTheme();
+  const [data, setData] = useState<AdminMonthlySales | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
 
-  const calculateOrderTotal = (order: any) => {
-    const taxSection = MANAGER_MOCK_DATA.storeDetails?.find(
-      (s: any) => s.id === "sd_tax",
-    );
-    const activeTaxOpt =
-      taxSection?.options?.find((o: any) => o.isActive) ||
-      taxSection?.options?.[0];
-    const taxStr = activeTaxOpt?.value || "5%";
-    const taxRate = parseFloat(taxStr.replace(/[^0-9.]/g, "")) / 100 || 0.05;
-
-    const chargesSection = MANAGER_MOCK_DATA.storeDetails?.find(
-      (s: any) => s.id === "sd_charges",
-    );
-    const activeChargesOpt =
-      chargesSection?.options?.find((o: any) => o.isActive) ||
-      chargesSection?.options?.[0];
-    const chargesText =
-      activeChargesOpt?.subValue || activeChargesOpt?.value || "";
-
-    const getChargeVal = (prefix: string, defaultVal: number) => {
-      const regex = new RegExp(`${prefix}[^0-9]*([0-9]+)`, "i");
-      const match = chargesText.match(regex);
-      return match ? parseFloat(match[1]) : defaultVal;
-    };
-
-    const packaging = getChargeVal("Packaging", 20);
-    const platform = getChargeVal("Platform", 10);
-    const deliveryFeeBase = getChargeVal("Delivery", 30);
-
-    const itemSubtotal = order.items.reduce(
-      (sum: number, item: any) => sum + item.price * (item.qty || 1),
-      0,
-    );
-
-    const isDelivery = order.mode?.toLowerCase() === "delivery";
-    const deliveryFee = isDelivery
-      ? itemSubtotal > 99
-        ? 0
-        : deliveryFeeBase
-      : 0;
-    const packagingFee = packaging;
-    const platformFee = isDelivery ? platform : 0;
-    const gstAmount = Math.round(itemSubtotal * taxRate * 100) / 100;
-    const total =
-      itemSubtotal + packagingFee + platformFee + deliveryFee + gstAmount;
-
-    return Math.round(total * 100) / 100;
-  };
-
-  const [monthlySales, setMonthlySales] = useState(
-    FINANCIAL_MOCK_STATE.monthlySalesBase +
-      FINANCIAL_MOCK_STATE.completedTableBills,
-  );
-  const [weeklyBreakdown, setWeeklyBreakdown] = useState<any[]>(
-    (FINANCIAL_MOCK_STATE as any).monthlyBreakdown || [],
-  );
+  const load = useCallback(async (forceRefresh = false) => {
+    if (forceRefresh) setRefreshing(true);
+    else if (!data) setLoading(true);
+    setError("");
+    try {
+      setData(await adminDashboardApi.getMonthlySales(forceRefresh));
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Unable to load monthly sales analytics.",
+      );
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [data]);
 
   useFocusEffect(
     useCallback(() => {
-      let tableCompletedSum = 0;
-      INITIAL_FLOOR_TABLES.forEach((t) => {
-        if (t.status === "available" && t.currentOrder?.totalAmount) {
-          tableCompletedSum += t.currentOrder.totalAmount;
-        }
-      });
-
-      let completedOrdersSum = 0;
-      (MANAGER_MOCK_DATA.orders || []).forEach((o: any) => {
-        if (o.status === "completed") {
-          completedOrdersSum += calculateOrderTotal(o);
-        }
-      });
-
-      const extraRevenue =
-        (FINANCIAL_MOCK_STATE.completedTableBills || 0) +
-        tableCompletedSum +
-        completedOrdersSum;
-
-      const calculatedMonthly =
-        FINANCIAL_MOCK_STATE.monthlySalesBase + extraRevenue;
-
-      setMonthlySales(calculatedMonthly);
-
-      if ((FINANCIAL_MOCK_STATE as any).monthlyBreakdown) {
-        const weeks = [...(FINANCIAL_MOCK_STATE as any).monthlyBreakdown];
-        if (weeks.length > 0) {
-          weeks[weeks.length - 1] = {
-            ...weeks[weeks.length - 1],
-            amount: weeks[weeks.length - 1].amount + extraRevenue,
-          };
-        }
-        setWeeklyBreakdown(weeks);
-      }
-    }, []),
+      if (!data) void load();
+    }, [data, load]),
   );
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+    <SafeAreaView className="flex-1" style={{ backgroundColor: theme.bg }}>
       <View
-        className="flex-row items-center px-4 py-4 border-b"
+        className="flex-row items-center border-b px-4 py-4"
         style={{ backgroundColor: theme.card, borderBottomColor: theme.border }}
       >
-        <Pressable onPress={() => router.back()} className="mr-4 p-1">
+        <Pressable onPress={() => router.back()} className="mr-4 p-1" accessibilityRole="button">
           <Feather name="arrow-left" size={24} color={theme.text} />
         </Pressable>
         <Text className="text-xl font-black" style={{ color: theme.text }}>
           Monthly Sales Analytics
         </Text>
       </View>
-      <ScrollView contentContainerStyle={{ padding: 20 }}>
-        <Card
-          variant="default"
-          className="p-5 rounded-3xl border-0 mb-4 shadow-lg"
-          style={{ backgroundColor: theme.card }}
-        >
-          <Text
-            className="text-xs font-bold uppercase mb-1"
-            style={{ color: theme.muted }}
+      <ScrollView
+        contentContainerStyle={{ padding: 20, paddingBottom: 36 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void load(true)}
+            tintColor={theme.primary}
+            colors={[theme.primary]}
+          />
+        }
+      >
+        {loading ? (
+          <ActivityIndicator className="mt-8" size="large" color={theme.primary} />
+        ) : error ? (
+          <View className="items-center py-8">
+            <Text className="mb-4 text-center" style={{ color: theme.danger }}>{error}</Text>
+            <Pressable onPress={() => void load(true)} accessibilityRole="button">
+              <Text className="font-bold" style={{ color: theme.primary }}>Try again</Text>
+            </Pressable>
+          </View>
+        ) : data ? (
+          <Card
+            variant="default"
+            className="mb-4 rounded-3xl border-0 p-5"
+            style={{ backgroundColor: theme.card }}
           >
-            Total Month-to-Date Revenue
-          </Text>
-          <Text
-            className="text-3xl font-black mb-4"
-            style={{ color: theme.primary }}
-          >
-            ₹
-            {monthlySales.toLocaleString("en-IN", {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })}
-          </Text>
-          {weeklyBreakdown.map((w: any, i: number) => {
-            const isCurrentWeek = i === weeklyBreakdown.length - 1;
-            return (
-              <View
-                key={i}
-                className="py-4 px-4 mb-3 rounded-2xl border flex-row justify-between items-center"
-                style={{
-                  backgroundColor: isCurrentWeek
-                    ? theme.isDark
-                      ? "rgba(59, 130, 246, 0.12)"
-                      : "rgba(59, 130, 246, 0.06)"
-                    : theme.bg,
-                  borderColor: isCurrentWeek ? theme.primary : theme.border,
-                }}
-              >
-                <View className="flex-1 mr-3">
+            <Text className="mb-1 text-xs font-bold uppercase" style={{ color: theme.muted }}>
+              Month-to-Date Revenue · {data.period.label}
+            </Text>
+            <Text className="mb-2 text-3xl font-black" style={{ color: theme.primary }}>
+              {formatINR(data.totalMonthToDateRevenue)}
+            </Text>
+            <Text className="mb-4 text-sm font-semibold" style={{ color: theme.muted }}>
+              {data.totalOrderCount} orders
+            </Text>
+            {data.weeks.map((week) => {
+              const isLive = week.status.toUpperCase() === "LIVE";
+              return (
+                <View
+                  key={week.week}
+                  className="mb-3 flex-row items-center justify-between rounded-2xl border px-4 py-4"
+                  style={{
+                    backgroundColor: isLive ? theme.secondaryBg : theme.bg,
+                    borderColor: isLive ? theme.primary : theme.border,
+                  }}
+                >
+                  <View className="mr-3 flex-1">
+                    <Text className="mb-1 text-sm font-bold" style={{ color: theme.text }}>
+                      {week.label}
+                    </Text>
+                    <Text className="text-xs font-semibold" style={{ color: theme.muted }}>
+                      {week.orderCount} orders
+                    </Text>
+                    <Text className="mt-1 text-base font-black" style={{ color: theme.primary }}>
+                      {formatINR(week.revenue)}
+                    </Text>
+                  </View>
                   <Text
-                    className="text-sm font-bold mb-1"
-                    style={{ color: theme.text }}
-                  >
-                    {w.label}
-                  </Text>
-                  <Text
-                    className="text-base font-black"
-                    style={{ color: theme.primary }}
-                  >
-                    ₹
-                    {w.amount.toLocaleString("en-IN", {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
-                  </Text>
-                </View>
-                <View className="items-end">
-                  <Text
-                    className="text-xs font-extrabold uppercase px-3 py-1 rounded-full"
+                    className="rounded-full px-3 py-1 text-[10px] font-extrabold"
                     style={{
-                      color: isCurrentWeek ? "#3b82f6" : "#22c55e",
-                      backgroundColor: isCurrentWeek
-                        ? "rgba(59, 130, 246, 0.15)"
-                        : "rgba(34, 197, 94, 0.15)",
+                      color: isLive ? theme.primary : theme.muted,
+                      backgroundColor: isLive ? theme.card : theme.secondaryBg,
                     }}
                   >
-                    {isCurrentWeek ? "LIVE" : w.status || "Verified"}
+                    {week.status}
                   </Text>
                 </View>
-              </View>
-            );
-          })}
-        </Card>
+              );
+            })}
+          </Card>
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );

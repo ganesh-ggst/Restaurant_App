@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useRouter, useSegments } from "expo-router";
 import { useCallback, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
@@ -9,23 +9,49 @@ import {
     StoreDetailSection,
 } from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
+import { adminProfileApi } from "../../../services/api/admin-profile";
 import { Card } from "../../ui/Card";
+import { mapAdminStorefrontDisplay } from "../adminProfileSections";
 
 export default function StorefrontDisplayIndexComponent() {
   const router = useRouter();
+  const segments = useSegments();
   const insets = useSafeAreaInsets();
   const theme = useAppTheme();
+  const isAdmin = segments[0] === "(admin)";
 
   const [displayItems, setDisplayItems] = useState<StoreDetailSection[]>(
-    (MANAGER_MOCK_DATA as any).storefrontDisplay || [],
+    isAdmin ? [] : (MANAGER_MOCK_DATA as any).storefrontDisplay || [],
   );
 
   useFocusEffect(
     useCallback(() => {
-      setDisplayItems([
-        ...((MANAGER_MOCK_DATA as any).storefrontDisplay || []),
-      ]);
-    }, []),
+      if (!isAdmin) {
+        setDisplayItems([
+          ...((MANAGER_MOCK_DATA as any).storefrontDisplay || []),
+        ]);
+        return;
+      }
+
+      let isCurrent = true;
+      adminProfileApi
+        .getStorefrontDisplay()
+        .then((data) => {
+          if (isCurrent) setDisplayItems(mapAdminStorefrontDisplay(data));
+        })
+        .catch((error: unknown) => {
+          if (isCurrent) {
+            Alert.alert(
+              "Unable to load storefront display",
+              error instanceof Error ? error.message : "Please try again.",
+            );
+          }
+        });
+
+      return () => {
+        isCurrent = false;
+      };
+    }, [isAdmin]),
   );
 
   return (
@@ -64,7 +90,7 @@ export default function StorefrontDisplayIndexComponent() {
               key={section.id}
               onPress={() =>
                 router.push(
-                  `/(manager)/operations/profile/storefront-display/${section.id}` as any,
+                  `${isAdmin ? "/(admin)" : "/(manager)/operations"}/profile/storefront-display/${section.id}` as any,
                 )
               }
             >
