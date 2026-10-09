@@ -1,34 +1,9 @@
-import {
-  MANAGER_MOCK_DATA,
+import type {
   StoreDetailOption,
   StoreDetailSection,
 } from "../../constants/managerMockData";
 
 type DataRecord = Record<string, unknown>;
-let nextMockItemId = 0;
-
-export function createMockProfileItemId(): string {
-  nextMockItemId += 1;
-  return `profile-item-${nextMockItemId}`;
-}
-
-export function updateMockStoreDetailOptions(
-  id: string,
-  options: StoreDetailOption[],
-): void {
-  MANAGER_MOCK_DATA.storeDetails = MANAGER_MOCK_DATA.storeDetails.map(
-    (section) => (section.id === id ? { ...section, options } : section),
-  );
-}
-
-export function updateMockStorefrontOptions(
-  id: string,
-  options: StoreDetailOption[],
-): void {
-  MANAGER_MOCK_DATA.storefrontDisplay = MANAGER_MOCK_DATA.storefrontDisplay.map(
-    (section) => (section.id === id ? { ...section, options } : section),
-  );
-}
 
 const storeDetailDefinitions = [
   { id: "sd_rest", key: "restaurantNames", title: "Restaurant Name", selectionType: "single" },
@@ -112,10 +87,15 @@ function toStoreDetailOption(
       ({ value, subValue } = formatAddress(item));
       break;
     case "taxDetails": {
-      const cgst = numeric(item.cgstPercentage);
-      const sgst = numeric(item.sgstPercentage);
-      value = `${cgst + sgst}%`;
-      subValue = `CGST: ${cgst}% + SGST: ${sgst}%`;
+      if (item.gstPercentage !== undefined) {
+        value = `${numeric(item.gstPercentage)}%`;
+        subValue = `GST: ${numeric(item.gstPercentage)}%`;
+      } else {
+        const cgst = numeric(item.cgstPercentage);
+        const sgst = numeric(item.sgstPercentage);
+        value = `${cgst + sgst}%`;
+        subValue = `CGST: ${cgst}% + SGST: ${sgst}%`;
+      }
       break;
     }
     case "wifiConnections":
@@ -213,6 +193,7 @@ function toStorefrontOption(
       break;
     case "celebrationEmojis":
       value = text(item.emoji);
+      subValue = text(item.description);
       break;
   }
   return { id: idOf(item, index), value, subValue, isActive: activeOf(item) };

@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
-import { useLocalSearchParams, usePathname, useRouter, useSegments } from "expo-router";
+import { useRouter, useSegments } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -14,13 +14,13 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import {
-  MANAGER_MOCK_DATA,
-  MANAGER_PHONES,
-  updateMockManagerName,
-} from "../../constants/managerMockData";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { useCurrentManager } from "../../hooks/useCurrentManager";
+import {
+  getLocalManagerAvatarUri,
+  managerProfileApi,
+  setLocalManagerAvatarUri,
+} from "../../services/api/manager-profile";
 import {
   AdminProfile,
   adminProfileApi,
@@ -37,54 +37,41 @@ export default function PersonalInfoModal({
 }: PersonalInfoModalProps = {}) {
   const router = useRouter();
   const theme = useAppTheme();
-  const pathname = usePathname();
   const segments = useSegments();
-  const { phone } = useLocalSearchParams<{ phone: string }>();
-  const { currentManager } = useCurrentManager();
+  const {
+    currentManager,
+    loading: managerLoading,
+    error: managerError,
+    refreshCurrentManager,
+  } = useCurrentManager();
   const isAdmin =
     role === "admin" ||
     (role !== "manager" &&
       (segments[0] === "(admin)" || currentManager?.role === "admin"));
 
-  const mockManagers = isAdmin
-    ? []
-    : (MANAGER_MOCK_DATA as any).managers || [];
-  const phoneMatch = mockManagers.find(
-    (manager: any) =>
-      manager.phone === phone || manager.phone === currentManager?.phone,
-  );
-  const isFloor =
-    pathname?.includes("floor") || currentManager?.managerType === "floor";
-  const targetType = isFloor ? "floor" : "operations";
-  const roleMatch = mockManagers.find(
-      (manager: any) => manager.managerType?.toLowerCase() === targetType,
-  );
-  const matchedManager = isAdmin
-    ? phoneMatch
-    : phoneMatch ||
-      roleMatch || {
-      name: "RAM SITA",
-      phone: MANAGER_PHONES.admin,
-      role: "admin",
-      managerType: "admin",
-    };
   const [adminProfile, setAdminProfile] = useState<AdminProfile | null>(null);
   const [adminFirstName, setAdminFirstName] = useState("");
   const [adminLastName, setAdminLastName] = useState("");
   const [adminAvatarUri, setAdminAvatarUri] = useState<string | null>(null);
+  const [managerAvatarUri, setManagerAvatarUri] = useState<string | null>(null);
   const [loading, setLoading] = useState(isAdmin);
   const [saving, setSaving] = useState(false);
-  const [editFirstName, setEditFirstName] = useState(
-    matchedManager?.name || "",
-  );
+  const [managerFirstNameEdit, setManagerFirstNameEdit] = useState<
+    string | null
+  >(null);
+  const [managerLastNameEdit, setManagerLastNameEdit] = useState<
+    string | null
+  >(null);
+  const managerFirstName =
+    managerFirstNameEdit ?? currentManager?.firstName ?? "";
+  const managerLastName = managerLastNameEdit ?? currentManager?.lastName ?? "";
+  const managerAvatar =
+    managerAvatarUri ||
+    (currentManager ? getLocalManagerAvatarUri(currentManager.id) : null);
 
   const displayPhone = isAdmin
     ? adminProfile?.phone || ""
-    : matchedManager?.phone ||
-      matchedManager?.phoneNumber ||
-      matchedManager?.mobile ||
-      MANAGER_PHONES.ops_1;
-
+    : currentManager?.phone || "";
   useEffect(() => {
     if (!isAdmin) return;
 
@@ -136,15 +123,25 @@ export default function PersonalInfoModal({
 
       if (!result.canceled && result.assets[0]) {
         const uri = result.assets[0].uri;
-        if (!adminProfile?.id) {
+        if (isAdmin && !adminProfile?.id) {
           Alert.alert(
             "Profile unavailable",
             "Load your admin profile before choosing a picture.",
           );
           return;
         }
-        setLocalAdminAvatarUri(adminProfile.id, uri);
-        setAdminAvatarUri(uri);
+        if (isAdmin && adminProfile) {
+          setLocalAdminAvatarUri(adminProfile.id, uri);
+          setAdminAvatarUri(uri);
+        } else if (!isAdmin && currentManager) {
+          setLocalManagerAvatarUri(currentManager.id, uri);
+          setManagerAvatarUri(uri);
+        } else {
+          Alert.alert(
+            "Profile unavailable",
+            "Load your manager profile before choosing a picture.",
+          );
+        }
       }
     } catch (error) {
       Alert.alert(
@@ -182,16 +179,29 @@ export default function PersonalInfoModal({
       return;
     }
 
-    if (!editFirstName.trim()) {
-      Alert.alert("Error", "Manager name cannot be empty.");
+    if (!managerFirstName.trim() || !currentManager) {
+      Alert.alert("Error", "First name cannot be empty.");
       return;
     }
 
-    if (matchedManager?.id) {
-      updateMockManagerName(matchedManager.id, editFirstName.trim());
+    setSaving(true);
+    try {
+      const updatedManager = await managerProfileApi.updatePersonalInfo(
+        managerFirstName.trim(),
+        managerLastName.trim(),
+      );
+      setManagerFirstNameEdit(updatedManager.firstName || "");
+      setManagerLastNameEdit(updatedManager.lastName || "");
+      await refreshCurrentManager();
+      Alert.alert("Success", "Personal information saved successfully.");
+    } catch (error) {
+      Alert.alert(
+        "Unable to save profile",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setSaving(false);
     }
-
-    Alert.alert("Success", "Changes saved successfully!");
   };
 
   const inputStyle = {
@@ -300,23 +310,79 @@ export default function PersonalInfoModal({
               </>
             )}
           </>
+        ) : managerLoading ? (
+          <ActivityIndicator color={theme.primary} className="my-5" />
+        ) : !currentManager ? (
+          <Text className="py-5 text-center" style={{ color: theme.danger }}>
+            {managerError || "Unable to load your manager profile."}
+          </Text>
         ) : (
-          <View className="mb-6">
-            <Text
-              className="text-sm font-bold mb-2 ml-1"
-              style={{ color: theme.muted }}
+          <>
+            <Pressable
+              onPress={handlePickAvatar}
+              disabled={saving}
+              className="self-center mb-7"
+              accessibilityRole="button"
+              accessibilityLabel="Choose manager profile picture"
             >
-              Manager Name
-            </Text>
-            <TextInput
-              value={editFirstName}
-              onChangeText={setEditFirstName}
-              style={inputStyle}
-              className="px-4 rounded-2xl border"
-              placeholderTextColor={theme.muted}
-              placeholder="Enter Name"
-            />
-          </View>
+              <View
+                className="w-28 h-28 rounded-full items-center justify-center border-2 overflow-hidden"
+                style={{ backgroundColor: theme.bg, borderColor: theme.primary }}
+              >
+                {managerAvatar || currentManager.avatarUrl ? (
+                  <Image
+                    source={{
+                      uri: managerAvatar || currentManager.avatarUrl || "",
+                    }}
+                    className="w-full h-full"
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <Feather name="user" size={44} color={theme.primary} />
+                )}
+              </View>
+              <View
+                className="absolute bottom-0 right-0 rounded-full p-2"
+                style={{ backgroundColor: theme.primary }}
+              >
+                <Feather name="camera" size={16} color="#fff" />
+              </View>
+            </Pressable>
+            <View className="mb-5">
+              <Text
+                className="text-sm font-bold mb-2 ml-1"
+                style={{ color: theme.muted }}
+              >
+                First Name
+              </Text>
+              <TextInput
+                value={managerFirstName}
+                onChangeText={setManagerFirstNameEdit}
+                style={inputStyle}
+                className="px-4 rounded-2xl border"
+                placeholderTextColor={theme.muted}
+                placeholder="Enter first name"
+                autoCapitalize="words"
+              />
+            </View>
+            <View className="mb-5">
+              <Text
+                className="text-sm font-bold mb-2 ml-1"
+                style={{ color: theme.muted }}
+              >
+                Last Name
+              </Text>
+              <TextInput
+                value={managerLastName}
+                onChangeText={setManagerLastNameEdit}
+                style={inputStyle}
+                className="px-4 rounded-2xl border"
+                placeholderTextColor={theme.muted}
+                placeholder="Enter last name"
+                autoCapitalize="words"
+              />
+            </View>
+          </>
         )}
 
         <View className="mb-8">
@@ -342,7 +408,11 @@ export default function PersonalInfoModal({
 
         <Pressable
           onPress={handleSave}
-          disabled={saving || (isAdmin && loading)}
+          disabled={
+            saving ||
+            loading ||
+            (!isAdmin && (managerLoading || !currentManager))
+          }
           style={{ backgroundColor: theme.primary, opacity: saving ? 0.7 : 1 }}
           className="py-4 rounded-2xl items-center shadow-sm"
         >

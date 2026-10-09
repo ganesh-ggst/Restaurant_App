@@ -17,7 +17,11 @@ import { Card } from "../../components/ui/Card";
 import { Input } from "../../components/ui/Input";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { api } from "../../services/api";
-import { getAuthDestination } from "../../services/authRouting";
+import { managerProfileApi } from "../../services/api/manager-profile";
+import {
+  getAuthDestination,
+  isKnownManagerType,
+} from "../../services/authRouting";
 
 export default function BasicDetailsScreen() {
   const router = useRouter();
@@ -39,9 +43,16 @@ export default function BasicDetailsScreen() {
         firstName.trim(),
         lastName.trim(),
       );
+      const managerType =
+        result.user.role.toLowerCase() === "manager"
+          ? (isKnownManagerType(result.user.managerType)
+              ? result.user.managerType
+              : null) ||
+            (await managerProfileApi.getProfile()).manager.managerType
+          : result.user.managerType;
 
       router.replace(
-        `${getAuthDestination(result.user.role)}?phone=${encodeURIComponent(phone)}` as any,
+        `${getAuthDestination(result.user.role, managerType)}?phone=${encodeURIComponent(phone)}` as any,
       );
     } catch (saveError) {
       setError(

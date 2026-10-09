@@ -1,15 +1,22 @@
 import { Feather } from "@expo/vector-icons";
 import { useFocusEffect, useRouter, useSegments } from "expo-router";
-import { useCallback, useState } from "react";
-import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { useCallback, useRef, useState } from "react";
+import {
+  Alert,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  Text,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
-    MANAGER_MOCK_DATA,
-    StoreDetailSection,
+  type StoreDetailSection,
 } from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { adminProfileApi } from "../../../services/api/admin-profile";
+import { managerProfileApi } from "../../../services/api/manager-profile";
 import { Card } from "../../ui/Card";
 import { mapAdminStoreDetails } from "../adminProfileSections";
 
@@ -19,37 +26,37 @@ export default function StoreDetailsIndexComponent() {
   const insets = useSafeAreaInsets();
   const theme = useAppTheme();
   const isAdmin = segments[0] === "(admin)";
+  const isFloor = segments[1] === "floor";
 
-  const [storeDetails, setStoreDetails] = useState<StoreDetailSection[]>(
-    isAdmin ? [] : MANAGER_MOCK_DATA.storeDetails,
+  const [storeDetails, setStoreDetails] = useState<StoreDetailSection[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const hasLoadedManagerData = useRef(false);
+
+  const loadStoreDetails = useCallback(
+    async (isRefresh = false) => {
+      if (isRefresh) setRefreshing(true);
+      try {
+        const data = await (isAdmin
+        ? adminProfileApi.getStoreDetails()
+        : managerProfileApi.getStoreDetails());
+        setStoreDetails(mapAdminStoreDetails(data));
+        if (!isAdmin) hasLoadedManagerData.current = true;
+      } catch (error: unknown) {
+        Alert.alert(
+          "Unable to load store details",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      } finally {
+        setRefreshing(false);
+      }
+    },
+    [isAdmin],
   );
 
   useFocusEffect(
     useCallback(() => {
-      if (!isAdmin) {
-        setStoreDetails([...MANAGER_MOCK_DATA.storeDetails]);
-        return;
-      }
-
-      let isCurrent = true;
-      adminProfileApi
-        .getStoreDetails()
-        .then((data) => {
-          if (isCurrent) setStoreDetails(mapAdminStoreDetails(data));
-        })
-        .catch((error: unknown) => {
-          if (isCurrent) {
-            Alert.alert(
-              "Unable to load store details",
-              error instanceof Error ? error.message : "Please try again.",
-            );
-          }
-        });
-
-      return () => {
-        isCurrent = false;
-      };
-    }, [isAdmin]),
+      if (isAdmin || !hasLoadedManagerData.current) void loadStoreDetails();
+    }, [isAdmin, loadStoreDetails]),
   );
 
   return (
@@ -73,7 +80,19 @@ export default function StoreDetailsIndexComponent() {
         </Text>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 100 }}>
+      <ScrollView
+        contentContainerStyle={{ padding: 20, paddingBottom: 100 }}
+        refreshControl={
+          !isAdmin ? (
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => void loadStoreDetails(true)}
+              tintColor={theme.primary}
+              colors={[theme.primary]}
+            />
+          ) : undefined
+        }
+      >
         {storeDetails.map((section) => {
           const activeOptions = section.options.filter((o) => o.isActive);
           let displayValue = "None Active";
@@ -89,7 +108,7 @@ export default function StoreDetailsIndexComponent() {
               key={section.id}
               onPress={() =>
                 router.push(
-                  `${isAdmin ? "/(admin)" : "/(manager)/operations"}/profile/store-details/${section.id}` as any,
+                  `${isAdmin ? "/(admin)" : isFloor ? "/(manager)/floor" : "/(manager)/operations"}/profile/store-details/${section.id}` as any,
                 )
               }
             >
