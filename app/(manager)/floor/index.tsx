@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { Redirect, useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -23,6 +23,7 @@ import {
 } from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { useCurrentManager } from "../../../hooks/useCurrentManager";
+import { getManagerDestination } from "../../../services/authRouting";
 
 export default function FloorDashboard() {
   const theme = useAppTheme();
@@ -246,6 +247,11 @@ export default function FloorDashboard() {
         <Text style={{ color: theme.text }}>Manager profile not found.</Text>
       </SafeAreaView>
     );
+  }
+  if (
+    getManagerDestination(currentManager.managerType) !== "/(manager)/floor"
+  ) {
+    return <Redirect href="/(manager)/operations" />;
   }
 
   const totalTables = tables.length;

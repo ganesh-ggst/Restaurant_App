@@ -9,6 +9,7 @@ export interface AuthUser {
   phone: string;
   email: string;
   role: string;
+  managerType?: string | null;
   avatarUrl: string;
   isProfileCompleted: boolean;
   isActive: boolean;

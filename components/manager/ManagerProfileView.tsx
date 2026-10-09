@@ -30,6 +30,7 @@ import {
   Image,
   Modal,
   Pressable,
+  RefreshControl,
   ScrollView,
   Text,
   View,
@@ -73,6 +74,7 @@ const SettingsRow = ({
 );
 
 export default function ManagerProfileView({
+  role = "operations",
   title = "Manager Profile",
 }: ManagerProfileViewProps) {
   const { colorScheme, setColorScheme } = useColorScheme();
@@ -83,11 +85,21 @@ export default function ManagerProfileView({
   const dangerColor =
     currentThemeMode === "dark" ? "hsl(7, 85%, 76%)" : "hsl(6, 74%, 54%)";
 
-  const { currentManager, isAdmin } = useCurrentManager();
+  const {
+    currentManager,
+    error: managerError,
+    isAdmin,
+    refreshCurrentManager,
+  } = useCurrentManager();
   const phone = currentManager?.phone || "";
   const [showThemeModal, setShowThemeModal] = useState(false);
-  const [, forceUpdate] = useState({});
-  const isFloor = currentManager?.managerType?.toLowerCase() === "floor";
+  const managerType = currentManager?.managerType?.trim().toLowerCase() || "";
+  const isFloor = managerType
+    ? managerType.includes("floor")
+    : role === "floor";
+  const managerProfilePath = isFloor
+    ? "/(manager)/floor/profile"
+    : "/(manager)/operations/profile";
   const [adminProfile, setAdminProfile] = useState<AdminProfile | null>(null);
   const [adminAvatarUri, setAdminAvatarUri] = useState<string | null>(null);
   const [profileError, setProfileError] = useState("");
@@ -95,7 +107,6 @@ export default function ManagerProfileView({
   useFocusEffect(
     useCallback(() => {
       if (!isAdmin) {
-        forceUpdate({});
         return;
       }
 
@@ -144,6 +155,16 @@ export default function ManagerProfileView({
     ? adminProfile?.phone || phone
     : matchedManager?.phone || phone;
   const displayedAvatar = adminAvatarUri || adminProfile?.avatarUrl;
+  const [refreshing, setRefreshing] = useState(false);
+
+  const refreshProfile = async () => {
+    setRefreshing(true);
+    try {
+      await refreshCurrentManager();
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const handleLogout = () => {
     Alert.alert("Sign Out", "Are you sure you want to sign out?", [
@@ -166,6 +187,16 @@ export default function ManagerProfileView({
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
       <ScrollView
+        refreshControl={
+          !isAdmin ? (
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => void refreshProfile()}
+              tintColor={theme.primary}
+              colors={[theme.primary]}
+            />
+          ) : undefined
+        }
         contentContainerStyle={{
           flexGrow: 1,
           paddingTop: 10,
@@ -213,33 +244,51 @@ export default function ManagerProfileView({
               {profileError}
             </Text>
           ) : null}
+          {!isAdmin && managerError ? (
+            <Text
+              className="text-xs text-center mt-2"
+              style={{ color: theme.danger }}
+            >
+              {managerError}
+            </Text>
+          ) : null}
         </View>
 
         <View className="px-5 gap-6">
           <Card variant="default" className="p-4 rounded-3xl border-0">
-            <SettingsRow
-              icon={UserRoundPen}
-              label="Personal Info"
-              onPress={() => {
-                const targetQuery = displayPhone
-                  ? `?phone=${encodeURIComponent(displayPhone)}`
-                  : phone
-                    ? `?phone=${encodeURIComponent(phone)}`
-                    : "";
-                if (isAdmin) {
-                  router.push(`/(admin)/profile/personal${targetQuery}` as any);
-                } else if (isFloor) {
+            {role !== "admin" ? (
+              <SettingsRow
+                icon={UserRoundPen}
+                label="Personal Info"
+                onPress={() => {
+                  const targetQuery = displayPhone
+                    ? `?phone=${encodeURIComponent(displayPhone)}`
+                    : phone
+                      ? `?phone=${encodeURIComponent(phone)}`
+                      : "";
                   router.push(
-                    `/(manager)/floor/profile/personal${targetQuery}` as any,
+                    `${managerProfilePath}/personal${targetQuery}` as any,
                   );
-                } else {
+                }}
+                theme={theme}
+              />
+            ) : (
+              <SettingsRow
+                icon={UserRoundPen}
+                label="Personal Info"
+                onPress={() => {
+                  const targetQuery = displayPhone
+                    ? `?phone=${encodeURIComponent(displayPhone)}`
+                    : phone
+                      ? `?phone=${encodeURIComponent(phone)}`
+                      : "";
                   router.push(
-                    `/(manager)/operations/profile/personal${targetQuery}` as any,
+                    `/(admin)/profile/personal${targetQuery}` as any,
                   );
-                }
-              }}
-              theme={theme}
-            />
+                }}
+                theme={theme}
+              />
+            )}
 
             <SettingsRow
               icon={Store}
@@ -248,7 +297,7 @@ export default function ManagerProfileView({
                 router.push(
                   (isAdmin
                     ? "/(admin)/profile/store-details"
-                    : "/(manager)/operations/profile/store-details") as any,
+                    : `${managerProfilePath}/store-details`) as any,
                 )
               }
               theme={theme}
@@ -261,7 +310,7 @@ export default function ManagerProfileView({
                 router.push(
                   (isAdmin
                     ? "/(admin)/profile/storefront-display"
-                    : "/(manager)/operations/profile/storefront-display") as any,
+                    : `${managerProfilePath}/storefront-display`) as any,
                 )
               }
               theme={theme}
@@ -276,13 +325,9 @@ export default function ManagerProfileView({
                   : "";
                 if (isAdmin) {
                   router.push(`/(admin)/profile/security${targetQuery}` as any);
-                } else if (isFloor) {
-                  router.push(
-                    `/(manager)/floor/profile/security${targetQuery}` as any,
-                  );
                 } else {
                   router.push(
-                    `/(manager)/operations/profile/security${targetQuery}` as any,
+                    `${managerProfilePath}/security${targetQuery}` as any,
                   );
                 }
               }}
@@ -320,13 +365,9 @@ export default function ManagerProfileView({
                   router.push(
                     `/(admin)/profile/add-manager${targetQuery}` as any,
                   );
-                } else if (isFloor) {
-                  router.push(
-                    `/(manager)/floor/profile/add-manager${targetQuery}` as any,
-                  );
                 } else {
                   router.push(
-                    `/(manager)/operations/profile/add-manager${targetQuery}` as any,
+                    `${managerProfilePath}/add-manager${targetQuery}` as any,
                   );
                 }
               }}
@@ -346,13 +387,9 @@ export default function ManagerProfileView({
                   router.push(
                     `/(admin)/profile/add-waiter${targetQuery}` as any,
                   );
-                } else if (isFloor) {
-                  router.push(
-                    `/(manager)/floor/profile/add-waiter${targetQuery}` as any,
-                  );
                 } else {
                   router.push(
-                    `/(manager)/operations/profile/add-waiter${targetQuery}` as any,
+                    `${managerProfilePath}/add-waiter${targetQuery}` as any,
                   );
                 }
               }}
@@ -379,13 +416,9 @@ export default function ManagerProfileView({
                   router.push(
                     `/(admin)/profile/notifications${targetQuery}` as any,
                   );
-                } else if (isFloor) {
-                  router.push(
-                    `/(manager)/floor/profile/notifications${targetQuery}` as any,
-                  );
                 } else {
                   router.push(
-                    `/(manager)/operations/profile/notifications${targetQuery}` as any,
+                    `${managerProfilePath}/notifications${targetQuery}` as any,
                   );
                 }
               }}

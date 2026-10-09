@@ -1,12 +1,13 @@
 import { useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   Text,
   TextInput,
@@ -16,15 +17,28 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Button } from "../../../components/ui/Button";
 import { Card } from "../../../components/ui/Card";
-import { MANAGER_MOCK_DATA } from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
+import {
+  OperationsCategory,
+  operationsApi,
+} from "../../../services/api/operations";
+import { operationsCache } from "../../../services/api/operations-cache";
 
 export default function CategoriesScreen() {
   const theme = useAppTheme();
   const router = useRouter();
 
-  const [categories, setCategories] = useState(MANAGER_MOCK_DATA.categories);
+  const [categories, setCategories] = useState<OperationsCategory[]>(
+    () => operationsCache.getCategories() ?? [],
+  );
   const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
+  const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [categoryMessage, setCategoryMessage] = useState<{
+    text: string;
+    tone: "success" | "error";
+  } | null>(null);
 
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [modalMode, setModalMode] = useState<"add" | "edit">("add");
@@ -35,12 +49,86 @@ export default function CategoriesScreen() {
   const [categoryIcon, setCategoryIcon] = useState("");
 
   const iconInputRef = useRef<TextInput>(null);
+  const categoryMessageTimeout = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+
+  const showCategoryMessage = (message: {
+    text: string;
+    tone: "success" | "error";
+  }) => {
+    if (categoryMessageTimeout.current) {
+      clearTimeout(categoryMessageTimeout.current);
+    }
+    setCategoryMessage(message);
+    categoryMessageTimeout.current = setTimeout(() => {
+      setCategoryMessage(null);
+      categoryMessageTimeout.current = null;
+    }, 5000);
+  };
+
+  const dismissCategoryMessage = () => {
+    if (categoryMessageTimeout.current) {
+      clearTimeout(categoryMessageTimeout.current);
+      categoryMessageTimeout.current = null;
+    }
+    setCategoryMessage(null);
+  };
+
+  useEffect(
+    () => () => {
+      if (categoryMessageTimeout.current) {
+        clearTimeout(categoryMessageTimeout.current);
+      }
+    },
+    [],
+  );
 
   useFocusEffect(
     useCallback(() => {
-      setCategories([...MANAGER_MOCK_DATA.categories]);
+      if (!operationsCache.areCategoriesStale()) return;
+      let isCurrent = true;
+      operationsApi
+        .getCategories()
+        .then((data) => {
+          if (isCurrent) {
+            operationsCache.setCategories(data);
+            setCategories(data);
+          }
+        })
+        .catch((error: unknown) => {
+          if (isCurrent) {
+            Alert.alert(
+              "Unable to load categories",
+              error instanceof Error ? error.message : "Please try again.",
+            );
+          }
+        });
+      return () => {
+        isCurrent = false;
+      };
     }, []),
   );
+
+  const refreshCategories = async () => {
+    const data = await operationsApi.getCategories();
+    operationsCache.setCategories(data);
+    setCategories(data);
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await refreshCategories();
+    } catch (error) {
+      Alert.alert(
+        "Unable to refresh categories",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const openAddModal = () => {
     setModalMode("add");
@@ -50,7 +138,7 @@ export default function CategoriesScreen() {
     setIsModalVisible(true);
   };
 
-  const openEditModal = (category: any) => {
+  const openEditModal = (category: OperationsCategory) => {
     setModalMode("edit");
     setEditingCategoryId(category.id);
     setCategoryName(category.name);
@@ -65,51 +153,81 @@ export default function CategoriesScreen() {
     setEditingCategoryId(null);
   };
 
-  const handleSaveCategory = () => {
+  const handleSaveCategory = async () => {
     if (!categoryName.trim()) return;
 
-    if (modalMode === "add") {
-      const newCategory = {
-        id: `cat_${Date.now()}`,
-        name: categoryName.trim(),
-        icon: categoryIcon.trim(),
-        isActive: true,
-      };
-      MANAGER_MOCK_DATA.categories = [
-        ...MANAGER_MOCK_DATA.categories,
-        newCategory,
-      ];
-    } else if (modalMode === "edit" && editingCategoryId) {
-      const index = MANAGER_MOCK_DATA.categories.findIndex(
-        (c) => c.id === editingCategoryId,
-      );
-      if (index > -1) {
-        MANAGER_MOCK_DATA.categories[index] = {
-          ...MANAGER_MOCK_DATA.categories[index],
+    setSaving(true);
+    try {
+      if (modalMode === "add") {
+        await operationsApi.createCategory({
           name: categoryName.trim(),
           icon: categoryIcon.trim(),
-        };
+        });
+        operationsCache.invalidateCategories();
+      } else if (modalMode === "edit" && editingCategoryId) {
+        await operationsApi.updateCategory(editingCategoryId, {
+          name: categoryName.trim(),
+          icon: categoryIcon.trim(),
+        });
+        operationsCache.invalidateCategory(editingCategoryId);
+        operationsCache.invalidateCategories();
       }
+      await refreshCategories();
+      closeModal();
+    } catch (error) {
+      Alert.alert(
+        "Unable to save category",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setSaving(false);
     }
-
-    setCategories([...MANAGER_MOCK_DATA.categories]);
-    closeModal();
   };
 
   const handleDeleteCategory = (categoryId: string, catName: string) => {
+    dismissCategoryMessage();
     Alert.alert(
       "Delete Category",
-      `Are you sure you want to delete "${catName}"? This will affect all items inside it.`,
+      `Check that "${catName}" has no menu items or cross-sell items before deleting it.`,
       [
         { text: "Cancel", style: "cancel" },
         {
           text: "Delete",
           style: "destructive",
-          onPress: () => {
-            MANAGER_MOCK_DATA.categories = MANAGER_MOCK_DATA.categories.filter(
-              (c) => c.id !== categoryId,
-            );
-            setCategories([...MANAGER_MOCK_DATA.categories]);
+          onPress: async () => {
+            try {
+              const [menuItems, crossSellItems] = await Promise.all([
+                operationsApi.getCategoryItems(categoryId),
+                operationsApi.getCrossSells(categoryId),
+              ]);
+              if (menuItems.length > 0 || crossSellItems.length > 0) {
+                showCategoryMessage({
+                  text: "Please delete all menu items and cross-sell items before deleting this category.",
+                  tone: "error",
+                });
+                return;
+              }
+
+              const result = await operationsApi.deleteCategory(categoryId);
+              operationsCache.invalidateCategory(categoryId);
+              operationsCache.invalidateCategories();
+              await refreshCategories();
+              showCategoryMessage({
+                text:
+                  !result.deleted && !result.isActive
+                    ? `"${catName}" was deactivated and removed from active categories.`
+                    : `"${catName}" was deleted.`,
+                tone: "success",
+              });
+            } catch (error) {
+              showCategoryMessage({
+                text:
+                  error instanceof Error
+                    ? `Unable to verify or delete the category: ${error.message}`
+                    : "Unable to verify or delete the category. Please try again.",
+                tone: "error",
+              });
+            }
           },
         },
       ],
@@ -117,7 +235,13 @@ export default function CategoriesScreen() {
   };
 
   const filteredCategories = categories.filter((category) => {
-    return category.name.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSearch = category.name
+      .toLowerCase()
+      .includes(searchQuery.trim().toLowerCase());
+    const matchesStatus =
+      statusFilter === "all" ||
+      (statusFilter === "active" ? category.isActive : !category.isActive);
+    return matchesSearch && matchesStatus;
   });
 
   return (
@@ -142,50 +266,136 @@ export default function CategoriesScreen() {
         </Text>
       </View>
 
-      <ScrollView
-        className="flex-1 px-6 pt-6"
-        contentContainerStyle={{ paddingBottom: 40 }}
-        showsVerticalScrollIndicator={false}
-      >
-        <Text
-          className="text-sm mb-4 font-medium"
-          style={{ color: theme.muted }}
+      <View className="flex-1 px-6 pt-6">
+        <View
+          className="pb-1"
+          style={{ backgroundColor: theme.bg }}
         >
-          Select a category to view its items below, or use edit/delete.
-        </Text>
+          <TextInput
+            placeholder="Search categories..."
+            placeholderTextColor={theme.muted}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            className="mb-4 rounded-2xl px-4 font-semibold"
+            style={{
+              backgroundColor: theme.card || theme.border,
+              color: theme.text,
+              fontSize: 16,
+              height: 52,
+              textAlignVertical: "center",
+              paddingTop: 0,
+              paddingBottom: 0,
+            }}
+          />
 
-        <TextInput
-          placeholder="Search categories..."
-          placeholderTextColor={theme.muted}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          className="px-4 rounded-2xl mb-4 font-semibold"
-          style={{
-            backgroundColor: theme.card || theme.border,
-            color: theme.text,
-            fontSize: 16,
-            height: 52,
-            textAlignVertical: "center",
-            paddingTop: 0,
-            paddingBottom: 0,
-          }}
-        />
+          <View className="mb-4 flex-row rounded-xl p-1" style={{ backgroundColor: theme.card }}>
+            {(["all", "active", "inactive"] as const).map((filter) => {
+              const selected = statusFilter === filter;
+              const label =
+                filter === "all"
+                  ? `All (${categories.length})`
+                  : filter === "active"
+                    ? `Active (${categories.filter((category) => category.isActive).length})`
+                    : `Inactive (${categories.filter((category) => !category.isActive).length})`;
+              return (
+                <Pressable
+                  key={filter}
+                  onPress={() => setStatusFilter(filter)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  className="flex-1 items-center rounded-lg px-2 py-3"
+                  style={{
+                    backgroundColor: selected ? theme.primary : "transparent",
+                  }}
+                >
+                  <Text
+                    className="text-xs font-bold"
+                    style={{ color: selected ? "#ffffff" : theme.text }}
+                  >
+                    {label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
 
-        <Pressable
-          onPress={openAddModal}
-          className="mb-6 p-4 rounded-2xl items-center border-2 border-dashed"
-          style={{ borderColor: theme.border }}
+          <Pressable
+            onPress={openAddModal}
+            className="mb-6 items-center rounded-2xl border-2 border-dashed p-4"
+            style={{ borderColor: theme.border }}
+          >
+            <Text className="text-base font-bold" style={{ color: theme.text }}>
+              + Create New Category
+            </Text>
+          </Pressable>
+        </View>
+
+        {categoryMessage ? (
+          <View
+            className="mb-3 flex-row items-center rounded-xl border px-4 py-3"
+            style={{
+              backgroundColor:
+                categoryMessage.tone === "success"
+                  ? theme.isDark
+                    ? "#123a29"
+                    : "#eaf8ef"
+                  : theme.isDark
+                    ? "#3a1c1c"
+                    : "#fff0f0",
+              borderColor:
+                categoryMessage.tone === "success"
+                  ? theme.primary
+                  : theme.danger,
+            }}
+            accessibilityRole="alert"
+          >
+            <Text
+              className="mr-2 text-base font-bold"
+              style={{
+                color:
+                  categoryMessage.tone === "success"
+                    ? theme.primary
+                    : theme.danger,
+              }}
+            >
+              {categoryMessage.tone === "success" ? "✓" : "!"}
+            </Text>
+            <Text
+              className="flex-1 text-sm font-semibold"
+              style={{ color: theme.text }}
+            >
+              {categoryMessage.text}
+            </Text>
+            <Pressable
+              onPress={dismissCategoryMessage}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss message"
+            >
+              <Text className="text-lg" style={{ color: theme.muted }}>
+                ×
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        <ScrollView
+          className="flex-1"
+          contentContainerStyle={{ paddingBottom: 40 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => void handleRefresh()}
+              tintColor={theme.primary}
+              colors={[theme.primary]}
+            />
+          }
+          showsVerticalScrollIndicator={false}
         >
-          <Text className="text-base font-bold" style={{ color: theme.text }}>
-            + Create New Category
-          </Text>
-        </Pressable>
-
+        <View>
         {filteredCategories.length > 0 ? (
           filteredCategories.map((category) => {
-            const itemsCount = MANAGER_MOCK_DATA.foodItems.filter(
-              (item) => item.categoryId === category.id,
-            ).length;
+            const itemsCount = category.itemCount ?? 0;
 
             return (
               <Card
@@ -218,6 +428,14 @@ export default function CategoriesScreen() {
                     style={{ color: theme.muted }}
                   >
                     {itemsCount} items configured
+                  </Text>
+                  <Text
+                    className="mt-1 text-[10px] font-bold uppercase"
+                    style={{
+                      color: category.isActive ? theme.primary : theme.muted,
+                    }}
+                  >
+                    {category.isActive ? "Active" : "Inactive"}
                   </Text>
                 </Pressable>
 
@@ -263,11 +481,13 @@ export default function CategoriesScreen() {
             >
               {categories.length === 0
                 ? "No categories configured yet."
-                : "No matching categories found."}
+                : "No categories match this search and status filter."}
             </Text>
           </View>
         )}
-      </ScrollView>
+        </View>
+        </ScrollView>
+      </View>
 
       {/* ========================================================= */}
       {/* CATEGORY EDITOR MODAL (Keyboard Aware & Backdrop Close) */}
@@ -356,12 +576,14 @@ export default function CategoriesScreen() {
                       title="Cancel"
                       variant="outline"
                       onPress={closeModal}
-                      className="mr-3 py-3 px-6"
+                      className="mr-3 h-14 w-32 px-0 py-0"
                     />
                     <Button
                       title={modalMode === "add" ? "Create" : "Save"}
                       onPress={handleSaveCategory}
-                      className="py-3 px-8"
+                      loading={saving}
+                      disabled={saving}
+                      className="h-14 w-32 px-0 py-0"
                     />
                   </View>
                 </ScrollView>

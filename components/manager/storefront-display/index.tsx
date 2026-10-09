@@ -1,15 +1,22 @@
 import { Feather } from "@expo/vector-icons";
 import { useFocusEffect, useRouter, useSegments } from "expo-router";
-import { useCallback, useState } from "react";
-import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { useCallback, useRef, useState } from "react";
+import {
+  Alert,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  Text,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
-    MANAGER_MOCK_DATA,
-    StoreDetailSection,
+  type StoreDetailSection,
 } from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { adminProfileApi } from "../../../services/api/admin-profile";
+import { managerProfileApi } from "../../../services/api/manager-profile";
 import { Card } from "../../ui/Card";
 import { mapAdminStorefrontDisplay } from "../adminProfileSections";
 
@@ -19,39 +26,39 @@ export default function StorefrontDisplayIndexComponent() {
   const insets = useSafeAreaInsets();
   const theme = useAppTheme();
   const isAdmin = segments[0] === "(admin)";
+  const isFloor = segments[1] === "floor";
 
-  const [displayItems, setDisplayItems] = useState<StoreDetailSection[]>(
-    isAdmin ? [] : (MANAGER_MOCK_DATA as any).storefrontDisplay || [],
+  const [displayItems, setDisplayItems] = useState<StoreDetailSection[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const hasLoadedManagerData = useRef(false);
+
+  const loadStorefrontDisplay = useCallback(
+    async (isRefresh = false) => {
+      if (isRefresh) setRefreshing(true);
+      try {
+        const data = await (isAdmin
+        ? adminProfileApi.getStorefrontDisplay()
+        : managerProfileApi.getStorefrontDisplay());
+        setDisplayItems(mapAdminStorefrontDisplay(data));
+        if (!isAdmin) hasLoadedManagerData.current = true;
+      } catch (error: unknown) {
+        Alert.alert(
+          "Unable to load storefront display",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      } finally {
+        setRefreshing(false);
+      }
+    },
+    [isAdmin],
   );
 
   useFocusEffect(
     useCallback(() => {
-      if (!isAdmin) {
-        setDisplayItems([
-          ...((MANAGER_MOCK_DATA as any).storefrontDisplay || []),
-        ]);
-        return;
+      if (isAdmin || !hasLoadedManagerData.current) {
+        void loadStorefrontDisplay();
       }
-
-      let isCurrent = true;
-      adminProfileApi
-        .getStorefrontDisplay()
-        .then((data) => {
-          if (isCurrent) setDisplayItems(mapAdminStorefrontDisplay(data));
-        })
-        .catch((error: unknown) => {
-          if (isCurrent) {
-            Alert.alert(
-              "Unable to load storefront display",
-              error instanceof Error ? error.message : "Please try again.",
-            );
-          }
-        });
-
-      return () => {
-        isCurrent = false;
-      };
-    }, [isAdmin]),
+    }, [isAdmin, loadStorefrontDisplay]),
   );
 
   return (
@@ -74,7 +81,19 @@ export default function StorefrontDisplayIndexComponent() {
         </Text>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 100 }}>
+      <ScrollView
+        contentContainerStyle={{ padding: 20, paddingBottom: 100 }}
+        refreshControl={
+          !isAdmin ? (
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => void loadStorefrontDisplay(true)}
+              tintColor={theme.primary}
+              colors={[theme.primary]}
+            />
+          ) : undefined
+        }
+      >
         {displayItems.map((section) => {
           const activeOptions = section.options.filter((o) => o.isActive);
           let displayValue = "None Active";
@@ -90,7 +109,7 @@ export default function StorefrontDisplayIndexComponent() {
               key={section.id}
               onPress={() =>
                 router.push(
-                  `${isAdmin ? "/(admin)" : "/(manager)/operations"}/profile/storefront-display/${section.id}` as any,
+                  `${isAdmin ? "/(admin)" : isFloor ? "/(manager)/floor" : "/(manager)/operations"}/profile/storefront-display/${section.id}` as any,
                 )
               }
             >

@@ -16,7 +16,11 @@ import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view
 import { Button } from "../../components/ui/Button";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { api } from "../../services/api";
-import { getAuthDestination } from "../../services/authRouting";
+import { managerProfileApi } from "../../services/api/manager-profile";
+import {
+  getAuthDestination,
+  isKnownManagerType,
+} from "../../services/authRouting";
 
 export default function VerifyOtpScreen() {
   const router = useRouter();
@@ -53,8 +57,15 @@ export default function VerifyOtpScreen() {
             `/(auth)/basic-details?phone=${encodeURIComponent(normalizedPhone)}` as any,
           );
         } else {
+          const managerType =
+            user.role.toLowerCase() === "manager"
+              ? (isKnownManagerType(user.managerType)
+                  ? user.managerType
+                  : null) ||
+                (await managerProfileApi.getProfile()).manager.managerType
+              : user.managerType;
           router.replace(
-            `${getAuthDestination(user.role)}?phone=${encodeURIComponent(normalizedPhone)}` as any,
+            `${getAuthDestination(user.role, managerType)}?phone=${encodeURIComponent(normalizedPhone)}` as any,
           );
         }
       } catch (err) {

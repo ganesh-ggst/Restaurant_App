@@ -1,5 +1,4 @@
 import { Feather } from "@expo/vector-icons";
-import * as ImagePicker from "expo-image-picker";
 import {
   useLocalSearchParams,
   useRouter,
@@ -8,10 +7,10 @@ import {
 import { useEffect, useState } from "react";
 import {
   Alert,
-  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   Switch,
   Text,
@@ -21,19 +20,17 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
-  MANAGER_MOCK_DATA,
-  StoreDetailOption,
-  StoreDetailSection,
+  type StoreDetailOption,
+  type StoreDetailSection,
 } from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { adminProfileApi } from "../../../services/api/admin-profile";
+import { managerProfileApi } from "../../../services/api/manager-profile";
 import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
 import {
-  createMockProfileItemId,
   getStorefrontDefinition,
   mapAdminStorefrontSection,
-  updateMockStorefrontOptions,
 } from "../adminProfileSections";
 
 export default function StorefrontDisplayDetailComponent() {
@@ -44,19 +41,11 @@ export default function StorefrontDisplayDetailComponent() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const isAdmin = segments[0] === "(admin)";
 
-  const mockDisplayList = isAdmin
-    ? []
-    : (MANAGER_MOCK_DATA as any).storefrontDisplay || [];
-  const sectionIndex = isAdmin
-    ? -1
-    : mockDisplayList.findIndex((item: any) => item.id === id);
-  const mockSection = isAdmin ? undefined : mockDisplayList[sectionIndex];
-
-  const [options, setOptions] = useState<StoreDetailOption[]>(
-    mockSection?.options || [],
-  );
+  const [options, setOptions] = useState<StoreDetailOption[]>([]);
   const [adminSection, setAdminSection] = useState<StoreDetailSection>();
-  const [loading, setLoading] = useState(isAdmin);
+  const [managerSection, setManagerSection] = useState<StoreDetailSection>();
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editingOption, setEditingOption] = useState<StoreDetailOption | null>(
     null,
@@ -66,21 +55,23 @@ export default function StorefrontDisplayDetailComponent() {
   const [val1, setVal1] = useState("");
   const [val2, setVal2] = useState("");
   const [mediaUri, setMediaUri] = useState("");
-  const section = isAdmin ? adminSection : mockSection;
+  const section = isAdmin ? adminSection : managerSection;
 
   useEffect(() => {
-    if (!isAdmin || !id) return;
+    if (!id) return;
     const definition = getStorefrontDefinition(id);
     if (!definition) return;
 
     let isCurrent = true;
-    adminProfileApi
-      .getStorefrontSection(definition.key)
+    (isAdmin
+      ? adminProfileApi.getStorefrontSection(definition.key)
+      : managerProfileApi.getStorefrontSection(definition.key))
       .then((data) => {
         if (!isCurrent) return;
         const nextSection = mapAdminStorefrontSection(id, data);
         if (nextSection) {
-          setAdminSection(nextSection);
+          if (isAdmin) setAdminSection(nextSection);
+          else setManagerSection(nextSection);
           setOptions(nextSection.options);
         }
       })
@@ -102,7 +93,7 @@ export default function StorefrontDisplayDetailComponent() {
   }, [id, isAdmin]);
 
   if (!section) {
-    if (isAdmin && loading) {
+    if (loading) {
       return (
         <View
           style={{
@@ -137,73 +128,59 @@ export default function StorefrontDisplayDetailComponent() {
   const isEmptySection = id === "sf_empty";
   const isSingleInputSection = id === "sf_greetings" || id === "sf_search";
 
-  const pickMedia = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert(
-        "Permission Denied",
-        "Sorry, we need camera roll permissions to upload media!",
-      );
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.All,
-      allowsEditing: true,
-      quality: 0.8,
-    });
-
-    if (!result.canceled && result.assets && result.assets.length > 0) {
-      setMediaUri(result.assets[0].uri);
-    }
-  };
-
-  const refreshAdminSection = async () => {
-    if (!isAdmin) return;
+  const refreshSection = async () => {
     const definition = getStorefrontDefinition(id);
     if (!definition) return;
-    const data = await adminProfileApi.getStorefrontSection(definition.key);
+    const data = isAdmin
+      ? await adminProfileApi.getStorefrontSection(definition.key)
+      : await managerProfileApi.getStorefrontSection(definition.key);
     const nextSection = mapAdminStorefrontSection(id, data);
     if (nextSection) {
-      setAdminSection(nextSection);
+      if (isAdmin) setAdminSection(nextSection);
+      else setManagerSection(nextSection);
       setOptions(nextSection.options);
     }
   };
 
+  const handlePullToRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await refreshSection();
+    } catch (error) {
+      Alert.alert(
+        "Unable to refresh storefront settings",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const toggleOption = async (optionId: string) => {
-    if (isAdmin) {
-      const definition = getStorefrontDefinition(id);
-      const option = options.find((item) => item.id === optionId);
-      if (!definition || !option) return;
-      try {
+    const definition = getStorefrontDefinition(id);
+    const option = options.find((item) => item.id === optionId);
+    if (!definition || !option) return;
+    try {
+      if (isAdmin) {
         await adminProfileApi.setStorefrontItemActive(
           definition.key,
           optionId,
           !option.isActive,
         );
-        await refreshAdminSection();
-      } catch (error) {
-        Alert.alert(
-          "Unable to update storefront item",
-          error instanceof Error ? error.message : "Please try again.",
+      } else {
+        await managerProfileApi.setStorefrontItemActive(
+          definition.key,
+          optionId,
+          !option.isActive,
         );
       }
-      return;
+      await refreshSection();
+    } catch (error) {
+      Alert.alert(
+        "Unable to update storefront item",
+        error instanceof Error ? error.message : "Please try again.",
+      );
     }
-
-    const nextOptions =
-      section.selectionType === "single"
-        ? section.options.map((option: StoreDetailOption) => ({
-            ...option,
-            isActive: option.id === optionId,
-          }))
-        : section.options.map((option: StoreDetailOption) =>
-            option.id === optionId
-              ? { ...option, isActive: !option.isActive }
-              : option,
-          );
-    updateMockStorefrontOptions(id, nextOptions);
-    setOptions(nextOptions);
   };
 
   const openEditor = (opt?: StoreDetailOption) => {
@@ -226,9 +203,6 @@ export default function StorefrontDisplayDetailComponent() {
   };
 
   const handleSave = async () => {
-    let finalValue = val1.trim();
-    let finalSubValue = val2.trim();
-
     if (isCelebrationsSection) {
       if (!val1.trim()) {
         Alert.alert("Error", "Emoji field is mandatory.");
@@ -245,7 +219,6 @@ export default function StorefrontDisplayDetailComponent() {
         );
         return;
       }
-      finalSubValue = "Checkout success confetti effect";
     } else if (isFeaturedSection) {
       if (!val1.trim() || !val2.trim() || !mediaUri.trim()) {
         Alert.alert(
@@ -254,26 +227,23 @@ export default function StorefrontDisplayDetailComponent() {
         );
         return;
       }
-      if (isAdmin && !/^https?:\/\//i.test(mediaUri.trim())) {
+      if (!/^https?:\/\//i.test(mediaUri.trim())) {
         Alert.alert(
           "Image URL required",
           "Enter a public http or https image URL to save featured content.",
         );
         return;
       }
-      finalSubValue = `${val2.trim()} • ${mediaUri}`;
     } else if (isEmptySection) {
       if (!val1.trim() || !val2.trim()) {
         Alert.alert("Error", "Both Title and Description are mandatory!");
         return;
       }
-      finalSubValue = val2.trim();
     } else if (isSingleInputSection) {
       if (!val1.trim()) {
         Alert.alert("Error", "This field is mandatory!");
         return;
       }
-      finalSubValue = "";
     } else {
       if (!val1.trim()) {
         Alert.alert("Error", "Field is mandatory!");
@@ -315,7 +285,7 @@ export default function StorefrontDisplayDetailComponent() {
         } else {
           await adminProfileApi.createStorefrontItem(definition.key, body);
         }
-        await refreshAdminSection();
+        await refreshSection();
         setIsEditorOpen(false);
       } catch (error) {
         Alert.alert(
@@ -328,30 +298,48 @@ export default function StorefrontDisplayDetailComponent() {
       return;
     }
 
-    const nextOptions = editingOption
-      ? section.options.map((option: StoreDetailOption) =>
-          option.id === editingOption.id
-            ? { ...option, value: finalValue, subValue: finalSubValue }
-            : option,
-        )
-      : [
-          {
-            id: createMockProfileItemId(),
-            value: finalValue,
-            subValue: finalSubValue,
-            isActive: true,
-          },
-          ...(section.selectionType === "single"
-            ? section.options.map((option: StoreDetailOption) => ({
-                ...option,
-                isActive: false,
-              }))
-            : section.options),
-        ];
+    const definition = getStorefrontDefinition(id);
+    if (!definition) return;
+    let body: Record<string, unknown>;
+    if (id === "sf_greetings" || id === "sf_search") {
+      body = { text: val1.trim() };
+    } else if (isFeaturedSection) {
+      body = {
+        title: val1.trim(),
+        subtitle: val2.trim(),
+        imageUrl: mediaUri.trim(),
+        ...(!editingOption ? { badge: "FEATURED", displayOrder: 1 } : {}),
+      };
+    } else if (isEmptySection) {
+      body = { title: val1.trim(), description: val2.trim() };
+    } else if (isCelebrationsSection) {
+      body = { emoji: val1.trim(), description: val2.trim() };
+    } else {
+      Alert.alert("Unsupported storefront section", "This section cannot be saved.");
+      return;
+    }
 
-    updateMockStorefrontOptions(id, nextOptions);
-    setOptions(nextOptions);
-    setIsEditorOpen(false);
+    setSaving(true);
+    try {
+      if (editingOption) {
+        await managerProfileApi.updateStorefrontItem(
+          definition.key,
+          editingOption.id,
+          body,
+        );
+      } else {
+        await managerProfileApi.createStorefrontItem(definition.key, body);
+      }
+      await refreshSection();
+      setIsEditorOpen(false);
+    } catch (error) {
+      Alert.alert(
+        "Unable to save storefront item",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDelete = (optionId: string, value: string) => {
@@ -374,7 +362,7 @@ export default function StorefrontDisplayDetailComponent() {
                 definition.key,
                 optionId,
               );
-              await refreshAdminSection();
+              await refreshSection();
             } catch (error) {
               Alert.alert(
                 "Unable to delete storefront item",
@@ -383,23 +371,17 @@ export default function StorefrontDisplayDetailComponent() {
             }
             return;
           }
-
-          let nextOptions = section.options.filter(
-            (option: StoreDetailOption) => option.id !== optionId,
-          );
-          if (
-            !nextOptions.some((option: StoreDetailOption) => option.isActive) &&
-            nextOptions.length > 0
-          ) {
-            nextOptions = nextOptions.map(
-              (option: StoreDetailOption, index: number) => ({
-                ...option,
-                isActive: index === 0,
-              }),
+          const definition = getStorefrontDefinition(id);
+          if (!definition) return;
+          try {
+            await managerProfileApi.deleteStorefrontItem(definition.key, optionId);
+            await refreshSection();
+          } catch (error) {
+            Alert.alert(
+              "Unable to delete storefront item",
+              error instanceof Error ? error.message : "Please try again.",
             );
           }
-          updateMockStorefrontOptions(id, nextOptions);
-          setOptions(nextOptions);
         },
       },
     ]);
@@ -437,7 +419,19 @@ export default function StorefrontDisplayDetailComponent() {
         </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 100 }}>
+      <ScrollView
+        contentContainerStyle={{ padding: 20, paddingBottom: 100 }}
+        refreshControl={
+          !isAdmin ? (
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => void handlePullToRefresh()}
+              tintColor={theme.primary}
+              colors={[theme.primary]}
+            />
+          ) : undefined
+        }
+      >
         {loading ? (
           <Text
             className="text-base text-center py-8"
@@ -574,6 +568,29 @@ export default function StorefrontDisplayDetailComponent() {
                       }}
                       autoFocus={true}
                     />
+                    {!isAdmin ? (
+                      <>
+                        <Text
+                          className="text-xs font-bold mb-1 uppercase"
+                          style={{ color: theme.muted }}
+                        >
+                          Description
+                        </Text>
+                        <TextInput
+                          placeholder="Describe the celebration"
+                          placeholderTextColor={theme.muted + "44"}
+                          value={val2}
+                          onChangeText={setVal2}
+                          className="px-4 rounded-xl mb-6 font-semibold"
+                          style={{
+                            backgroundColor: theme.bg,
+                            color: theme.text,
+                            fontSize: 16,
+                            height: 52,
+                          }}
+                        />
+                      </>
+                    ) : null}
                   </>
                 ) : isFeaturedSection ? (
                   <>
@@ -622,56 +639,23 @@ export default function StorefrontDisplayDetailComponent() {
                       className="text-xs font-bold mb-1 uppercase"
                       style={{ color: theme.muted }}
                     >
-                      {isAdmin ? "Image URL *" : "Media File (Image / Video) *"}
+                      Image URL *
                     </Text>
-                    {isAdmin ? (
-                      <TextInput
-                        placeholder="https://example.com/image.jpg"
-                        placeholderTextColor={theme.muted + "44"}
-                        value={mediaUri}
-                        onChangeText={setMediaUri}
-                        autoCapitalize="none"
-                        keyboardType="url"
-                        className="px-4 rounded-xl mb-6 font-semibold"
-                        style={{
-                          backgroundColor: theme.bg,
-                          color: theme.text,
-                          fontSize: 16,
-                          height: 52,
-                        }}
-                      />
-                    ) : (
-                      <Pressable
-                        onPress={pickMedia}
-                        className="p-4 rounded-xl items-center justify-center border border-dashed mb-6"
-                        style={{
-                          borderColor: theme.primary,
-                          backgroundColor: theme.bg,
-                        }}
-                      >
-                        {mediaUri ? (
-                          <View className="items-center">
-                            <Image
-                              source={{ uri: mediaUri }}
-                              className="w-24 h-24 rounded-xl mb-2"
-                            />
-                            <Text
-                              className="text-xs font-bold"
-                              style={{ color: theme.primary }}
-                            >
-                              Change Media File 📁
-                            </Text>
-                          </View>
-                        ) : (
-                          <Text
-                            className="text-xs font-bold"
-                            style={{ color: theme.primary }}
-                          >
-                            📷 Select Image or Video *
-                          </Text>
-                        )}
-                      </Pressable>
-                    )}
+                    <TextInput
+                      placeholder="https://example.com/image.jpg"
+                      placeholderTextColor={theme.muted + "44"}
+                      value={mediaUri}
+                      onChangeText={setMediaUri}
+                      autoCapitalize="none"
+                      keyboardType="url"
+                      className="px-4 rounded-xl mb-6 font-semibold"
+                      style={{
+                        backgroundColor: theme.bg,
+                        color: theme.text,
+                        fontSize: 16,
+                        height: 52,
+                      }}
+                    />
                   </>
                 ) : isEmptySection ? (
                   <>

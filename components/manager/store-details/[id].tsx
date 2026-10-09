@@ -11,6 +11,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   Switch,
   Text,
@@ -20,19 +21,17 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
-  MANAGER_MOCK_DATA,
-  StoreDetailOption,
-  StoreDetailSection,
+  type StoreDetailOption,
+  type StoreDetailSection,
 } from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { adminProfileApi } from "../../../services/api/admin-profile";
+import { managerProfileApi } from "../../../services/api/manager-profile";
 import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
 import {
-  createMockProfileItemId,
   getStoreDetailDefinition,
   mapAdminStoreDetailSection,
-  updateMockStoreDetailOptions,
 } from "../adminProfileSections";
 
 export default function StoreDetailDetailComponent() {
@@ -43,18 +42,11 @@ export default function StoreDetailDetailComponent() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const isAdmin = segments[0] === "(admin)";
 
-  const sectionIndex = isAdmin
-    ? -1
-    : MANAGER_MOCK_DATA.storeDetails.findIndex((s) => s.id === id);
-  const mockSection = isAdmin
-    ? undefined
-    : MANAGER_MOCK_DATA.storeDetails[sectionIndex];
-
-  const [options, setOptions] = useState<StoreDetailOption[]>(
-    mockSection?.options || [],
-  );
+  const [options, setOptions] = useState<StoreDetailOption[]>([]);
   const [adminSection, setAdminSection] = useState<StoreDetailSection>();
-  const [loading, setLoading] = useState(isAdmin);
+  const [managerSection, setManagerSection] = useState<StoreDetailSection>();
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editingOption, setEditingOption] = useState<StoreDetailOption | null>(
     null,
@@ -65,21 +57,23 @@ export default function StoreDetailDetailComponent() {
   const [gpsCoordinates, setGpsCoordinates] = useState("");
   const [thirdVal, setThirdVal] = useState("");
   const [fourthVal, setFourthVal] = useState("");
-  const section = isAdmin ? adminSection : mockSection;
+  const section = isAdmin ? adminSection : managerSection;
 
   useEffect(() => {
-    if (!isAdmin || !id) return;
+    if (!id) return;
     const definition = getStoreDetailDefinition(id);
     if (!definition) return;
 
     let isCurrent = true;
-    adminProfileApi
-      .getStoreDetailSection(definition.key)
+    (isAdmin
+      ? adminProfileApi.getStoreDetailSection(definition.key)
+      : managerProfileApi.getStoreDetailSection(definition.key))
       .then((data) => {
         if (!isCurrent) return;
         const nextSection = mapAdminStoreDetailSection(id, data);
         if (nextSection) {
-          setAdminSection(nextSection);
+          if (isAdmin) setAdminSection(nextSection);
+          else setManagerSection(nextSection);
           setOptions(nextSection.options);
         }
       })
@@ -101,7 +95,7 @@ export default function StoreDetailDetailComponent() {
   }, [id, isAdmin]);
 
   if (!section) {
-    if (isAdmin && loading) {
+    if (loading) {
       return (
         <View
           style={{
@@ -189,52 +183,59 @@ export default function StoreDetailDetailComponent() {
     }
   };
 
-  const refreshAdminSection = async () => {
-    if (!isAdmin) return;
+  const refreshSection = async () => {
     const definition = getStoreDetailDefinition(id);
     if (!definition) return;
-    const data = await adminProfileApi.getStoreDetailSection(definition.key);
+    const data = isAdmin
+      ? await adminProfileApi.getStoreDetailSection(definition.key)
+      : await managerProfileApi.getStoreDetailSection(definition.key);
     const nextSection = mapAdminStoreDetailSection(id, data);
     if (nextSection) {
-      setAdminSection(nextSection);
+      if (isAdmin) setAdminSection(nextSection);
+      else setManagerSection(nextSection);
       setOptions(nextSection.options);
     }
   };
 
+  const handlePullToRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await refreshSection();
+    } catch (error) {
+      Alert.alert(
+        "Unable to refresh store details",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const toggleOption = async (optionId: string) => {
-    if (isAdmin) {
-      const definition = getStoreDetailDefinition(id);
-      const option = options.find((item) => item.id === optionId);
-      if (!definition || !option) return;
-      try {
+    const definition = getStoreDetailDefinition(id);
+    const option = options.find((item) => item.id === optionId);
+    if (!definition || !option) return;
+    try {
+      if (isAdmin) {
         await adminProfileApi.setStoreDetailActive(
           definition.key,
           optionId,
           !option.isActive,
         );
-        await refreshAdminSection();
-      } catch (error) {
-        Alert.alert(
-          "Unable to update active store detail",
-          error instanceof Error ? error.message : "Please try again.",
+      } else {
+        await managerProfileApi.setStoreDetailActive(
+          definition.key,
+          optionId,
+          !option.isActive,
         );
       }
-      return;
+      await refreshSection();
+    } catch (error) {
+      Alert.alert(
+        "Unable to update active store detail",
+        error instanceof Error ? error.message : "Please try again.",
+      );
     }
-
-    const nextOptions =
-      section.selectionType === "single"
-        ? section.options.map((option) => ({
-            ...option,
-            isActive: option.id === optionId,
-          }))
-        : section.options.map((option) =>
-            option.id === optionId
-              ? { ...option, isActive: !option.isActive }
-              : option,
-          );
-    updateMockStoreDetailOptions(id, nextOptions);
-    setOptions(nextOptions);
   };
 
   const openEditor = (opt?: StoreDetailOption) => {
@@ -297,33 +298,6 @@ export default function StoreDetailDetailComponent() {
       return;
     }
 
-    let finalValue = addressLine.trim();
-    let finalSubValue = gpsCoordinates.trim();
-
-    if (isTaxSection) {
-      const cgst = parseFloat(addressLine) || 0;
-      const sgst = parseFloat(gpsCoordinates) || 0;
-      const total = cgst + sgst;
-      finalValue = `${total}%`;
-      finalSubValue = `CGST: ${cgst}% + SGST: ${sgst}%`;
-    } else if (isChargesSection) {
-      const packaging = parseFloat(addressLine) || 0;
-      const platform = parseFloat(gpsCoordinates) || 0;
-      const delivery = parseFloat(thirdVal) || 0;
-      finalValue = `Packaging: ₹${packaging} | Platform: ₹${platform} | Delivery: ₹${delivery}`;
-      finalSubValue = `Packaging Charge: ₹${packaging}, Platform Fee: ₹${platform}, Base Delivery Fee: ₹${delivery}`;
-    } else if (isDeliverySection) {
-      const title = addressLine.trim();
-      const price = parseFloat(gpsCoordinates) || 0;
-      const subtitle = thirdVal.trim();
-      const time = fourthVal.trim();
-
-      const priceDisplay =
-        price === 0 ? "Free" : price > 0 ? `₹${price}` : `-₹${Math.abs(price)}`;
-      finalValue = `${title} (${priceDisplay})`;
-      finalSubValue = `${subtitle} • ${time}`;
-    }
-
     if (isAdmin) {
       const definition = getStoreDetailDefinition(id);
       if (!definition) return;
@@ -382,7 +356,7 @@ export default function StoreDetailDetailComponent() {
         } else {
           await adminProfileApi.createStoreDetail(definition.key, body);
         }
-        await refreshAdminSection();
+        await refreshSection();
         setIsEditorOpen(false);
       } catch (error) {
         Alert.alert(
@@ -395,32 +369,71 @@ export default function StoreDetailDetailComponent() {
       return;
     }
 
-    const nextOptions = editingOption
-      ? section.options.map((option) =>
-          option.id === editingOption.id
-            ? { ...option, value: finalValue, subValue: finalSubValue }
-            : option,
-        )
-      : [
-          {
-            id: createMockProfileItemId(),
-            value: finalValue,
-            subValue:
-              finalSubValue ||
-              (isAddressSection ? "GPS: 17.4483° N, 78.3915° E" : ""),
-            isActive: true,
-          },
-          ...(section.selectionType === "single"
-            ? section.options.map((option) => ({
-                ...option,
-                isActive: false,
-              }))
-            : section.options),
-        ];
+    const definition = getStoreDetailDefinition(id);
+    if (!definition) return;
+    let body: Record<string, unknown>;
+    if (id === "sd_rest") {
+      body = { name: addressLine.trim() };
+    } else if (isAddressSection) {
+      const coordinates = gpsCoordinates.match(/-?\d+(?:\.\d+)?/g) || [];
+      body = {
+        address: addressLine.trim(),
+        ...(coordinates.length >= 2
+          ? { location: { lat: Number(coordinates[0]), lng: Number(coordinates[1]) } }
+          : {}),
+      };
+    } else if (isTaxSection) {
+      body = isAdmin
+        ? {
+            cgstPercentage: Number(addressLine) || 0,
+            sgstPercentage: Number(gpsCoordinates) || 0,
+          }
+        : { gstPercentage: Number(addressLine) || 0 };
+    } else if (isWifiSection) {
+      body = { name: addressLine.trim(), password: gpsCoordinates.trim() };
+    } else if (isChargesSection) {
+      body = {
+        packaging: Number(addressLine) || 0,
+        platform: Number(gpsCoordinates) || 0,
+        delivery: Number(thirdVal) || 0,
+        description: fourthVal.trim(),
+      };
+    } else if (isDeliverySection) {
+      body = {
+        name: addressLine.trim(),
+        title: addressLine.trim(),
+        price: Number(gpsCoordinates) || 0,
+        description: thirdVal.trim(),
+        estimatedTimeRange: fourthVal.trim(),
+      };
+    } else {
+      Alert.alert("Unsupported store detail", "This section cannot be saved.");
+      return;
+    }
 
-    updateMockStoreDetailOptions(id, nextOptions);
-    setOptions(nextOptions);
-    setIsEditorOpen(false);
+    setSaving(true);
+    try {
+      if (editingOption) {
+        if (isAdmin) {
+          await adminProfileApi.updateStoreDetail(definition.key, editingOption.id, body);
+        } else {
+          await managerProfileApi.updateStoreDetail(definition.key, editingOption.id, body);
+        }
+      } else if (isAdmin) {
+        await adminProfileApi.createStoreDetail(definition.key, body);
+      } else {
+        await managerProfileApi.createStoreDetail(definition.key, body);
+      }
+      await refreshSection();
+      setIsEditorOpen(false);
+    } catch (error) {
+      Alert.alert(
+        "Unable to save store detail",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDelete = (optionId: string, value: string) => {
@@ -443,7 +456,7 @@ export default function StoreDetailDetailComponent() {
               definition.key,
               optionId,
             );
-            await refreshAdminSection();
+            await refreshSection();
           } catch (error) {
             Alert.alert(
               "Unable to delete store detail",
@@ -452,21 +465,17 @@ export default function StoreDetailDetailComponent() {
           }
           return;
         }
-
-        let nextOptions = section.options.filter(
-          (option) => option.id !== optionId,
-        );
-        if (
-          !nextOptions.some((option) => option.isActive) &&
-          nextOptions.length > 0
-        ) {
-          nextOptions = nextOptions.map((option, index) => ({
-            ...option,
-            isActive: index === 0,
-          }));
+        const definition = getStoreDetailDefinition(id);
+        if (!definition) return;
+        try {
+          await managerProfileApi.deleteStoreDetail(definition.key, optionId);
+          await refreshSection();
+        } catch (error) {
+          Alert.alert(
+            "Unable to delete store detail",
+            error instanceof Error ? error.message : "Please try again.",
+          );
         }
-        updateMockStoreDetailOptions(id, nextOptions);
-        setOptions(nextOptions);
         },
       },
     ]);
@@ -504,7 +513,19 @@ export default function StoreDetailDetailComponent() {
         </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 100 }}>
+      <ScrollView
+        contentContainerStyle={{ padding: 20, paddingBottom: 100 }}
+        refreshControl={
+          !isAdmin ? (
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => void handlePullToRefresh()}
+              tintColor={theme.primary}
+              colors={[theme.primary]}
+            />
+          ) : undefined
+        }
+      >
         {loading ? (
           <Text
             className="text-base text-center py-8"
@@ -689,7 +710,7 @@ export default function StoreDetailDetailComponent() {
                       className="text-xs font-bold mb-1 uppercase"
                       style={{ color: theme.muted }}
                     >
-                      CGST Percentage (%)
+                      {isAdmin ? "CGST Percentage (%)" : "GST Percentage (%)"}
                     </Text>
                     <TextInput
                       placeholder="e.g. 2.5"
@@ -706,63 +727,65 @@ export default function StoreDetailDetailComponent() {
                       }}
                       autoFocus={true}
                     />
-
-                    <Text
-                      className="text-xs font-bold mb-1 uppercase"
-                      style={{ color: theme.muted }}
-                    >
-                      SGST Percentage (%)
-                    </Text>
-                    <TextInput
-                      placeholder="e.g. 2.5"
-                      placeholderTextColor={theme.muted}
-                      value={gpsCoordinates}
-                      onChangeText={setGpsCoordinates}
-                      keyboardType="numeric"
-                      className="px-4 rounded-xl mb-6 font-bold"
-                      style={{
-                        backgroundColor: theme.bg,
-                        color: theme.text,
-                        fontSize: 16,
-                        height: 52,
-                      }}
-                    />
-
-                    <View className="p-3 mb-6 rounded-xl bg-black/5 dark:bg-white/5 flex-row justify-between items-center">
-                      <Text
-                        className="text-xs font-bold"
-                        style={{ color: theme.muted }}
-                      >
-                        Calculated Total GST:
-                      </Text>
-                      <Text
-                        className="text-sm font-black"
-                        style={{ color: theme.primary }}
-                      >
-                        {(parseFloat(addressLine) || 0) +
-                          (parseFloat(gpsCoordinates) || 0)}
-                        %
-                      </Text>
-                    </View>
-                    <Text
-                      className="text-xs font-bold mb-1 uppercase"
-                      style={{ color: theme.muted }}
-                    >
-                      Description
-                    </Text>
-                    <TextInput
-                      placeholder="Optional charge description"
-                      placeholderTextColor={theme.muted}
-                      value={fourthVal}
-                      onChangeText={setFourthVal}
-                      className="px-4 rounded-xl mb-6 font-semibold"
-                      style={{
-                        backgroundColor: theme.bg,
-                        color: theme.text,
-                        fontSize: 16,
-                        height: 52,
-                      }}
-                    />
+                    {isAdmin ? (
+                      <>
+                        <Text
+                          className="text-xs font-bold mb-1 uppercase"
+                          style={{ color: theme.muted }}
+                        >
+                          SGST Percentage (%)
+                        </Text>
+                        <TextInput
+                          placeholder="e.g. 2.5"
+                          placeholderTextColor={theme.muted}
+                          value={gpsCoordinates}
+                          onChangeText={setGpsCoordinates}
+                          keyboardType="numeric"
+                          className="px-4 rounded-xl mb-6 font-bold"
+                          style={{
+                            backgroundColor: theme.bg,
+                            color: theme.text,
+                            fontSize: 16,
+                            height: 52,
+                          }}
+                        />
+                        <View className="p-3 mb-6 rounded-xl bg-black/5 dark:bg-white/5 flex-row justify-between items-center">
+                          <Text
+                            className="text-xs font-bold"
+                            style={{ color: theme.muted }}
+                          >
+                            Calculated Total GST:
+                          </Text>
+                          <Text
+                            className="text-sm font-black"
+                            style={{ color: theme.primary }}
+                          >
+                            {(parseFloat(addressLine) || 0) +
+                              (parseFloat(gpsCoordinates) || 0)}
+                            %
+                          </Text>
+                        </View>
+                        <Text
+                          className="text-xs font-bold mb-1 uppercase"
+                          style={{ color: theme.muted }}
+                        >
+                          Description
+                        </Text>
+                        <TextInput
+                          placeholder="Optional charge description"
+                          placeholderTextColor={theme.muted}
+                          value={fourthVal}
+                          onChangeText={setFourthVal}
+                          className="px-4 rounded-xl mb-6 font-semibold"
+                          style={{
+                            backgroundColor: theme.bg,
+                            color: theme.text,
+                            fontSize: 16,
+                            height: 52,
+                          }}
+                        />
+                      </>
+                    ) : null}
                   </>
                 ) : isChargesSection ? (
                   <>

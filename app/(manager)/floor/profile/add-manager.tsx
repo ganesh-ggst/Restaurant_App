@@ -1,4 +1,5 @@
-import AddManagerModal from "../../../../components/manager/AddManagerModal";
-export default function FloorAddManager() {
-  return <AddManagerModal />;
+import BranchManagersView from "../../../../components/manager/BranchManagersView";
+
+export default function FloorBranchManagersScreen() {
+  return <BranchManagersView />;
 }

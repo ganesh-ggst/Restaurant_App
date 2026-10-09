@@ -1,4 +1,4 @@
-import { useFocusEffect, useRouter, useSegments } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import {
   ArrowLeft,
@@ -14,6 +14,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   Text,
   TextInput,
@@ -21,7 +22,6 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { MANAGER_MOCK_DATA } from "../../constants/managerMockData";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { AdminWaiter, adminProfileApi } from "../../services/api/admin-profile";
 
@@ -96,10 +96,8 @@ async function getStableWaiterNumbers(
 
 export default function AddWaiterModal() {
   const router = useRouter();
-  const segments = useSegments();
   const insets = useSafeAreaInsets();
   const theme = useAppTheme();
-  const isAdmin = segments[0] === "(admin)";
 
   const [activeTab, setActiveTab] = useState<"add" | "showAll">("add");
   const [waiterName, setWaiterName] = useState("");
@@ -111,24 +109,24 @@ export default function AddWaiterModal() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editedName, setEditedName] = useState("");
   const [editedIsActive, setEditedIsActive] = useState<boolean>(true);
-  const [adminWaiters, setAdminWaiters] = useState<AdminWaiter[]>([]);
-  const [adminWaiterNumbers, setAdminWaiterNumbers] = useState<
-    Map<string, number>
-  >(() => new Map());
-  const hasLoadedAdminWaiters = useRef(false);
+  const [waiters, setWaiters] = useState<AdminWaiter[]>([]);
+  const [waiterNumbers, setWaiterNumbers] = useState<Map<string, number>>(
+    () => new Map(),
+  );
+  const hasLoadedWaiters = useRef(false);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [, forceUpdate] = useState({});
 
-  const loadWaiters = useCallback(async () => {
-    if (!isAdmin) return;
-    if (!hasLoadedAdminWaiters.current) setLoading(true);
+  const loadWaiters = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else if (!hasLoadedWaiters.current) setLoading(true);
     try {
-      const waiters = await adminProfileApi.getWaiters();
-      const numbers = await getStableWaiterNumbers(waiters);
-      setAdminWaiterNumbers(numbers);
-      setAdminWaiters(waiters);
-      hasLoadedAdminWaiters.current = true;
+      const nextWaiters = await adminProfileApi.getWaiters(isRefresh);
+      const numbers = await getStableWaiterNumbers(nextWaiters);
+      setWaiterNumbers(numbers);
+      setWaiters(nextWaiters);
+      hasLoadedWaiters.current = true;
     } catch (error) {
       Alert.alert(
         "Unable to load waiters",
@@ -136,12 +134,13 @@ export default function AddWaiterModal() {
       );
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  }, [isAdmin]);
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
-      void loadWaiters();
+      if (!hasLoadedWaiters.current) void loadWaiters();
     }, [loadWaiters]),
   );
 
@@ -151,54 +150,20 @@ export default function AddWaiterModal() {
       return;
     }
 
-    if (isAdmin) {
-      setSaving(true);
-      try {
-        await adminProfileApi.createWaiter(waiterName.trim());
-        await loadWaiters();
-        setWaiterName("");
-        setActiveTab("showAll");
-        Alert.alert("Success", "Waiter added & access granted successfully!");
-      } catch (error) {
-        Alert.alert(
-          "Unable to add waiter",
-          error instanceof Error ? error.message : "Please try again.",
-        );
-      } finally {
-        setSaving(false);
-      }
-      return;
-    }
-
+    setSaving(true);
     try {
-      const newWaiter = {
-        id: `w_${Date.now()}`,
-        name: waiterName.trim(),
-        managerId: null,
-        status: "available",
-        isActive: true,
-      };
-
-      if (!MANAGER_MOCK_DATA.waiters) {
-        MANAGER_MOCK_DATA.waiters = [];
-      }
-      MANAGER_MOCK_DATA.waiters.push(newWaiter);
-
-      Alert.alert("Success", "Waiter added & access granted successfully!", [
-        {
-          text: "OK",
-          onPress: () => {
-            setWaiterName("");
-            setActiveTab("showAll");
-            forceUpdate({});
-          },
-        },
-      ]);
+      await adminProfileApi.createWaiter(waiterName.trim());
+      await loadWaiters();
+      setWaiterName("");
+      setActiveTab("showAll");
+      Alert.alert("Success", "Waiter added & access granted successfully!");
     } catch (error) {
       Alert.alert(
-        "Error",
-        error instanceof Error ? error.message : "Failed to add waiter.",
+        "Unable to add waiter",
+        error instanceof Error ? error.message : "Please try again.",
       );
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -214,55 +179,31 @@ export default function AddWaiterModal() {
       return;
     }
 
-    if (isAdmin) {
-      setSaving(true);
-      try {
-        const waiter = adminWaiters.find((item) => item.id === waiterId);
-        const status = editedIsActive
-          ? waiter?.status === "off_duty"
-            ? "available"
-            : waiter?.status || "available"
-          : "off_duty";
-        await adminProfileApi.updateWaiter(waiterId, {
-          name: editedName.trim(),
-          isActive: editedIsActive,
-          status,
-        });
-        await loadWaiters();
-        setEditingId(null);
-        setEditedName("");
-        setEditedIsActive(true);
-      } catch (error) {
-        Alert.alert(
-          "Unable to update waiter",
-          error instanceof Error ? error.message : "Please try again.",
-        );
-      } finally {
-        setSaving(false);
-      }
-      return;
+    setSaving(true);
+    try {
+      const waiter = waiters.find((item) => item.id === waiterId);
+      const status = editedIsActive
+        ? waiter?.status === "off_duty"
+          ? "available"
+          : waiter?.status || "available"
+        : "off_duty";
+      await adminProfileApi.updateWaiter(waiterId, {
+        name: editedName.trim(),
+        isActive: editedIsActive,
+        status,
+      });
+      await loadWaiters();
+      setEditingId(null);
+      setEditedName("");
+      setEditedIsActive(true);
+    } catch (error) {
+      Alert.alert(
+        "Unable to update waiter",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setSaving(false);
     }
-
-    const waiter = MANAGER_MOCK_DATA.waiters?.find(
-      (w: any) => w.id === waiterId,
-    );
-    if (waiter) {
-      waiter.name = editedName.trim();
-      waiter.isActive = editedIsActive;
-      if (!editedIsActive) {
-        waiter.status = "inactive";
-        if (waiter.managerId) {
-          waiter.managerId = null;
-        }
-      } else if (waiter.status === "inactive") {
-        waiter.status = "available";
-      }
-    }
-
-    setEditingId(null);
-    setEditedName("");
-    setEditedIsActive(true);
-    forceUpdate({});
   };
 
   const handleDeleteWaiter = (waiterId: string) => {
@@ -275,40 +216,24 @@ export default function AddWaiterModal() {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
-            if (isAdmin) {
-              try {
-                await adminProfileApi.deleteWaiter(waiterId);
-                if (editingId === waiterId) setEditingId(null);
-                await loadWaiters();
-              } catch (error) {
-                Alert.alert(
-                  "Unable to delete waiter",
-                  error instanceof Error ? error.message : "Please try again.",
-                );
-              }
-              return;
+            try {
+              await adminProfileApi.deleteWaiter(waiterId);
+              if (editingId === waiterId) setEditingId(null);
+              await loadWaiters();
+            } catch (error) {
+              Alert.alert(
+                "Unable to delete waiter",
+                error instanceof Error ? error.message : "Please try again.",
+              );
             }
-
-            MANAGER_MOCK_DATA.waiters = (
-              MANAGER_MOCK_DATA.waiters || []
-            ).filter((w: any) => w.id !== waiterId);
-            if (editingId === waiterId) setEditingId(null);
           },
         },
       ],
     );
   };
 
-  const waitersList = isAdmin ? adminWaiters : MANAGER_MOCK_DATA.waiters || [];
-  const waiterNumbersById = isAdmin
-    ? adminWaiterNumbers
-    : new Map(
-        [...waitersList]
-          .sort((first: any, second: any) =>
-            String(first.id).localeCompare(String(second.id)),
-          )
-          .map((waiter: any, index: number) => [waiter.id, index + 1]),
-      );
+  const waitersList = waiters;
+  const waiterNumbersById = waiterNumbers;
   const sortedWaiters = [...waitersList].sort(
     (first: any, second: any) =>
       (waiterNumbersById.get(first.id) ?? Number.MAX_SAFE_INTEGER) -
@@ -475,6 +400,16 @@ export default function AddWaiterModal() {
           }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            activeTab === "showAll" ? (
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={() => void loadWaiters(true)}
+                tintColor={theme.primary}
+                colors={[theme.primary]}
+              />
+            ) : undefined
+          }
         >
           {activeTab === "add" ? (
             <View>
