@@ -57,7 +57,9 @@ function nextOrderStatus(order: OperationsOrder): string | null {
     case "preparing":
       return "ready";
     case "ready":
-      return order.fulfillmentType === "delivery"
+      return ["delivery", "takeaway"].includes(
+        order.fulfillmentType?.toLowerCase() || "",
+      )
         ? "out_for_delivery"
         : "completed";
     case "out_for_delivery":

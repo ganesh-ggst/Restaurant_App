@@ -14,6 +14,7 @@ import {
 } from "lucide-react-native";
 import { memo, useEffect, useState } from "react";
 import {
+  Alert,
   Dimensions,
   Image,
   Keyboard,
@@ -38,18 +39,15 @@ import Animated, {
 } from "react-native-reanimated";
 
 import {
-  AVAILABLE_COUPONS,
   CELEBRATION_EMOJIS,
-  CROSS_SELL_ITEMS,
-  DELIVERY_OPTIONS,
-  MOCK_ADDRESSES,
-  MOCK_BRANCHES,
   RESTAURANT_NAME,
-  TAX_DETAILS,
   TIP_OPTIONS,
 } from "../../constants/mockData";
 
 const { height, width } = Dimensions.get("window");
+
+const hasImageUri = (uri: unknown): uri is string =>
+  typeof uri === "string" && uri.trim().length > 0;
 
 const CelebrationParticle = ({ progress, index, total }: any) => {
   const animatedStyle = useAnimatedStyle(() => {
@@ -108,13 +106,29 @@ export const DeliveryCartModal = memo(
     activeAddress,
     setActiveAddress,
     orderMode = "Delivery",
+    activeBranch,
+    addresses = [],
+    branches = [],
+    offers = [],
+    crossSellItems = [],
+    cartPricing,
+    onApplyCoupon,
+    onRemoveCoupon,
+    onCheckout,
   }: any) => {
     const isDelivery = orderMode === "Delivery";
+    const deliveryOptions = (activeBranch?.deliveryOptions || [])
+      .filter((option: any) => option.isActive)
+      .map((option: any) => ({
+        id: option._id || option.name,
+        title: option.name,
+        subtitle: option.description || "",
+        price: option.price,
+        time: option.estimatedTimeRange || "",
+      }));
 
     const [showAddressModal, setShowAddressModal] = useState(false);
-    const [currentAddress, setCurrentAddress] = useState(
-      activeAddress || MOCK_ADDRESSES[0],
-    );
+    const [currentAddress, setCurrentAddress] = useState(activeAddress);
 
     useEffect(() => {
       if (activeAddress) setCurrentAddress(activeAddress);
@@ -122,7 +136,7 @@ export const DeliveryCartModal = memo(
 
     const [activeTab, setActiveTab] = useState("Instructions");
     const [selectedDelivery, setSelectedDelivery] = useState(
-      DELIVERY_OPTIONS[1].id,
+      deliveryOptions[0]?.id || "",
     );
 
     const [tipAmount, setTipAmount] = useState(0);
@@ -162,7 +176,6 @@ export const DeliveryCartModal = memo(
         setCustomTipInput("");
         setIsCustomTip(false);
         setIsBillExpanded(false);
-        setSelectedDelivery(DELIVERY_OPTIONS[1].id);
       }
     }, [cart]);
 
@@ -180,15 +193,18 @@ export const DeliveryCartModal = memo(
         sum + (item.total || getNumericPrice(item.price) * item.quantity),
       0,
     );
-    const originalItemTotal = cartTotal + Math.floor(cartTotal * 0.2);
+    const itemTotal = cartPricing?.subtotal ?? cartTotal;
+    const originalItemTotal =
+      itemTotal + (cartPricing?.discount || appliedCoupon?.discount || 0);
 
-    const isFreeDeliveryEligible = !isDelivery || cartTotal >= 99;
-    const baseDeliveryFee = isDelivery ? TAX_DETAILS.baseDeliveryFee : 0;
+    const charges = activeBranch?.restaurantCharges || {};
+    const isFreeDeliveryEligible = !isDelivery || itemTotal >= 99;
+    const baseDeliveryFee = isDelivery ? charges.delivery || 0 : 0;
     const standardFee = isFreeDeliveryEligible ? 0 : baseDeliveryFee;
 
-    const selectedOption = DELIVERY_OPTIONS.find(
-      (o) => o.id === selectedDelivery,
-    );
+    const selectedOption =
+      deliveryOptions.find((option: any) => option.id === selectedDelivery) ||
+      deliveryOptions[0];
     const optionPrice = isDelivery && selectedOption ? selectedOption.price : 0;
 
     const actualDeliveryFee = isDelivery
@@ -203,21 +219,23 @@ export const DeliveryCartModal = memo(
     const discount = (appliedCoupon ? appliedCoupon.discount : 0) + ecoDiscount;
 
     const packagingCharge =
-      orderMode === "Dine-in" ? 0 : TAX_DETAILS.packagingCharge;
-    const platformFee = TAX_DETAILS.platformFee;
-    const gstAmount = cartTotal * TAX_DETAILS.gstRate;
+      orderMode === "Dine-in" ? 0 : charges.packaging || 0;
+    const platformFee = charges.platform || 0;
+    const gstRate = (activeBranch?.taxDetails?.gstPercentage || 0) / 100;
+    const gstAmount = itemTotal * gstRate;
     const totalTaxesAndCharges = packagingCharge + platformFee + gstAmount;
 
     const finalPayable =
-      cartTotal +
-      actualDeliveryFee +
-      totalTaxesAndCharges +
-      (isDelivery ? tipAmount : 0) -
-      discount;
+      cartPricing?.total ??
+      itemTotal +
+        actualDeliveryFee +
+        totalTaxesAndCharges +
+        (isDelivery ? tipAmount : 0) -
+        discount;
 
     const totalSavings =
       originalItemTotal -
-      cartTotal +
+      itemTotal +
       discount +
       (isDelivery && isFreeDeliveryEligible ? baseDeliveryFee : 0) +
       (isDelivery && !isFreeDeliveryEligible && optionPrice < 0
@@ -245,7 +263,7 @@ export const DeliveryCartModal = memo(
       triggerCelebration();
     };
 
-    const validateAndApplyCoupon = (codeToApply: string) => {
+    const validateAndApplyCoupon = async (codeToApply: string) => {
       Keyboard.dismiss();
       const code = codeToApply.trim().toUpperCase();
       if (!code) {
@@ -253,19 +271,41 @@ export const DeliveryCartModal = memo(
         return;
       }
 
-      const existingCoupon = AVAILABLE_COUPONS.find((c) => c.code === code);
-
-      if (existingCoupon) {
-        handleApplyCoupon(existingCoupon);
-      } else {
-        setCouponError(`'${code}' is not a valid coupon code.`);
+      try {
+        await onApplyCoupon(code);
+        const offer = offers.find(
+          (candidate: any) => candidate.code?.toUpperCase() === code,
+        );
+        const discount =
+          offer?.discountType === "percentage"
+            ? Math.min(
+                itemTotal * ((offer.discountValue || 0) / 100),
+                offer.maxDiscountAmount ?? Number.POSITIVE_INFINITY,
+              )
+            : offer?.discountValue || 0;
+        handleApplyCoupon({
+          code,
+          description: offer?.description || "Offer applied to your cart.",
+          discount,
+        });
+      } catch (error) {
+        setCouponError(
+          error instanceof Error ? error.message : "Unable to apply this offer.",
+        );
       }
     };
 
-    const handleRemoveCoupon = () => {
-      setAppliedCoupon(null);
-      setCouponInput("");
-      setCouponError("");
+    const handleRemoveCoupon = async () => {
+      try {
+        await onRemoveCoupon();
+        setAppliedCoupon(null);
+        setCouponInput("");
+        setCouponError("");
+      } catch (error) {
+        setCouponError(
+          error instanceof Error ? error.message : "Unable to remove offer.",
+        );
+      }
     };
 
     const handleSaveInstructions = () => {
@@ -535,7 +575,7 @@ export const DeliveryCartModal = memo(
                 className="mb-6 -mx-4 px-4"
                 keyboardShouldPersistTaps="handled"
               >
-                {CROSS_SELL_ITEMS.map((cross) => {
+                {crossSellItems.map((cross: any) => {
                   const cartItem = cart.find((c: any) => c.id === cross.id);
                   const currentQty = cartItem ? cartItem.quantity : 0;
 
@@ -549,11 +589,13 @@ export const DeliveryCartModal = memo(
                       className="w-32 rounded-[20px] border p-2 mr-4"
                     >
                       <View className="relative">
-                        <Image
-                          source={{ uri: cross.image }}
-                          className="w-full h-24 rounded-2xl mb-2"
-                          resizeMode="cover"
-                        />
+                        {hasImageUri(cross.image) ? (
+                          <Image
+                            source={{ uri: cross.image }}
+                            className="w-full h-24 rounded-2xl mb-2"
+                            resizeMode="cover"
+                          />
+                        ) : null}
 
                         {currentQty > 0 && (
                           <View className="absolute top-2 right-2 bg-emerald-500 rounded-full px-1.5 py-0.5">
@@ -739,13 +781,13 @@ export const DeliveryCartModal = memo(
                       {couponError ? couponError : " "}
                     </Text>
 
-                    {AVAILABLE_COUPONS.map((coupon, idx) => {
+                    {offers.map((coupon: any, idx: number) => {
                       return (
                         <View
                           key={coupon.code}
                           style={{
                             borderBottomWidth:
-                              idx === AVAILABLE_COUPONS.length - 1 ? 0 : 1,
+                              idx === offers.length - 1 ? 0 : 1,
                             borderBottomColor: theme.border,
                           }}
                           className="py-4 flex-row items-center justify-between"
@@ -830,15 +872,15 @@ export const DeliveryCartModal = memo(
 
                 {activeTab === "Delivery" && isDelivery && (
                   <View>
-                    {DELIVERY_OPTIONS.map((opt, index) => {
-                      const isSelected = selectedDelivery === opt.id;
+                    {deliveryOptions.map((opt: any, index: number) => {
+                      const isSelected = selectedOption?.id === opt.id;
                       return (
                         <Pressable
                           key={opt.id}
                           onPress={() => setSelectedDelivery(opt.id)}
                           style={{
                             borderBottomWidth:
-                              index === DELIVERY_OPTIONS.length - 1 ? 0 : 1,
+                              index === deliveryOptions.length - 1 ? 0 : 1,
                             borderBottomColor: theme.border,
                           }}
                           className="p-4 flex-row items-center"
@@ -1198,7 +1240,7 @@ export const DeliveryCartModal = memo(
                       style={{ color: theme.primary }}
                       className="font-semibold text-[13px]"
                     >
-                      Add ₹{formatPrice(99 - cartTotal)} more to get FREE
+                      Add ₹{formatPrice(99 - itemTotal)} more to get FREE
                       Delivery!
                     </Text>
                   </View>
@@ -1235,7 +1277,7 @@ export const DeliveryCartModal = memo(
                           style={{ color: theme.text }}
                           className="font-semibold"
                         >
-                          ₹{formatPrice(cartTotal)}
+                          ₹{formatPrice(itemTotal)}
                         </Text>
                       </View>
                     </View>
@@ -1292,7 +1334,7 @@ export const DeliveryCartModal = memo(
                                       className="font-semibold line-through mr-2 text-[13px]"
                                     >
                                       ₹
-                                      {formatPrice(TAX_DETAILS.baseDeliveryFee)}
+                                      {formatPrice(baseDeliveryFee)}
                                     </Text>
                                   )}
                                   <Text
@@ -1346,7 +1388,10 @@ export const DeliveryCartModal = memo(
                                 style={{ color: theme.muted, lineHeight: 18 }}
                                 className="font-semibold text-[14px]"
                               >
-                                Delivery Fee | {TAX_DETAILS.deliveryDistance}
+                                Delivery Fee
+                                {activeBranch?.distanceKm
+                                  ? ` | ${activeBranch.distanceKm} km`
+                                  : ""}
                               </Text>
                             </View>
 
@@ -1356,7 +1401,7 @@ export const DeliveryCartModal = memo(
                                   style={{ color: theme.muted }}
                                   className="font-semibold line-through mr-2"
                                 >
-                                  ₹{formatPrice(TAX_DETAILS.baseDeliveryFee)}
+                                  ₹{formatPrice(baseDeliveryFee)}
                                 </Text>
                               )}
                               <Text
@@ -1387,7 +1432,7 @@ export const DeliveryCartModal = memo(
                               style={{ color: theme.primary }}
                               className="font-semibold text-[12px] mt-0.5"
                             >
-                              Add ₹{formatPrice(99 - cartTotal)} more to get
+                              Add ₹{formatPrice(99 - itemTotal)} more to get
                               FREE Delivery!
                             </Text>
                           )}
@@ -1699,6 +1744,26 @@ export const DeliveryCartModal = memo(
               </View>
             </View>
             <Pressable
+              onPress={async () => {
+                try {
+                  const preview = await onCheckout(appliedCoupon?.code);
+                  const total =
+                    preview && typeof preview === "object" && "total" in preview
+                      ? (preview as { total?: number }).total
+                      : undefined;
+                  Alert.alert(
+                    "Checkout Preview",
+                    total === undefined
+                      ? "Your checkout details are ready."
+                      : `Your total is ₹${formatPrice(total)}.`,
+                  );
+                } catch (error) {
+                  Alert.alert(
+                    "Unable to Continue",
+                    error instanceof Error ? error.message : "Please try again.",
+                  );
+                }
+              }}
               style={{ backgroundColor: theme.primary }}
               className="px-8 py-3.5 rounded-2xl"
             >
@@ -1741,7 +1806,7 @@ export const DeliveryCartModal = memo(
                   </Pressable>
                 </View>
                 <View>
-                  {((isDelivery ? MOCK_ADDRESSES : MOCK_BRANCHES) as any[]).map(
+                  {((isDelivery ? addresses : branches) as any[]).map(
                     (item: any) => {
                       const isActive = currentAddress.id === item.id;
                       return (

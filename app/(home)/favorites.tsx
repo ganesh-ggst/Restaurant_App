@@ -4,7 +4,6 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import FoodCard from "../../components/home/FoodCard";
-import { FOOD_ITEMS } from "../../constants/mockData";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { useFavorites, useOrderMode } from "./_layout";
 
@@ -18,6 +17,8 @@ export default function FavoritesScreen() {
   const {
     mode: orderMode,
     carts,
+    menuItems,
+    activeBranch,
     handleAddToCart,
     handleDecrementCartItem,
   } = useOrderMode();
@@ -28,9 +29,18 @@ export default function FavoritesScreen() {
     0,
   );
 
-  const favoriteItems = FOOD_ITEMS.filter((item) =>
-    favorites.includes(item.id),
-  );
+  const favoriteItems = menuItems.filter((item: any) => {
+    if (!favorites.includes(item.id) || !item.isAvailable || !activeBranch?.id) {
+      return false;
+    }
+
+    const itemBranchIds = item.branchIds || [];
+    const isAvailableAtBranch = itemBranchIds.length > 0
+      ? itemBranchIds.includes(activeBranch.id)
+      : !item.branchId || item.branchId === activeBranch.id;
+
+    return isAvailableAtBranch;
+  });
 
   return (
     <View
@@ -89,7 +99,7 @@ export default function FavoritesScreen() {
           </View>
         ) : (
           <View className="flex-row flex-wrap justify-between px-4 mt-2">
-            {favoriteItems.map((item) => {
+            {favoriteItems.map((item: any) => {
               const cartItem = activeCart.find((c: any) => c.id === item.id);
               return (
                 <View key={item.id} style={{ width: "48%" }} className="mb-4">

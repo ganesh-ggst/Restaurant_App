@@ -11,6 +11,8 @@ export default function ProfileStackLayout() {
       <Stack
         screenOptions={{
           headerShown: false,
+          animation: "slide_from_right",
+          gestureEnabled: true,
           contentStyle: { backgroundColor: theme.bg },
         }}
       >

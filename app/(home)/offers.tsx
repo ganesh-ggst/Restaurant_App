@@ -9,14 +9,14 @@ import {
   X,
 } from "lucide-react-native";
 import { useState } from "react";
-import { Image, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import FoodCard from "../../components/home/FoodCard";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { useOrderMode } from "./_layout";
 
-import { ALL_OFFERS, FOOD_ITEMS } from "../../constants/mockData";
+import { api } from "../../services/api";
 
 export default function OffersScreen() {
   const router = useRouter();
@@ -29,6 +29,9 @@ export default function OffersScreen() {
   const {
     mode: orderMode,
     carts,
+    menuItems,
+    offers,
+    activeBranch,
     handleAddToCart,
     handleDecrementCartItem,
   } = useOrderMode();
@@ -40,13 +43,34 @@ export default function OffersScreen() {
   );
 
   const params = useLocalSearchParams();
-  const targetOfferId = params.offerId
-    ? parseInt(params.offerId as string)
-    : null;
+  const targetOfferId = Array.isArray(params.offerId)
+    ? params.offerId[0]
+    : params.offerId || null;
 
+  const selectedBranchId = activeBranch?.id;
+  const branchOffers = selectedBranchId
+    ? offers.filter((offer: any) => {
+        const offerBranchId =
+          typeof offer.branchId === "string"
+            ? offer.branchId
+            : offer.branchId?._id;
+        return offerBranchId === selectedBranchId;
+      })
+    : [];
   const displayedOffers = targetOfferId
-    ? ALL_OFFERS.filter((o) => o.id === targetOfferId)
-    : ALL_OFFERS;
+    ? branchOffers.filter((offer: any) => offer.id === targetOfferId)
+    : branchOffers;
+
+  const selectedOffer = displayedOffers[0];
+  const applicableItems = selectedOffer
+    ? selectedOffer.appliesToAllItems
+      ? menuItems
+      : selectedOffer.applicableMenuItemIds?.length
+        ? menuItems.filter((item: any) =>
+            selectedOffer.applicableMenuItemIds.includes(item.id),
+          )
+        : menuItems
+    : [];
 
   const copyToClipboard = async (code: string) => {
     await Clipboard.setStringAsync(code);
@@ -114,25 +138,43 @@ export default function OffersScreen() {
           </Pressable>
         )}
 
-        {displayedOffers.map((offer) => (
+        {displayedOffers.map((offer: any) => (
           <View key={offer.id} className={targetOfferId ? "mb-0" : "mb-3"}>
             <Pressable
-              onPress={() => router.setParams({ offerId: offer.id.toString() })}
-              className="h-48 w-full overflow-hidden rounded-[24px] border"
-              style={{ borderColor: theme.border }}
+              onPress={() => {
+                router.setParams({ offerId: offer.id });
+                void api.getOffer(offer.id).catch((error: unknown) => {
+                  Alert.alert(
+                    "Unable to Load Offer",
+                    error instanceof Error ? error.message : "Please try again.",
+                  );
+                });
+              }}
+              className="w-full overflow-hidden rounded-[24px] border"
+              style={{ borderColor: theme.border, minHeight: 180 }}
             >
-              <Image
-                source={{ uri: offer.image }}
-                className="absolute h-full w-full"
-                resizeMode="cover"
-              />
+              {offer.image?.trim() ? (
+                <Image
+                  source={{ uri: offer.image }}
+                  className="absolute h-full w-full"
+                  resizeMode="cover"
+                />
+              ) : null}
               <View className="absolute inset-0 bg-black/60" />
 
-              <View className="flex-1 p-5 justify-center">
-                <Text className="text-white text-4xl font-black tracking-tight">
+              <View className="flex-1 p-4 justify-center">
+                <Text
+                  className="text-white text-2xl font-black tracking-tight"
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.75}
+                >
                   {offer.title}
                 </Text>
-                <Text className="text-white/80 text-base font-bold mt-1">
+                <Text
+                  className="text-white/80 text-sm font-bold mt-1"
+                  numberOfLines={2}
+                >
                   {offer.subtitle}
                 </Text>
 
@@ -141,10 +183,12 @@ export default function OffersScreen() {
                     e.stopPropagation();
                     copyToClipboard(offer.code);
                   }}
-                  className="mt-4 self-start bg-white/15 px-4 py-2.5 rounded-xl border border-white/30 border-dashed flex-row items-center"
+                  className="mt-2 self-start max-w-full bg-white/15 px-3 py-1.5 rounded-xl border border-white/30 border-dashed flex-row items-center"
                 >
                   <Text
-                    className="text-sm font-black tracking-widest mr-2"
+                    className="text-xs font-black tracking-widest mr-2"
+                    numberOfLines={1}
+                    ellipsizeMode="middle"
                     style={{
                       color: copiedCode === offer.code ? "#4ade80" : "white",
                     }}
@@ -171,7 +215,7 @@ export default function OffersScreen() {
                   Applicable Items
                 </Text>
                 <View className="flex-row flex-wrap justify-between">
-                  {FOOD_ITEMS.map((item: any) => {
+                  {applicableItems.map((item: any) => {
                     const cartItem = activeCart.find(
                       (c: any) => c.id === item.id,
                     );
