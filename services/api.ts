@@ -5,6 +5,7 @@ import {
   adminProfileApi,
 } from "./api/admin-profile";
 import { profileApi } from "./api/profile";
+import { customerApi } from "./api/customer";
 
 export const api = {
   ...authApi,
@@ -12,4 +13,5 @@ export const api = {
   ...adminProfileApi,
   ...adminNotificationsApi,
   ...profileApi,
+  ...customerApi,
 };

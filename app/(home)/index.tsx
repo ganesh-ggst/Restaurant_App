@@ -1,6 +1,5 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { useRouter } from "expo-router";
-import { useVideoPlayer } from "expo-video";
 import {
   ArrowLeft,
   BellRing,
@@ -19,14 +18,17 @@ import {
   Wifi,
   X,
 } from "lucide-react-native";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
+  Alert,
   FlatList,
+  Image,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   Text,
   TextInput,
   TouchableWithoutFeedback,
@@ -37,18 +39,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import FoodCard from "../../components/home/FoodCard";
 import { HomeHeader } from "../../components/home/HomeHeader";
-import {
-  EMPTY_STATE,
-  FEATURED_CONTENT,
-  FOOD_ITEMS,
-  MOCK_ADDRESSES,
-  MOCK_BRANCHES,
-  ORDER_MODES,
-  STORE_DETAILS,
-  TAX_DETAILS,
-} from "../../constants/mockData";
 import { useAppTheme } from "../../hooks/useAppTheme";
+import { api } from "../../services/api";
 import { useOrderMode } from "./_layout";
+
+const hasImageUri = (uri: unknown): uri is string =>
+  typeof uri === "string" && uri.trim().length > 0;
 
 const getNumericPrice = (price: any) => {
   if (typeof price === "number") return price;
@@ -70,6 +66,13 @@ export default function HomeScreen() {
     mode: orderMode,
     setMode: setGlobalOrderMode,
     carts,
+    menuItems,
+    categories,
+    offers,
+    featuredReels,
+    addresses,
+    branches,
+    branchesLoaded,
     activeAddress,
     setActiveAddress,
     activeBranch,
@@ -89,12 +92,17 @@ export default function HomeScreen() {
   const [isVegOnly, setIsVegOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [isListening, setIsListening] = useState(false);
+  const [voiceResultIds, setVoiceResultIds] = useState<string[] | null>(null);
+  const [offersViewportWidth, setOffersViewportWidth] = useState(0);
+  const [activeOfferIndex, setActiveOfferIndex] = useState(0);
   const [showAddressModal, setShowAddressModal] = useState(false);
+  const [addressModalSelection, setAddressModalSelection] = useState<
+    "address" | "branch"
+  >("address");
 
   const [pendingModeSetup, setPendingModeSetup] = useState<string | null>(null);
   const [lastMode, setLastMode] = useState("Delivery");
 
-  const [showDineInTakeawayModal, setShowDineInTakeawayModal] = useState(false);
   const [showDineInCheckInModal, setShowDineInCheckInModal] = useState(false);
   const [showCameraScannerModal, setShowCameraScannerModal] = useState(false);
 
@@ -106,18 +114,111 @@ export default function HomeScreen() {
   const [scanned, setScanned] = useState(false);
 
   const activeCart = carts[orderMode] || [];
-
-  const availableModes = ORDER_MODES.filter((m) => m.id !== orderMode);
+  const selectedBranchId = activeBranch?.id;
+  const branchCategories = useMemo(
+    () =>
+      categories.filter(
+        (category: any) =>
+          !category.branchId || category.branchId === selectedBranchId,
+      ),
+    [categories, selectedBranchId],
+  );
+  const branchOffers = selectedBranchId
+    ? offers.filter((offer: any) => {
+        const offerBranchId =
+          typeof offer.branchId === "string"
+            ? offer.branchId
+            : offer.branchId?._id;
+        return offerBranchId === selectedBranchId;
+      })
+    : [];
+  const branchFeaturedReels = featuredReels.filter((reel: any) => {
+    const reelBranchId =
+      typeof reel.branchId === "string" ? reel.branchId : reel.branchId?._id;
+    return !reelBranchId || reelBranchId === selectedBranchId;
+  });
+  const restaurantName =
+    activeBranch?.restaurantNames?.find(
+      (restaurantName: { isActive: boolean; name: string }) =>
+        restaurantName.isActive && restaurantName.name.trim().length > 0,
+    )?.name ||
+    activeBranch?.name ||
+    undefined;
+  const greetings = useMemo(
+    () =>
+      activeBranch?.storefrontDisplay?.greetings
+        ?.filter(
+          (greeting: { text: string; isActive: boolean }) =>
+            greeting.isActive && greeting.text.trim().length > 0,
+        )
+        .map(
+          (greeting: { text: string; isActive: boolean }) => greeting.text,
+        ) || [],
+    [activeBranch?.storefrontDisplay?.greetings],
+  );
+  const searchPlaceholders = useMemo(
+    () =>
+      activeBranch?.storefrontDisplay?.searchPlaceholders
+        ?.filter(
+          (placeholder: { text: string; isActive: boolean }) =>
+            placeholder.isActive && placeholder.text.trim().length > 0,
+        )
+        .map(
+          (placeholder: { text: string; isActive: boolean }) =>
+            placeholder.text,
+        ) || [],
+    [activeBranch?.storefrontDisplay?.searchPlaceholders],
+  );
+  const emptyState = useMemo(
+    () =>
+      activeBranch?.storefrontDisplay?.emptyStates?.find(
+        (state: {
+          title: string;
+          description: string;
+          isActive: boolean;
+        }) =>
+          state.isActive &&
+          (state.title.trim().length > 0 ||
+            state.description.trim().length > 0),
+      ),
+    [activeBranch?.storefrontDisplay?.emptyStates],
+  );
+  const taxPercentage =
+    activeBranch?.taxDetailOptions?.find(
+      (option: { gstPercentage: number; isActive: boolean }) => option.isActive,
+    )
+      ?.gstPercentage ??
+    activeBranch?.taxDetails?.gstPercentage ??
+    0;
+  const gstRate = taxPercentage / 100;
+  const activeWifi = activeBranch?.wifiConnections?.find(
+    (connection: { name: string; password: string; isActive: boolean }) =>
+      connection.isActive,
+  );
+  const assignedWaiter = Array.isArray(activeBranch?.managerIds)
+    ? activeBranch.managerIds.find(
+        (manager: string | {
+          _id: string;
+          firstName?: string;
+          lastName?: string;
+          managerType?: string;
+        }) =>
+          typeof manager !== "string" &&
+          manager.managerType?.toLowerCase().includes("waiter"),
+      )
+    : undefined;
+  const assignedWaiterName =
+    assignedWaiter && typeof assignedWaiter !== "string"
+      ? [assignedWaiter.firstName, assignedWaiter.lastName]
+          .filter(Boolean)
+          .join(" ")
+      : "";
 
   const isOrderLocked =
     confirmedOrders.length > 0 || dineInCartState === "waiting";
 
-  const handleModeChange = () => {
-    setShowDineInTakeawayModal(true);
-  };
-
   const handleSelectMode = (selectedMode: string) => {
-    setShowDineInTakeawayModal(false);
+    if (isOrderLocked || selectedMode === orderMode) return;
     setLastMode(orderMode);
 
     setTimeout(() => {
@@ -194,31 +295,47 @@ export default function HomeScreen() {
     setActiveServiceModal(serviceType);
   };
 
-  const player = useVideoPlayer(
-    FEATURED_CONTENT.type === "video" ? FEATURED_CONTENT.source : null,
-    (playerInstance) => {
-      playerInstance.loop = true;
-      playerInstance.muted = true;
-      playerInstance.play();
-    },
-  );
-
   const handleVoiceSearch = () => {
     setIsListening(true);
     setSearchQuery("");
+    setVoiceResultIds(null);
     setTimeout(() => {
-      setSearchQuery("Biryani");
-      setIsListening(false);
+      void api
+        .voiceSearch("Biryani")
+        .then((results) => {
+          setVoiceResultIds(results.map((item) => item._id));
+          setSearchQuery("Biryani");
+        })
+        .catch((error: unknown) => {
+          Alert.alert(
+            "Voice Search Failed",
+            error instanceof Error ? error.message : "Please try again.",
+          );
+        })
+        .finally(() => setIsListening(false));
     }, 2500);
   };
 
   const getFilteredData = () => {
-    let filtered = FOOD_ITEMS;
-    if (isVegOnly) filtered = filtered.filter((item) => item.isVeg);
+    let filtered = menuItems.filter((item: any) => item.isAvailable);
+    if (activeBranch?.id) {
+      filtered = filtered.filter((item: any) => {
+        const itemBranchIds = item.branchIds || [];
+        return itemBranchIds.length > 0
+          ? itemBranchIds.includes(activeBranch.id)
+          : !item.branchId || item.branchId === activeBranch.id;
+      });
+    }
+    if (isVegOnly) filtered = filtered.filter((item: any) => item.isVeg);
+    if (voiceResultIds) {
+      filtered = filtered.filter((item: any) =>
+        voiceResultIds.includes(item.id),
+      );
+    }
 
     const lowerQuery = searchQuery.toLowerCase().trim();
     if (lowerQuery) {
-      filtered = filtered.filter((item) => {
+      filtered = filtered.filter((item: any) => {
         if (item.name.toLowerCase().includes(lowerQuery)) return true;
         const queryWords = lowerQuery.split(" ").filter((w) => w.length > 0);
         return queryWords.some((word) =>
@@ -230,24 +347,131 @@ export default function HomeScreen() {
   };
 
   const listData = getFilteredData();
+  const offerCardHeight = offersViewportWidth * 0.4;
+  const offersCarousel =
+    (orderMode === "Delivery" || orderMode === "Takeaway") && !searchQuery ? (
+      <View
+        className="w-full px-4"
+        style={{ overflow: "hidden" }}
+      >
+        <ScrollView
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ padding: 0 }}
+          style={{ width: "100%", flexGrow: 0 }}
+          className="mt-2 mb-8"
+          nestedScrollEnabled
+          directionalLockEnabled
+          decelerationRate="fast"
+          onLayout={(event) => {
+            const measuredWidth = event.nativeEvent.layout.width;
+            setOffersViewportWidth((currentWidth) =>
+              currentWidth === measuredWidth ? currentWidth : measuredWidth,
+            );
+          }}
+          onMomentumScrollEnd={(event) => {
+            if (offersViewportWidth <= 0) return;
+            const nextIndex = Math.round(
+              event.nativeEvent.contentOffset.x / offersViewportWidth,
+            );
+            setActiveOfferIndex(
+              Math.max(0, Math.min(nextIndex, branchOffers.length - 1)),
+            );
+          }}
+        >
+          {branchOffers.map((offer: any) => (
+            <Pressable
+              key={offer.id}
+              disabled={offersViewportWidth <= 0}
+              onPress={() =>
+                router.push({
+                  pathname: "/(home)/offers",
+                  params: { offerId: offer.id },
+                })
+              }
+              className="relative overflow-hidden rounded-[24px]"
+              style={{
+                width: offersViewportWidth,
+                height: offerCardHeight,
+              }}
+            >
+              {hasImageUri(offer.image) ? (
+                <Image
+                  source={{ uri: offer.image }}
+                  className="absolute h-full w-full"
+                  resizeMode="cover"
+                />
+              ) : null}
+              <View className="absolute inset-0 bg-black/20" />
+              <View className="absolute inset-0 bg-gradient-to-r from-black/75 to-black/10" />
+              <View className="absolute inset-0 justify-center p-4">
+                <Text
+                  className="text-3xl font-black text-white tracking-tighter"
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                >
+                  {offer.title}
+                </Text>
+                <Text
+                  className="text-base font-bold text-gray-200 mt-1"
+                  numberOfLines={2}
+                >
+                  {offer.subtitle}
+                </Text>
+                <View className="mt-3 self-start rounded-full bg-white px-5 py-2.5">
+                  <Text
+                    className="text-sm font-black"
+                    style={{ color: theme.primary }}
+                  >
+                    ORDER NOW
+                  </Text>
+                </View>
+              </View>
+            </Pressable>
+          ))}
+        </ScrollView>
+        {branchOffers.length > 1 && (
+          <View className="flex-row items-center justify-center -mt-5 mb-6">
+            <View className="flex-row items-center">
+              {branchOffers.map((offer: any, index: number) => (
+                <View
+                  key={offer.id}
+                  className="mx-1 h-1.5 rounded-full"
+                  style={{
+                    width: activeOfferIndex === index ? 16 : 6,
+                    backgroundColor:
+                      activeOfferIndex === index ? theme.primary : theme.border,
+                  }}
+                />
+              ))}
+            </View>
+          </View>
+        )}
+      </View>
+    ) : null;
 
   const renderEmptyState = () => {
-    if (!searchQuery) return null;
+    if (!searchQuery || !branchesLoaded || !emptyState) return null;
     return (
       <View className="items-center justify-center py-16 px-6">
-        <Text className="text-6xl mb-4">{EMPTY_STATE.emoji}</Text>
-        <Text
-          className="text-2xl font-black mb-2 text-center"
-          style={{ color: theme.text }}
-        >
-          {EMPTY_STATE.title}
-        </Text>
-        <Text
-          className="text-sm font-semibold text-center leading-5"
-          style={{ color: theme.muted }}
-        >
-          {EMPTY_STATE.subtitle.replace("{query}", searchQuery)}
-        </Text>
+        {emptyState.title.trim().length > 0 && (
+          <Text
+            className="text-2xl font-black mb-2 text-center"
+            style={{ color: theme.text }}
+          >
+            {emptyState.title}
+          </Text>
+        )}
+        {emptyState.description.trim().length > 0 && (
+          <Text
+            className="text-sm font-semibold text-center leading-5"
+            style={{ color: theme.muted }}
+          >
+            {emptyState.description.replace("{query}", searchQuery)}
+          </Text>
+        )}
       </View>
     );
   };
@@ -257,21 +481,25 @@ export default function HomeScreen() {
       sum + (item.total || getNumericPrice(item.price) * item.quantity),
     0,
   );
-  const confirmedBillTaxes = confirmedBillSubtotal * TAX_DETAILS.gstRate;
+  const confirmedBillTaxes = confirmedBillSubtotal * gstRate;
   const confirmedBillTotal = confirmedBillSubtotal + confirmedBillTaxes;
 
   const renderAddressModalItem = ({ item }: any) => {
-    const isDelivery = orderMode === "Delivery";
-    const isActive = isDelivery
-      ? activeAddress.id === item.id
-      : activeBranch.id === item.id;
-    const Icon = isDelivery ? MapPin : Store;
+    const isDeliveryAddress =
+      orderMode === "Delivery" && addressModalSelection === "address";
+    const isActive = isDeliveryAddress
+      ? activeAddress?.id === item.id
+      : activeBranch?.id === item.id;
+    const Icon = isDeliveryAddress ? MapPin : Store;
 
     return (
       <Pressable
         onPress={() => {
-          if (isDelivery) setActiveAddress(item);
-          else setActiveBranch(item);
+          if (isDeliveryAddress) setActiveAddress(item);
+          else {
+            setActiveBranch(item);
+            setActiveOfferIndex(0);
+          }
 
           setShowAddressModal(false);
 
@@ -294,7 +522,7 @@ export default function HomeScreen() {
         <Icon size={24} color={isActive ? theme.primary : theme.muted} />
         <View className="ml-4 flex-1">
           <Text className="text-base font-bold" style={{ color: theme.text }}>
-            {isDelivery ? item.type : item.name}
+            {isDeliveryAddress ? item.type : item.name}
           </Text>
           <Text
             className="text-sm font-semibold mt-1"
@@ -319,47 +547,85 @@ export default function HomeScreen() {
       >
         <Pressable
           className="flex-1"
+          disabled={isOrderLocked}
           onPress={() => {
-            if (isOrderLocked) return;
+            setAddressModalSelection(
+              orderMode === "Delivery" ? "address" : "branch",
+            );
             setShowAddressModal(true);
           }}
         >
-          <View className="flex-row items-center">
-            {orderMode === "Delivery" ? (
+          {orderMode === "Delivery" ? (
+            <View className="flex-row items-center">
               <MapPin size={22} color={theme.primary} strokeWidth={2.5} />
-            ) : (
-              <Store size={22} color={theme.primary} strokeWidth={2.5} />
-            )}
-            <Text
-              className="ml-1 text-xl font-black tracking-tight"
-              style={{ color: theme.text }}
-            >
-              {orderMode === "Delivery"
-                ? activeAddress.type
-                : orderMode === "Takeaway"
-                  ? "Pickup from"
-                  : activeTable
-                    ? `Table ${activeTable}`
-                    : "Dining at"}
-            </Text>
-            {!isOrderLocked && (
-              <ChevronDown
-                size={20}
-                color={theme.text}
-                strokeWidth={2.5}
-                className="ml-1 mt-0.5"
-              />
-            )}
-          </View>
-          <Text
-            className="ml-7 text-xs font-bold mt-0.5 tracking-wide pr-4"
-            style={{ color: theme.primary }}
-            numberOfLines={1}
-          >
-            {orderMode === "Delivery"
-              ? activeAddress.address
-              : activeBranch.name}
-          </Text>
+              <View className="ml-2 flex-1">
+                <View className="flex-row items-center">
+                  <Text
+                    className="text-xl font-black tracking-tight"
+                    style={{ color: theme.text }}
+                  >
+                    {activeAddress?.type || "Choose address"}
+                  </Text>
+                  {!isOrderLocked && (
+                    <ChevronDown
+                      size={20}
+                      color={theme.text}
+                      strokeWidth={2.5}
+                      className="ml-1 mt-0.5"
+                    />
+                  )}
+                </View>
+                <Text
+                  className="text-xs font-bold mt-0.5 tracking-wide"
+                  style={{ color: theme.primary }}
+                  numberOfLines={1}
+                >
+                  {activeAddress?.address || "Choose a delivery address"}
+                </Text>
+                <View className="mt-1 flex-row items-center">
+                  <Store size={13} color={theme.primary} strokeWidth={2.5} />
+                  <Text
+                    className="ml-1.5 flex-1 text-xs font-bold"
+                    style={{ color: theme.muted, marginRight: 8 }}
+                    numberOfLines={1}
+                  >
+                    {activeBranch?.name || "Choose restaurant branch"}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          ) : (
+            <>
+              <View className="flex-row items-center">
+                <Store size={22} color={theme.primary} strokeWidth={2.5} />
+                <Text
+                  className="ml-1 text-xl font-black tracking-tight"
+                  style={{ color: theme.text }}
+                >
+                  {orderMode === "Takeaway"
+                    ? "Pickup from"
+                    : activeTable
+                      ? `Table ${activeTable}`
+                      : "Dining at"}
+                </Text>
+                {!isOrderLocked && (
+                  <ChevronDown
+                    size={20}
+                    color={theme.text}
+                    strokeWidth={2.5}
+                    className="ml-1 mt-0.5"
+                  />
+                )}
+              </View>
+              <Text
+                className="ml-7 text-xs font-bold mt-0.5 tracking-wide pr-4"
+                style={{ color: theme.primary }}
+                numberOfLines={1}
+              >
+                {activeBranch?.name || "Choose a branch"}
+              </Text>
+            </>
+          )}
         </Pressable>
 
         <View className="flex-row items-center">
@@ -415,7 +681,8 @@ export default function HomeScreen() {
             <HomeHeader
               theme={theme}
               orderMode={orderMode}
-              setOrderMode={handleModeChange}
+              onSelectOrderMode={handleSelectMode}
+              isOrderLocked={isOrderLocked}
               onOpenScanner={() => {
                 setTableNumber("");
                 setShowDineInCheckInModal(true);
@@ -435,7 +702,13 @@ export default function HomeScreen() {
               handleVoiceSearch={handleVoiceSearch}
               isVegOnly={isVegOnly}
               setIsVegOnly={setIsVegOnly}
-              player={player}
+              categories={branchCategories}
+              offersCarousel={offersCarousel}
+              featuredReel={branchFeaturedReels[0]}
+              restaurantName={restaurantName}
+              greetings={greetings}
+              searchPlaceholders={searchPlaceholders}
+              branchContentLoaded={branchesLoaded}
               router={router}
               activeTable={activeTable}
               timeLeft={timeLeft}
@@ -466,7 +739,7 @@ export default function HomeScreen() {
                 className="text-xl font-black tracking-tight"
                 style={{ color: theme.text }}
               >
-                {orderMode === "Delivery"
+                {orderMode === "Delivery" && addressModalSelection === "address"
                   ? "Choose Delivery Address"
                   : "Choose Branch"}
               </Text>
@@ -474,89 +747,52 @@ export default function HomeScreen() {
                 <X size={24} color={theme.text} />
               </Pressable>
             </View>
+            {orderMode === "Delivery" && (
+              <View
+                className="mb-4 flex-row rounded-xl border p-1"
+                style={{
+                  borderColor: theme.border,
+                  backgroundColor: theme.card,
+                }}
+              >
+                {([
+                  { id: "address", label: "Delivery Address" },
+                  { id: "branch", label: "Restaurant Branch" },
+                ] as const).map((option) => {
+                  const isSelected = addressModalSelection === option.id;
+                  return (
+                    <Pressable
+                      key={option.id}
+                      onPress={() => setAddressModalSelection(option.id)}
+                      className="flex-1 items-center rounded-lg px-2 py-2"
+                      style={{
+                        backgroundColor: isSelected
+                          ? theme.primary
+                          : "transparent",
+                      }}
+                    >
+                      <Text
+                        numberOfLines={1}
+                        className="text-xs font-bold"
+                        style={{ color: isSelected ? "#fff" : theme.muted }}
+                      >
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            )}
             <FlatList
               data={
-                (orderMode === "Delivery"
-                  ? MOCK_ADDRESSES
-                  : MOCK_BRANCHES) as any[]
+                orderMode === "Delivery" && addressModalSelection === "address"
+                  ? addresses
+                  : branches
               }
               keyExtractor={(item: any) => item.id.toString()}
               renderItem={renderAddressModalItem}
               showsVerticalScrollIndicator={false}
             />
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      <Modal visible={showDineInTakeawayModal} transparent animationType="fade">
-        <Pressable
-          className="flex-1 justify-end bg-black/60"
-          onPress={() => setShowDineInTakeawayModal(false)}
-        >
-          <Pressable
-            className="rounded-t-[32px] p-5 pb-12"
-            style={{ backgroundColor: theme.bg }}
-            onPress={(e) => e.stopPropagation()}
-          >
-            <View className="flex-row items-center justify-between mb-6">
-              <View>
-                <Text
-                  className="text-2xl font-black tracking-tight"
-                  style={{ color: theme.text }}
-                >
-                  Change Order Mode
-                </Text>
-                <Text
-                  className="text-sm font-semibold mt-1"
-                  style={{ color: theme.muted }}
-                >
-                  How would you like your order?
-                </Text>
-              </View>
-              <Pressable
-                onPress={() => setShowDineInTakeawayModal(false)}
-                className="p-2 bg-gray-500/10 rounded-full"
-              >
-                <X size={20} color={theme.text} />
-              </Pressable>
-            </View>
-
-            <View className="flex-row justify-between" style={{ gap: 8 }}>
-              {availableModes.map((mode) => {
-                const isActive = orderMode === mode.id;
-                return (
-                  <Pressable
-                    key={mode.id}
-                    onPress={() => handleSelectMode(mode.id)}
-                    className="flex-1 items-center justify-center p-3 rounded-2xl border"
-                    style={{
-                      backgroundColor: isActive ? mode.bg : theme.card,
-                      borderColor: isActive ? mode.color : theme.border,
-                    }}
-                  >
-                    <View
-                      className="w-12 h-12 rounded-full items-center justify-center mb-3"
-                      style={{ backgroundColor: mode.bg }}
-                    >
-                      <mode.icon size={24} color={mode.color} />
-                    </View>
-                    <Text
-                      className="text-sm font-black text-center"
-                      style={{ color: theme.text }}
-                    >
-                      {mode.title}
-                    </Text>
-                    <Text
-                      className="text-[10px] font-semibold text-center mt-1"
-                      style={{ color: theme.muted }}
-                      numberOfLines={2}
-                    >
-                      {mode.subtitle}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
           </Pressable>
         </Pressable>
       </Modal>
@@ -822,12 +1058,18 @@ export default function HomeScreen() {
                   className="text-base text-center font-semibold mb-6"
                   style={{ color: theme.muted }}
                 >
-                  Your assigned waiter,{" "}
-                  <Text style={{ color: theme.primary }}>
-                    {STORE_DETAILS?.waiter?.name || "Rahul"}
-                  </Text>
-                  , has been notified and will be at Table {activeTable}{" "}
-                  shortly!
+                  {assignedWaiterName ? (
+                    <>
+                      Your assigned waiter,{" "}
+                      <Text style={{ color: theme.primary }}>
+                        {assignedWaiterName}
+                      </Text>
+                      , has been notified and will be at Table {activeTable}{" "}
+                      shortly!
+                    </>
+                  ) : (
+                    `Your branch team has been notified and will be at Table ${activeTable} shortly!`
+                  )}
                 </Text>
                 <Pressable
                   onPress={() => setActiveServiceModal(null)}
@@ -904,7 +1146,7 @@ export default function HomeScreen() {
                     className="text-lg font-black mb-3"
                     style={{ color: theme.text }}
                   >
-                    {STORE_DETAILS?.wifi?.network || "FoodieVerse_5G"}
+                    {activeWifi?.name || "Wi-Fi details unavailable"}
                   </Text>
                   <Text
                     className="text-sm font-bold mb-1"
@@ -916,7 +1158,7 @@ export default function HomeScreen() {
                     className="text-lg font-black"
                     style={{ color: theme.primary }}
                   >
-                    {STORE_DETAILS?.wifi?.password || "foodie@dine"}
+                    {activeWifi?.password || "Wi-Fi details unavailable"}
                   </Text>
                 </View>
                 <Pressable
@@ -1026,7 +1268,7 @@ export default function HomeScreen() {
                         className="text-sm font-bold"
                         style={{ color: theme.muted }}
                       >
-                        Taxes & Fees ({(TAX_DETAILS.gstRate * 100).toFixed(0)}%)
+                        Taxes & Fees ({taxPercentage.toFixed(0)}%)
                       </Text>
                       <Text
                         className="text-sm font-bold"

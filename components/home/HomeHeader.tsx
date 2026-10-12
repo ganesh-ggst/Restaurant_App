@@ -1,4 +1,3 @@
-import { VideoView } from "expo-video";
 import {
   BellRing,
   Bike,
@@ -15,10 +14,9 @@ import {
 } from "lucide-react-native";
 import { memo, useEffect, useState } from "react";
 import {
-  Dimensions,
-  FlatList,
   Image,
   Pressable,
+  ScrollView,
   Text,
   TextInput,
   View,
@@ -26,7 +24,6 @@ import {
 import Animated, {
   FadeIn,
   FadeOut,
-  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
@@ -34,22 +31,59 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 
-import {
-  CATEGORIES,
-  FEATURED_CONTENT,
-  GREETING_PHRASES,
-  OFFERS,
-  RESTAURANT_NAME,
-  SEARCH_PLACEHOLDERS,
-} from "../../constants/mockData";
+const hasImageUri = (uri: unknown): uri is string =>
+  typeof uri === "string" && uri.trim().length > 0;
+const MAX_VISIBLE_CATEGORIES = 4;
+const CATEGORY_ITEM_WIDTH = 88;
+const TYPEWRITER_CHARACTER_INTERVAL_MS = 35;
+const TYPEWRITER_PAUSE_MS = 1000;
 
-const { width } = Dimensions.get("window");
+function useTypewriter(messages: string[], enabled: boolean) {
+  const [typedValue, setTypedValue] = useState<{
+    messages: string[];
+    text: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!enabled || messages.length === 0) return;
+
+    let messageIndex = 0;
+    let characterIndex = 0;
+    let timeout: ReturnType<typeof setTimeout>;
+
+    const typeNextCharacter = () => {
+      const message = messages[messageIndex];
+      if (characterIndex < message.length) {
+        characterIndex += 1;
+        setTypedValue({ messages, text: message.slice(0, characterIndex) });
+        timeout = setTimeout(
+          typeNextCharacter,
+          TYPEWRITER_CHARACTER_INTERVAL_MS,
+        );
+        return;
+      }
+
+      timeout = setTimeout(() => {
+        messageIndex = (messageIndex + 1) % messages.length;
+        characterIndex = 0;
+        typeNextCharacter();
+      }, TYPEWRITER_PAUSE_MS);
+    };
+
+    timeout = setTimeout(typeNextCharacter, TYPEWRITER_CHARACTER_INTERVAL_MS);
+
+    return () => clearTimeout(timeout);
+  }, [enabled, messages]);
+
+  return enabled && typedValue?.messages === messages ? typedValue.text : "";
+}
 
 export const HomeHeader = memo(
   ({
     theme,
     orderMode,
-    setOrderMode,
+    onSelectOrderMode,
+    isOrderLocked,
     onOpenScanner,
     onCallWaiter,
     onRequestWater,
@@ -63,39 +97,44 @@ export const HomeHeader = memo(
     handleVoiceSearch,
     isVegOnly,
     setIsVegOnly,
-    player,
+    categories,
+    offersCarousel,
+    featuredReel,
+    restaurantName,
+    greetings = [],
+    searchPlaceholders = [],
+    branchContentLoaded = false,
     router,
     activeTable,
     timeLeft,
     confirmedOrdersLength = 0,
     isTimerRunning = false,
   }: any) => {
-    const [placeholderIndex, setPlaceholderIndex] = useState(0);
-    const placeholderOpacity = useSharedValue(1);
-    const [greetingIndex, setGreetingIndex] = useState(0);
-    const greetingOpacity = useSharedValue(1);
+    const [categoryViewportWidth, setCategoryViewportWidth] = useState(0);
+    const [categoryContentWidth, setCategoryContentWidth] = useState(0);
+    const [categoryScrollProgress, setCategoryScrollProgress] = useState(0);
+    const greetingPhrases = greetings;
+    const categoryItemWidth =
+      categoryViewportWidth > 0
+        ? Math.min(
+            CATEGORY_ITEM_WIDTH,
+            categoryViewportWidth / MAX_VISIBLE_CATEGORIES,
+          )
+        : CATEGORY_ITEM_WIDTH;
+    const visibleCategoryViewportWidth =
+      categoryItemWidth * MAX_VISIBLE_CATEGORIES;
     const titleScale = useSharedValue(1);
     const micPulse = useSharedValue(1);
+    const typedGreeting = useTypewriter(
+      greetings,
+      branchContentLoaded && greetings.length > 0,
+    );
+    const typedPlaceholder = useTypewriter(
+      searchPlaceholders,
+      branchContentLoaded && searchPlaceholders.length > 0,
+    );
 
     useEffect(() => {
-      const searchInterval = setInterval(() => {
-        placeholderOpacity.value = withTiming(0, { duration: 300 }, () => {
-          runOnJS(setPlaceholderIndex)(
-            (prev) => (prev + 1) % SEARCH_PLACEHOLDERS.length,
-          );
-          placeholderOpacity.value = withTiming(1, { duration: 300 });
-        });
-      }, 3000);
-
-      const greetingInterval = setInterval(() => {
-        greetingOpacity.value = withTiming(0, { duration: 300 }, () => {
-          runOnJS(setGreetingIndex)(
-            (prev) => (prev + 1) % GREETING_PHRASES.length,
-          );
-          greetingOpacity.value = withTiming(1, { duration: 300 });
-        });
-      }, 4000);
-
       titleScale.value = withRepeat(
         withSequence(
           withTiming(1.05, { duration: 1200 }),
@@ -104,12 +143,7 @@ export const HomeHeader = memo(
         -1,
         true,
       );
-
-      return () => {
-        clearInterval(searchInterval);
-        clearInterval(greetingInterval);
-      };
-    }, []);
+    }, [titleScale]);
 
     useEffect(() => {
       if (isListening) {
@@ -126,58 +160,15 @@ export const HomeHeader = memo(
       }
     }, [isListening]);
 
-    const animatedPlaceholderStyle = useAnimatedStyle(() => ({
-      opacity: placeholderOpacity.value,
-    }));
-    const animatedGreetingStyle = useAnimatedStyle(() => ({
-      opacity: greetingOpacity.value,
-    }));
     const animatedTitleStyle = useAnimatedStyle(() => ({
       transform: [{ scale: titleScale.value }],
     }));
     const animatedMicStyle = useAnimatedStyle(() => ({
       transform: [{ scale: micPulse.value }],
     }));
-
     const formattedTime = timeLeft
       ? `${Math.floor(timeLeft / 60)}:${(timeLeft % 60).toString().padStart(2, "0")}`
       : null;
-
-    const renderOffer = ({ item }: any) => (
-      <Pressable
-        onPress={() =>
-          router.push({
-            pathname: "/(home)/offers",
-            params: { offerId: item.id },
-          })
-        }
-        className="relative h-40 overflow-hidden rounded-[24px]"
-        style={{ width: width * 0.85 }}
-      >
-        <Image
-          source={{ uri: item.image }}
-          className="absolute h-full w-full"
-          resizeMode="cover"
-        />
-        <View className="absolute inset-0 bg-gradient-to-r from-black/80 to-black/20" />
-        <View className="absolute inset-0 p-5 justify-center">
-          <Text className="text-4xl font-black text-white tracking-tighter">
-            {item.title}
-          </Text>
-          <Text className="text-base font-bold text-gray-200 mt-1">
-            {item.subtitle}
-          </Text>
-          <View className="mt-4 self-start rounded-xl bg-white px-5 py-2">
-            <Text
-              className="text-xs font-black"
-              style={{ color: theme.primary }}
-            >
-              ORDER NOW
-            </Text>
-          </View>
-        </View>
-      </Pressable>
-    );
 
     const renderCategory = ({ item }: any) => (
       <Pressable
@@ -187,83 +178,84 @@ export const HomeHeader = memo(
             params: { category: item.name },
           })
         }
-        className="items-center mx-3"
+        className="items-center justify-center"
+        style={{ width: categoryItemWidth }}
       >
         <View
           className="h-16 w-16 items-center justify-center rounded-2xl shadow-sm border mb-2"
           style={{ backgroundColor: theme.card, borderColor: theme.border }}
         >
-          <item.icon size={26} color={theme.primary} strokeWidth={2} />
+          <item.displayIcon size={26} color={theme.primary} strokeWidth={2} />
         </View>
-        <Text className="text-xs font-bold" style={{ color: theme.muted }}>
+        <Text
+          className="text-xs font-bold"
+          numberOfLines={1}
+          ellipsizeMode="tail"
+          style={{
+            width: 64,
+            color: theme.muted,
+            textAlign: "center",
+          }}
+        >
           {item.name}
         </Text>
       </Pressable>
     );
 
     return (
-      <View>
-        <Animated.View
-          style={animatedTitleStyle}
-          className="items-center mt-2 mb-1"
-        >
-          <Text
-            className="text-4xl font-black italic tracking-widest uppercase"
+      <View style={{ width: "100%" }}>
+        <View className="px-4 mb-4 mt-2">
+          {branchContentLoaded && greetingPhrases.length > 0 && (
+            <View className="mb-3">
+              <Text
+                className="text-lg font-black tracking-tight"
+                numberOfLines={2}
+                style={{ color: theme.text }}
+              >
+                {typedGreeting}
+              </Text>
+            </View>
+          )}
+          <View
+            className="flex-row rounded-2xl border p-1"
             style={{
-              color: theme.primary,
-              textShadowColor: "rgba(0,0,0,0.1)",
-              textShadowOffset: { width: 1, height: 1 },
-              textShadowRadius: 2,
+              backgroundColor: theme.card,
+              borderColor: theme.border,
             }}
           >
-            {RESTAURANT_NAME}
-          </Text>
-        </Animated.View>
-
-        <View className="px-4 mb-4 mt-2 flex-row items-center justify-between">
-          <Animated.View style={animatedGreetingStyle} className="flex-1">
-            <Text
-              className="text-lg font-black tracking-tight"
-              style={{ color: theme.text }}
-            >
-              {GREETING_PHRASES[greetingIndex]}
-            </Text>
-          </Animated.View>
-
-          <Pressable
-            onPress={() => setOrderMode()}
-            className="flex-row items-center justify-center rounded-xl px-3 py-1.5 border shadow-sm"
-            style={{
-              backgroundColor: theme.primary,
-              borderColor: theme.primary,
-            }}
-          >
-            {orderMode === "Takeaway" ? (
-              <ShoppingBag
-                size={16}
-                color="#fff"
-                strokeWidth={2.5}
-                style={{ marginRight: 6 }}
-              />
-            ) : orderMode === "Dine-in" ? (
-              <Store
-                size={16}
-                color="#fff"
-                strokeWidth={2.5}
-                style={{ marginRight: 6 }}
-              />
-            ) : (
-              <Bike
-                size={16}
-                color="#fff"
-                strokeWidth={2.5}
-                style={{ marginRight: 6 }}
-              />
-            )}
-            <Text className="font-black text-xs uppercase tracking-wider text-white">
-              {orderMode}
-            </Text>
-          </Pressable>
+            {[
+              { id: "Delivery", label: "Delivery", Icon: Bike },
+              { id: "Takeaway", label: "Takeaway", Icon: ShoppingBag },
+              { id: "Dine-in", label: "Dine-in", Icon: Store },
+            ].map(({ id, label, Icon }) => {
+              const isActive = orderMode === id;
+              return (
+                <Pressable
+                  key={id}
+                  disabled={isOrderLocked || isActive}
+                  onPress={() => onSelectOrderMode(id)}
+                  className="flex-1 flex-row items-center justify-center rounded-xl px-2 py-2"
+                  style={{
+                    backgroundColor: isActive ? theme.primary : "transparent",
+                    opacity: isOrderLocked && !isActive ? 0.5 : 1,
+                  }}
+                >
+                  <Icon
+                    size={14}
+                    color={isActive ? "#fff" : theme.muted}
+                    strokeWidth={2.5}
+                  />
+                  <Text
+                    numberOfLines={1}
+                    className="ml-1 font-black text-[10px] uppercase tracking-wide"
+                    style={{ color: isActive ? "#fff" : theme.muted }}
+                  >
+                    {label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
 
         <View
@@ -277,25 +269,26 @@ export const HomeHeader = memo(
             >
               <Search size={20} color={theme.muted} strokeWidth={2.5} />
               <View className="flex-1 justify-center ml-3 relative h-full">
-                {searchQuery.length === 0 && !isListening && (
-                  <Animated.View
-                    style={[
-                      { position: "absolute", left: 0 },
-                      animatedPlaceholderStyle,
-                    ]}
-                    pointerEvents="none"
-                  >
-                    <Text
-                      style={{
-                        color: theme.muted,
-                        fontSize: 16,
-                        fontWeight: "500",
-                      }}
+                {branchContentLoaded &&
+                  searchPlaceholders.length > 0 &&
+                  searchQuery.length === 0 &&
+                  !isListening && (
+                    <Animated.View
+                      style={{ position: "absolute", left: 0, right: 0 }}
+                      pointerEvents="none"
                     >
-                      Search for '{SEARCH_PLACEHOLDERS[placeholderIndex]}'
-                    </Text>
-                  </Animated.View>
-                )}
+                      <Text
+                        style={{
+                          color: theme.muted,
+                          fontSize: 16,
+                          fontWeight: "500",
+                        }}
+                        numberOfLines={1}
+                      >
+                        {typedPlaceholder}
+                      </Text>
+                    </Animated.View>
+                  )}
                 {isListening && (
                   <View
                     style={{ position: "absolute", left: 0 }}
@@ -372,54 +365,41 @@ export const HomeHeader = memo(
             entering={FadeIn.duration(300)}
             exiting={FadeOut.duration(200)}
           >
-            <View className="px-4 mb-2">
-              <View
-                className="relative h-48 w-full overflow-hidden rounded-[24px] shadow-sm border"
-                style={{
-                  backgroundColor: theme.card,
-                  borderColor: theme.border,
-                }}
-              >
-                {FEATURED_CONTENT.type === "video" ? (
-                  <VideoView
-                    player={player}
-                    style={{ width: "100%", height: "100%" }}
-                    contentFit="cover"
-                    nativeControls={false}
-                  />
-                ) : (
-                  <Image
-                    source={{ uri: FEATURED_CONTENT.source }}
-                    style={{ width: "100%", height: "100%" }}
-                    resizeMode="cover"
-                  />
-                )}
-                <View className="absolute inset-0 bg-black/20 pointer-events-none" />
-                <View className="absolute bottom-4 left-4 pointer-events-none">
-                  <View
-                    className="self-start rounded-lg px-2.5 py-1 mb-1"
-                    style={{ backgroundColor: theme.primary }}
-                  >
-                    <Text className="text-[10px] font-black text-white uppercase tracking-wider">
-                      {FEATURED_CONTENT.tag}
+            {featuredReel ? (
+              <View className="px-4 mb-2">
+                <View
+                  className="relative h-48 w-full overflow-hidden rounded-[24px] shadow-sm border"
+                  style={{
+                    backgroundColor: theme.card,
+                    borderColor: theme.border,
+                  }}
+                >
+                  {hasImageUri(featuredReel.imageUrl) ? (
+                    <Image
+                      source={{ uri: featuredReel.imageUrl }}
+                      style={{ width: "100%", height: "100%" }}
+                      resizeMode="cover"
+                    />
+                  ) : null}
+                  <View className="absolute inset-0 bg-black/20 pointer-events-none" />
+                  <View className="absolute bottom-4 left-4 pointer-events-none">
+                    <View
+                      className="self-start rounded-lg px-2.5 py-1 mb-1"
+                      style={{ backgroundColor: theme.primary }}
+                    >
+                      <Text className="text-[10px] font-black text-white uppercase tracking-wider">
+                        {featuredReel.badge || "FEATURED"}
+                      </Text>
+                    </View>
+                    <Text className="text-xl font-black text-white shadow-md">
+                      {featuredReel.title}
                     </Text>
                   </View>
-                  <Text className="text-xl font-black text-white shadow-md">
-                    {FEATURED_CONTENT.title}
-                  </Text>
                 </View>
               </View>
-            </View>
+            ) : null}
 
-            <FlatList
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              data={OFFERS}
-              keyExtractor={(item) => item.id.toString()}
-              renderItem={renderOffer}
-              contentContainerStyle={{ paddingHorizontal: 16, gap: 16 }}
-              className="mt-2 mb-8"
-            />
+            {offersCarousel}
 
             <View className="mb-10">
               <Text
@@ -428,14 +408,75 @@ export const HomeHeader = memo(
               >
                 Explore Menu
               </Text>
-              <FlatList
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                data={CATEGORIES}
-                keyExtractor={(item) => item.id.toString()}
-                renderItem={renderCategory}
-                contentContainerStyle={{ paddingHorizontal: 16 }}
-              />
+              <View
+                className="w-full"
+                style={{ overflow: "hidden" }}
+                onLayout={(event) =>
+                  setCategoryViewportWidth(event.nativeEvent.layout.width)
+                }
+              >
+                <View
+                  style={{
+                    width: visibleCategoryViewportWidth,
+                    maxWidth: "100%",
+                    alignSelf: "center",
+                  }}
+                >
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={{
+                      width: visibleCategoryViewportWidth,
+                      flexGrow: 0,
+                    }}
+                    nestedScrollEnabled
+                    directionalLockEnabled
+                    onContentSizeChange={(contentWidth) =>
+                      setCategoryContentWidth(contentWidth)
+                    }
+                    onScroll={(event) => {
+                      const maxOffset =
+                        categoryContentWidth - visibleCategoryViewportWidth;
+                      setCategoryScrollProgress(
+                        maxOffset > 0
+                          ? Math.max(
+                              0,
+                              Math.min(
+                                event.nativeEvent.contentOffset.x / maxOffset,
+                                1,
+                              ),
+                            )
+                          : 0,
+                      );
+                    }}
+                    scrollEventThrottle={16}
+                  >
+                    {categories.map((item: any) => (
+                      <View key={item.id}>{renderCategory({ item })}</View>
+                    ))}
+                  </ScrollView>
+                </View>
+                {categoryContentWidth > visibleCategoryViewportWidth && (
+                  <View className="mt-3 mb-1 items-center">
+                    <View
+                      className="h-1 w-12 overflow-hidden rounded-full"
+                      style={{ backgroundColor: theme.border }}
+                    >
+                      <View
+                        className="h-1 w-4 rounded-full"
+                        style={{
+                          backgroundColor: theme.primary,
+                          transform: [
+                            {
+                              translateX: categoryScrollProgress * 32,
+                            },
+                          ],
+                        }}
+                      />
+                    </View>
+                  </View>
+                )}
+              </View>
             </View>
             <Text
               className="mb-4 text-2xl font-black tracking-tight px-4"

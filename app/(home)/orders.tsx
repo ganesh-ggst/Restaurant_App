@@ -3,7 +3,6 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
-  CircleDashed,
   Heart,
   Package,
   Receipt,
@@ -11,7 +10,7 @@ import {
   UserRound,
   X,
 } from "lucide-react-native";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   Dimensions,
@@ -30,16 +29,73 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
-  ENHANCED_MOCK_ORDERS,
-  FOOD_ITEMS,
   TAX_DETAILS,
 } from "../../constants/mockData";
 import { useAppTheme } from "../../hooks/useAppTheme";
+import { api } from "../../services/api";
+import { authApi } from "../../services/api/auth";
+import type { CustomerOrder } from "../../services/api/customer";
 import { useOrderMode } from "./_layout";
 
 const { width, height } = Dimensions.get("window");
 
 const formatPrice = (price: number) => price.toFixed(2);
+
+function normalizeOrderStatus(status: unknown) {
+  const normalized = String(status || "pending")
+    .trim()
+    .toLowerCase()
+    .replace(/[-_\s]+/g, " ");
+
+  switch (normalized) {
+    case "accept":
+      return "accepted";
+    case "cancel":
+    case "canceled":
+    case "cancled":
+      return "cancelled";
+    case "complete":
+      return "completed";
+    default:
+      return normalized;
+  }
+}
+
+function formatOrderStatus(status: unknown) {
+  return normalizeOrderStatus(status).replace(/\b\w/g, (character) =>
+    character.toUpperCase(),
+  );
+}
+
+function mapCustomerOrder(order: CustomerOrder) {
+  const status = normalizeOrderStatus(order.status);
+  const isActive = ![
+    "completed",
+    "delivered",
+    "cancelled",
+    "rejected",
+    "refunded",
+  ].includes(status);
+  const date = order.createdAt
+    ? new Date(order.createdAt).toLocaleString()
+    : "";
+
+  return {
+    ...order,
+    orderId: order._id,
+    id: order.orderNumber,
+    date,
+    status: formatOrderStatus(status),
+    total: order.total,
+    isActive,
+    items: order.items.map((item) => ({
+      id: item.menuItemId,
+      quantity: item.quantity,
+      name: item.name,
+      price: `₹${item.unitPrice}`,
+    })),
+  };
+}
 
 const calculateOrderTotals = (order: any) => {
   if (!order) {
@@ -52,6 +108,25 @@ const calculateOrderTotals = (order: any) => {
       gstAmount: 0,
       totalTaxesAndCharges: 0,
       finalPayable: 0,
+    };
+  }
+
+  if (typeof order.total === "number") {
+    const itemTotal = order.subtotal ?? 0;
+    const actualDeliveryFee = order.deliveryFee ?? 0;
+    const packagingCharge = order.packagingFee ?? 0;
+    const platformFee = order.platformFee ?? 0;
+    const gstAmount = order.tax ?? 0;
+    const totalTaxesAndCharges = packagingCharge + platformFee + gstAmount;
+    return {
+      itemTotal,
+      actualDeliveryFee,
+      isFreeDelivery: actualDeliveryFee === 0,
+      packagingCharge,
+      platformFee,
+      gstAmount,
+      totalTaxesAndCharges,
+      finalPayable: order.total,
     };
   }
 
@@ -495,48 +570,126 @@ export default function OrdersScreen() {
   const [trackingOrder, setTrackingOrder] = useState<any>(null);
   const [detailsOrder, setDetailsOrder] = useState<any>(null);
 
-  const { mode: orderMode, carts, handleAddToCart } = useOrderMode();
+  const { mode: orderMode, carts, reloadCart, branches } = useOrderMode();
+  const [orders, setOrders] = useState<any[]>([]);
   const activeCart = carts[orderMode] || [];
   const activeCartTotalItems = activeCart.reduce(
     (sum: number, item: any) => sum + item.quantity,
     0,
   );
 
-  const displayOrders = ENHANCED_MOCK_ORDERS.filter((o) =>
-    activeTab === "Active" ? o.isActive : !o.isActive,
-  );
-
-  const handleReorder = (e: any, order: any) => {
-    e.stopPropagation();
-
-    let itemsAdded = 0;
-    order.items.forEach((orderItem: any) => {
-      const foodItem = FOOD_ITEMS.find((f: any) => f.id === orderItem.id);
-      if (foodItem) {
-        const basePrice =
-          parseFloat(foodItem.price.replace(/[^\d.]/g, "")) || 0;
-        handleAddToCart(
-          foodItem,
-          orderItem.quantity,
-          [],
-          basePrice * orderItem.quantity,
-        );
-        itemsAdded++;
+  useEffect(() => {
+    let isMounted = true;
+    const loadOrders = async () => {
+      try {
+        const token = await authApi.getAccessToken();
+        if (!token) return;
+        const fetchedOrders = await api.getOrders();
+        if (isMounted) {
+          setOrders(fetchedOrders.map((order) => mapCustomerOrder(order)));
+        }
+      } catch (error) {
+        if (isMounted) {
+          Alert.alert(
+            "Unable to Load Orders",
+            error instanceof Error ? error.message : "Please try again.",
+          );
+        }
       }
-    });
+    };
+    void loadOrders();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
-    if (itemsAdded > 0) {
+  const displayOrders = orders.filter((order) =>
+    activeTab === "Active" ? order.isActive : !order.isActive,
+  );
+  const getOrderBranchLabel = (order: any) => {
+    const orderBranch =
+      order.branchId && typeof order.branchId === "object"
+        ? order.branchId
+        : null;
+    const branchId =
+      typeof order.branchId === "string"
+        ? order.branchId
+        : orderBranch?._id || orderBranch?.id;
+    const branch = branches.find((candidate: any) => candidate.id === branchId);
+    const restaurantName =
+      branch?.restaurantNames?.find(
+        (restaurant: { name: string; isActive: boolean }) =>
+          restaurant.isActive && restaurant.name.trim().length > 0,
+      )?.name;
+
+    return (
+      orderBranch?.restaurantName ||
+      orderBranch?.name ||
+      restaurantName ||
+      branch?.name ||
+      branch?.code ||
+      (branchId ? `Branch ${branchId.slice(-6)}` : "Branch unavailable")
+    );
+  };
+
+  const handleReorder = async (e: any, order: any) => {
+    e.stopPropagation();
+    try {
+      await api.reorder(order.orderId);
+      await reloadCart();
       Alert.alert(
-        "Added to Cart",
-        "Items from your previous order have been added to your cart!",
+        "Order Added to Cart",
+        "Items from your previous order are ready in your cart.",
       );
-    } else {
-      Alert.alert("Error", "These items are no longer available on the menu.");
+    } catch (error) {
+      Alert.alert(
+        "Unable to Reorder",
+        error instanceof Error ? error.message : "Please try again.",
+      );
     }
   };
 
   const getItemsString = (items: any[]) =>
     items.map((i) => `${i.quantity}x ${i.name}`).join(", ");
+
+  const showOrderDetails = (order: any, isTracking: boolean) => {
+    if (isTracking) setTrackingOrder(order);
+    else setDetailsOrder(order);
+
+    void api
+      .getOrder(order.orderId)
+      .then((details) => {
+        const mappedOrder = mapCustomerOrder(details);
+        if (isTracking) setTrackingOrder(mappedOrder);
+        else setDetailsOrder(mappedOrder);
+      })
+      .catch((error: unknown) => {
+        Alert.alert(
+          "Unable to Load Order",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      });
+
+    if (isTracking) {
+      void api
+        .getOrderTracking(order.orderId)
+        .then((tracking) => {
+          if (tracking && typeof tracking === "object") {
+            setTrackingOrder((current: any) =>
+              current?.orderId === order.orderId
+                ? { ...current, ...(tracking as object) }
+                : current,
+            );
+          }
+        })
+        .catch((error: unknown) => {
+          Alert.alert(
+            "Unable to Load Tracking",
+            error instanceof Error ? error.message : "Please try again.",
+          );
+        });
+    }
+  };
 
   return (
     <View
@@ -632,9 +785,7 @@ export default function OrdersScreen() {
               <Pressable
                 key={order.id}
                 onPress={() => {
-                  order.isActive
-                    ? setTrackingOrder(order)
-                    : setDetailsOrder(order);
+                  showOrderDetails(order, order.isActive);
                 }}
                 className="rounded-[24px] p-4 border"
                 style={{
@@ -646,7 +797,7 @@ export default function OrdersScreen() {
                   className="flex-row justify-between items-center border-b pb-3 mb-3"
                   style={{ borderBottomColor: theme.border }}
                 >
-                  <View>
+                  <View className="flex-1 mr-2">
                     <Text
                       className="text-base font-black"
                       style={{ color: theme.text }}
@@ -659,6 +810,22 @@ export default function OrdersScreen() {
                     >
                       {order.date}
                     </Text>
+                    <View
+                      className="self-start mt-2 flex-row items-center rounded-full border px-2.5 py-1"
+                      style={{
+                        backgroundColor: theme.card,
+                        borderColor: theme.primary,
+                        maxWidth: "100%",
+                      }}
+                    >
+                      <Text
+                        className="text-[10px] font-black"
+                        numberOfLines={1}
+                        style={{ color: theme.text }}
+                      >
+                        {`Branch: ${getOrderBranchLabel(order)}`}
+                      </Text>
+                    </View>
                   </View>
                   <View
                     className="px-3 py-1.5 rounded-lg border"
@@ -700,7 +867,7 @@ export default function OrdersScreen() {
                     onPress={(e) => {
                       if (order.isActive) {
                         e.stopPropagation();
-                        setTrackingOrder(order);
+                        showOrderDetails(order, true);
                       } else {
                         handleReorder(e, order);
                       }
@@ -755,6 +922,24 @@ export default function OrdersScreen() {
                 >
                   {trackingOrder?.id}
                 </Text>
+                {trackingOrder && (
+                  <View
+                    className="self-start mt-2 rounded-full border px-3 py-1"
+                    style={{
+                      backgroundColor: theme.card,
+                      borderColor: theme.primary,
+                      maxWidth: "100%",
+                    }}
+                  >
+                    <Text
+                      className="text-xs font-black"
+                      numberOfLines={1}
+                      style={{ color: theme.text }}
+                    >
+                      {`Branch: ${getOrderBranchLabel(trackingOrder)}`}
+                    </Text>
+                  </View>
+                )}
               </View>
               <Pressable
                 onPress={() => setTrackingOrder(null)}
@@ -794,75 +979,59 @@ export default function OrdersScreen() {
                   borderColor: theme.border,
                 }}
               >
-                <View className="flex-row items-start mb-6">
-                  <View className="items-center mr-4">
-                    <CheckCircle2 size={24} color={theme.primary} />
-                    <View className="w-0.5 h-10 bg-emerald-500 my-1" />
-                  </View>
-                  <View>
-                    <Text
-                      className="text-base font-bold"
-                      style={{ color: theme.text }}
-                    >
-                      Order Accepted
-                    </Text>
-                    <Text
-                      className="text-xs font-semibold mt-1"
-                      style={{ color: theme.muted }}
-                    >
-                      Restaurant has confirmed your order.
-                    </Text>
-                  </View>
-                </View>
-
-                <View className="flex-row items-start mb-6">
-                  <View className="items-center mr-4">
+                {(trackingOrder?.statusHistory?.length
+                  ? trackingOrder.statusHistory
+                  : [
+                      {
+                        status: trackingOrder?.status || "pending",
+                        note: "Latest order status",
+                      },
+                    ]
+                ).map((step: any, index: number, steps: any[]) => {
+                  const isLatest = index === steps.length - 1;
+                  const label = formatOrderStatus(step.status);
+                  return (
                     <View
-                      className="w-6 h-6 rounded-full items-center justify-center"
-                      style={{ backgroundColor: theme.primary }}
+                      key={`${step.status}-${step.changedAt || index}`}
+                      className={`flex-row items-start ${isLatest ? "" : "mb-6"}`}
                     >
-                      <View className="w-2 h-2 bg-white rounded-full" />
+                      <View className="items-center mr-4">
+                        {isLatest ? (
+                          <View
+                            className="w-6 h-6 rounded-full items-center justify-center"
+                            style={{ backgroundColor: theme.primary }}
+                          >
+                            <View className="w-2 h-2 bg-white rounded-full" />
+                          </View>
+                        ) : (
+                          <CheckCircle2 size={24} color={theme.primary} />
+                        )}
+                        {!isLatest && (
+                          <View
+                            className="w-0.5 h-10 my-1"
+                            style={{ backgroundColor: theme.border }}
+                          />
+                        )}
+                      </View>
+                      <View className="flex-1">
+                        <Text
+                          className="text-base font-bold"
+                          style={{ color: isLatest ? theme.primary : theme.text }}
+                        >
+                          {label}
+                        </Text>
+                        {step.note ? (
+                          <Text
+                            className="text-xs font-semibold mt-1"
+                            style={{ color: theme.muted }}
+                          >
+                            {step.note}
+                          </Text>
+                        ) : null}
+                      </View>
                     </View>
-                    <View
-                      className="w-0.5 h-10 my-1"
-                      style={{ backgroundColor: theme.border }}
-                    />
-                  </View>
-                  <View>
-                    <Text
-                      className="text-base font-bold"
-                      style={{ color: theme.text }}
-                    >
-                      Preparing Food
-                    </Text>
-                    <Text
-                      className="text-xs font-semibold mt-1"
-                      style={{ color: theme.primary }}
-                    >
-                      Currently being cooked!
-                    </Text>
-                  </View>
-                </View>
-
-                <View className="flex-row items-start">
-                  <View className="items-center mr-4">
-                    <CircleDashed size={24} color={theme.muted} />
-                  </View>
-                  <View>
-                    <Text
-                      className="text-base font-bold"
-                      style={{ color: theme.muted }}
-                    >
-                      Out for Delivery
-                    </Text>
-                    <Text
-                      className="text-xs font-semibold mt-1"
-                      style={{ color: theme.muted }}
-                    >
-                      Waiting for partner assignment.
-                    </Text>
-                  </View>
-                </View>
+                  );
+                })}
               </View>
             </ScrollView>
           </Animated.View>
@@ -896,6 +1065,24 @@ export default function OrdersScreen() {
                 >
                   {detailsOrder?.id} • {detailsOrder?.date}
                 </Text>
+                {detailsOrder && (
+                  <View
+                    className="self-start mt-2 rounded-full border px-3 py-1"
+                    style={{
+                      backgroundColor: theme.card,
+                      borderColor: theme.primary,
+                      maxWidth: "100%",
+                    }}
+                  >
+                    <Text
+                      className="text-xs font-black"
+                      numberOfLines={1}
+                      style={{ color: theme.text }}
+                    >
+                      {`Branch: ${getOrderBranchLabel(detailsOrder)}`}
+                    </Text>
+                  </View>
+                )}
               </View>
               <Pressable
                 onPress={() => setDetailsOrder(null)}

@@ -32,17 +32,19 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFavorites } from "../../app/(home)/_layout";
-import { ADD_ONS } from "../../constants/mockData";
 import { useAppTheme } from "../../hooks/useAppTheme";
 
 const { width, height } = Dimensions.get("window");
+
+const hasImageUri = (uri: unknown): uri is string =>
+  typeof uri === "string" && uri.trim().length > 0;
 const CARD_WIDTH = width * 0.43;
 
 interface FoodCardProps {
   item: any;
   widthOverride?: number;
   cartQuantity?: number;
-  onAddToCart?: (qty: number, addons: string[], total: number) => void;
+  onAddToCart?: (qty: number, addons: unknown[], total: number) => void;
   onDecrement?: () => void;
 }
 
@@ -97,10 +99,25 @@ export default function FoodCard({
   const [customQty, setCustomQty] = useState(1);
   const [selectedAddons, setSelectedAddons] = useState<string[]>([]);
 
+  const customizationGroups = item.customizationGroups || [];
+  const customizationOptions = customizationGroups.flatMap(
+    (group: any, groupIndex: number) =>
+      (group.options || [])
+        .filter((option: any) => option.isAvailable)
+        .map((option: any, optionIndex: number) => ({
+          ...option,
+          group,
+          key:
+            option._id ||
+            `${group._id || group.name}-${option.name}-${groupIndex}-${optionIndex}`,
+        })),
+  );
+
   const [activeImageIndex, setActiveImageIndex] = useState(0);
 
-  const galleryImages =
-    item.gallery && item.gallery.length > 0 ? item.gallery : [item.image];
+  const galleryImages = (
+    item.gallery && item.gallery.length > 0 ? item.gallery : [item.image]
+  ).filter(hasImageUri);
 
   const isFav = favorites?.includes(item.id);
 
@@ -175,24 +192,54 @@ export default function FoodCard({
     setShowCustomization(true);
   };
 
-  const toggleAddon = (addonId: string) => {
-    setSelectedAddons((prev) =>
-      prev.includes(addonId)
-        ? prev.filter((id) => id !== addonId)
-        : [...prev, addonId],
-    );
+  const toggleAddon = (addon: any) => {
+    setSelectedAddons((previous) => {
+      if (previous.includes(addon.key)) {
+        return previous.filter((id) => id !== addon.key);
+      }
+      if (addon.group.selectionType === "single") {
+        const otherGroupOptionKeys = customizationOptions
+          .filter(
+            (option: any) =>
+              option.group === addon.group && option.key !== addon.key,
+          )
+          .map((option: any) => option.key);
+        return [
+          ...previous.filter((id) => !otherGroupOptionKeys.includes(id)),
+          addon.key,
+        ];
+      }
+      return [...previous, addon.key];
+    });
   };
 
-  const getBasePrice = () => parseInt(item.price.replace(/\D/g, ""), 10);
+  const getBasePrice = () =>
+    Number(String(item.price).replace(/[^\d.]/g, "")) || 0;
 
   const calculateTotal = () => {
     const base = getBasePrice();
     const addonsCost = selectedAddons.reduce((sum, id) => {
-      const addon = ADD_ONS.find((a) => a.id === id);
+      const addon = customizationOptions.find((option: any) => option.key === id);
       return sum + (addon ? addon.price : 0);
     }, 0);
     return (base + addonsCost) * customQty;
   };
+
+  const getSelectedCustomizations = () =>
+    customizationGroups.flatMap((group: any) => {
+      const options = customizationOptions
+        .filter(
+          (option: any) =>
+            option.group === group && selectedAddons.includes(option.key),
+        )
+        .map((option: any) => ({
+          name: option.name,
+          price: option.price,
+        }));
+      return options.length > 0
+        ? [{ groupName: group.name, options }]
+        : [];
+    });
 
   return (
     <View
@@ -217,11 +264,13 @@ export default function FoodCard({
           className="border rounded-[24px] overflow-hidden"
         >
           <View className="relative h-36 w-full">
-            <Image
-              source={{ uri: item.image }}
-              className="h-full w-full"
-              resizeMode="cover"
-            />
+            {hasImageUri(item.image) ? (
+              <Image
+                source={{ uri: item.image }}
+                className="h-full w-full"
+                resizeMode="cover"
+              />
+            ) : null}
             <View className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent" />
             <View className="absolute top-3 left-3 flex-row items-center rounded-lg bg-white/95 px-1.5 py-1 backdrop-blur-md">
               {item.isVeg ? (
@@ -476,10 +525,12 @@ export default function FoodCard({
               }}
               className="flex-row items-center p-4 border-b z-10"
             >
-              <Image
-                source={{ uri: item.image }}
-                className="w-10 h-10 rounded-full mr-3"
-              />
+              {hasImageUri(item.image) ? (
+                <Image
+                  source={{ uri: item.image }}
+                  className="w-10 h-10 rounded-full mr-3"
+                />
+              ) : null}
               <Text
                 style={{ color: theme.text }}
                 className="flex-1 text-base font-extrabold"
@@ -575,47 +626,63 @@ export default function FoodCard({
                   }}
                   className="rounded-[20px] border overflow-hidden"
                 >
-                  {ADD_ONS.map((addon, index) => {
-                    const isSelected = selectedAddons.includes(addon.id);
+                  {customizationGroups.map((group: any, groupIndex: number) => {
+                    const options = customizationOptions.filter(
+                      (option: any) => option.group === group,
+                    );
+                    if (options.length === 0) return null;
                     return (
-                      <Pressable
-                        key={addon.id}
-                        onPress={() => toggleAddon(addon.id)}
-                        style={{
-                          borderBottomWidth:
-                            index === ADD_ONS.length - 1 ? 0 : 1,
-                          borderBottomColor: theme.border,
-                        }}
-                        className="flex-row items-center p-4"
-                      >
-                        <View
-                          style={{
-                            borderColor: isSelected
-                              ? theme.primary
-                              : theme.muted,
-                            backgroundColor: isSelected
-                              ? theme.primary
-                              : "transparent",
-                          }}
-                          className="w-5 h-5 rounded border-2 items-center justify-center mr-3"
-                        >
-                          {isSelected && (
-                            <CheckCircle2 size={14} color="#fff" />
-                          )}
-                        </View>
+                      <View key={group._id || `${group.name}-${groupIndex}`}>
                         <Text
-                          style={{ color: theme.text }}
-                          className="flex-1 text-[15px] font-bold"
-                        >
-                          {addon.name}
-                        </Text>
-                        <Text
+                          className="px-4 pt-3 pb-1 text-xs font-black uppercase"
                           style={{ color: theme.muted }}
-                          className="text-sm font-semibold"
                         >
-                          + ₹{addon.price}
+                          {group.name}
                         </Text>
-                      </Pressable>
+                        {options.map((addon: any, index: number) => {
+                          const isSelected = selectedAddons.includes(addon.key);
+                          return (
+                            <Pressable
+                              key={addon.key}
+                              onPress={() => toggleAddon(addon)}
+                              style={{
+                                borderBottomWidth:
+                                  index === options.length - 1 ? 0 : 1,
+                                borderBottomColor: theme.border,
+                              }}
+                              className="flex-row items-center p-4"
+                            >
+                              <View
+                                style={{
+                                  borderColor: isSelected
+                                    ? theme.primary
+                                    : theme.muted,
+                                  backgroundColor: isSelected
+                                    ? theme.primary
+                                    : "transparent",
+                                }}
+                                className="w-5 h-5 rounded border-2 items-center justify-center mr-3"
+                              >
+                                {isSelected && (
+                                  <CheckCircle2 size={14} color="#fff" />
+                                )}
+                              </View>
+                              <Text
+                                style={{ color: theme.text }}
+                                className="flex-1 text-[15px] font-bold"
+                              >
+                                {addon.name}
+                              </Text>
+                              <Text
+                                style={{ color: theme.muted }}
+                                className="text-sm font-semibold"
+                              >
+                                + ₹{addon.price}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
                     );
                   })}
                 </View>
@@ -633,7 +700,11 @@ export default function FoodCard({
               <Pressable
                 onPress={() => {
                   if (onAddToCart)
-                    onAddToCart(customQty, selectedAddons, calculateTotal());
+                    onAddToCart(
+                      customQty,
+                      getSelectedCustomizations(),
+                      calculateTotal(),
+                    );
                   setShowCustomization(false);
                 }}
                 style={{ backgroundColor: theme.primary }}

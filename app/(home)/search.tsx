@@ -1,22 +1,19 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { Heart, Search, UserRound } from "lucide-react-native";
-import { useEffect, useState } from "react";
+import {
+  Check,
+  ChevronDown,
+  Heart,
+  Search,
+  UserRound,
+  UtensilsCrossed,
+} from "lucide-react-native";
+import { useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import FoodCard from "../../components/home/FoodCard";
-import { FOOD_ITEMS } from "../../constants/mockData";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { useOrderMode } from "./_layout";
-
-const CATEGORIES = [
-  "All",
-  "Biryani",
-  "Curries",
-  "Grills",
-  "Breads",
-  "Desserts",
-];
 
 export default function SearchScreen() {
   const router = useRouter();
@@ -26,12 +23,28 @@ export default function SearchScreen() {
   const params = useLocalSearchParams();
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeCategory, setActiveCategory] = useState("All");
+  const routeCategory =
+    typeof params.category === "string"
+      ? params.category
+      : params.category?.[0] || null;
+  const [selectedCategory, setSelectedCategory] = useState<{
+    routeCategory: string | null;
+    name: string;
+  } | null>(null);
+  const activeCategory =
+    selectedCategory?.routeCategory === routeCategory
+      ? selectedCategory.name
+      : routeCategory || "All";
+  const [categorySearchQuery, setCategorySearchQuery] = useState("");
+  const [showCategoryList, setShowCategoryList] = useState(false);
   const [isVegOnly, setIsVegOnly] = useState(false);
 
   const {
     mode: orderMode,
     carts,
+    menuItems,
+    categories,
+    activeBranch,
     handleAddToCart,
     handleDecrementCartItem,
   } = useOrderMode();
@@ -41,21 +54,75 @@ export default function SearchScreen() {
     (sum: number, item: any) => sum + item.quantity,
     0,
   );
-
-  useEffect(() => {
-    if (params.category) {
-      setActiveCategory(params.category as string);
-    } else {
-      setActiveCategory("All");
-    }
-  }, [params.category]);
-
-  const filteredItems = FOOD_ITEMS.filter(
-    (item) =>
-      (activeCategory === "All" || item.category === activeCategory) &&
-      (!isVegOnly || item.isVeg) &&
-      item.name.toLowerCase().includes(searchQuery.toLowerCase()),
+  const branchCategories = useMemo(
+    () =>
+      categories.filter(
+        (category: any) =>
+          !category.branchId || category.branchId === activeBranch?.id,
+      ),
+    [activeBranch?.id, categories],
   );
+
+  const matchesFlexibleQuery = (query: string, value: string) => {
+    const normalizedQuery = query.trim().toLowerCase().replace(/\s+/g, "");
+    const normalizedValue = value.toLowerCase();
+    if (!normalizedQuery) return true;
+    if (normalizedValue.includes(normalizedQuery)) return true;
+
+    let queryIndex = 0;
+    for (const character of normalizedValue) {
+      if (character === normalizedQuery[queryIndex]) queryIndex += 1;
+      if (queryIndex === normalizedQuery.length) return true;
+    }
+    return false;
+  };
+
+  const matchesSearch = (item: any) => {
+    const query = searchQuery.trim().toLowerCase();
+    const itemName = item.name.toLowerCase();
+    if (!query || itemName.includes(query)) return true;
+
+    const initials = itemName
+      .split(/[\s-]+/)
+      .filter(Boolean)
+      .map((word: string) => word[0])
+      .join("");
+
+    return query.length > 1 && initials.startsWith(query.replace(/\s+/g, ""));
+  };
+
+  const filteredItems = menuItems.filter(
+    (item: any) => {
+      const itemBranchIds = item.branchIds || [];
+      const isAvailableAtBranch =
+        !activeBranch?.id ||
+        (itemBranchIds.length > 0
+          ? itemBranchIds.includes(activeBranch.id)
+          : !item.branchId || item.branchId === activeBranch.id);
+      const matchesCategory =
+        activeCategory === "All" || item.category === activeCategory;
+
+      return (
+        matchesCategory &&
+        item.isAvailable &&
+        isAvailableAtBranch &&
+        (!isVegOnly || item.isVeg) &&
+        matchesSearch(item)
+      );
+    },
+  );
+  const displayedCategories = branchCategories;
+  const matchingCategories = displayedCategories.filter((category: any) =>
+    matchesFlexibleQuery(categorySearchQuery, category.name),
+  );
+
+  const categoryCount = branchCategories.length;
+
+  const selectCategory = (categoryName: string) => {
+    setSelectedCategory({ routeCategory, name: categoryName });
+    setCategorySearchQuery("");
+    setShowCategoryList(false);
+  };
 
   return (
     <View
@@ -135,47 +202,135 @@ export default function SearchScreen() {
         </View>
       </View>
 
+      <View className="px-4 py-2 pb-4" style={{ backgroundColor: theme.bg }}>
+        {showCategoryList ? (
+          <View
+            className="rounded-2xl border p-3"
+            style={{ backgroundColor: theme.card, borderColor: theme.border }}
+          >
+            <View className="flex-row items-center rounded-xl border px-3 h-11 mb-2"
+              style={{ backgroundColor: theme.bg, borderColor: theme.border }}
+            >
+              <Search size={18} color={theme.muted} />
+              <TextInput
+                autoFocus
+                value={categorySearchQuery}
+                onChangeText={setCategorySearchQuery}
+                placeholder="Filter categories..."
+                placeholderTextColor={theme.muted}
+                className="flex-1 ml-2 text-sm font-medium"
+                style={{ color: theme.text, paddingVertical: 0 }}
+              />
+              <Pressable onPress={() => setShowCategoryList(false)} hitSlop={10}>
+                <ChevronDown size={19} color={theme.muted} />
+              </Pressable>
+            </View>
+            <ScrollView
+              nestedScrollEnabled
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+              style={{ maxHeight: 280 }}
+            >
+              {matchingCategories.map((category: any) => {
+                const isSelected = activeCategory === category.name;
+                const CategoryIcon = category.displayIcon;
+                return (
+                  <Pressable
+                    key={category.id}
+                    onPress={() => selectCategory(category.name)}
+                    className="flex-row items-center rounded-xl border px-3 py-2.5 mb-2"
+                    style={{
+                      backgroundColor: isSelected ? theme.primary + "18" : theme.bg,
+                      borderColor: isSelected ? theme.primary : theme.border,
+                    }}
+                  >
+                    <View
+                      className="h-9 w-9 items-center justify-center rounded-lg mr-3"
+                      style={{ backgroundColor: theme.card }}
+                    >
+                      {isSelected ? (
+                        <Check size={18} color={theme.primary} />
+                      ) : CategoryIcon ? (
+                        <CategoryIcon size={18} color={theme.primary} />
+                      ) : (
+                        <UtensilsCrossed size={18} color={theme.primary} />
+                      )}
+                    </View>
+                    <Text
+                      className="flex-1 text-sm font-bold"
+                      numberOfLines={1}
+                      style={{ color: theme.text }}
+                    >
+                      {category.name}
+                    </Text>
+                    <Text
+                      className="text-xs font-semibold"
+                      style={{ color: theme.muted }}
+                    >
+                      {categoryCount} items
+                    </Text>
+                  </Pressable>
+                );
+              })}
+              {matchingCategories.length === 0 && (
+                <Text className="py-6 text-center text-sm font-semibold" style={{ color: theme.muted }}>
+                  No categories match your search.
+                </Text>
+              )}
+            </ScrollView>
+          </View>
+        ) : (
+          <Pressable
+            onPress={() => setShowCategoryList(true)}
+            className="flex-row items-center rounded-2xl border px-4 py-3"
+            style={{ backgroundColor: theme.card, borderColor: theme.border }}
+          >
+            <View
+              className="h-10 w-10 items-center justify-center rounded-xl mr-3"
+              style={{ backgroundColor: theme.bg }}
+            >
+              {activeCategory === "All" ? (
+                <Check size={19} color={theme.primary} />
+              ) : (
+                <UtensilsCrossed size={19} color={theme.primary} />
+              )}
+            </View>
+            <View className="flex-1">
+              <Text
+                className="text-[10px] font-bold uppercase tracking-widest"
+                style={{ color: theme.muted }}
+              >
+                Browse category
+              </Text>
+              <Text
+                className="text-base font-black mt-0.5"
+                numberOfLines={1}
+                style={{ color: theme.text }}
+              >
+                {activeCategory}
+              </Text>
+            </View>
+            <View className="rounded-full px-2.5 py-1 mr-2" style={{ backgroundColor: theme.bg }}>
+              <Text className="text-xs font-bold" style={{ color: theme.muted }}>
+                {categoryCount}
+              </Text>
+            </View>
+            <ChevronDown size={19} color={theme.muted} />
+          </Pressable>
+        )}
+      </View>
+
       <ScrollView
         contentContainerStyle={{
           paddingBottom: activeCartTotalItems > 0 ? 180 : 120,
         }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
-        stickyHeaderIndices={[0]}
       >
-        {/* CATEGORY FILTERS (Sticky) */}
-        <View className="py-2 pb-4" style={{ backgroundColor: theme.bg }}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}
-          >
-            {CATEGORIES.map((cat) => {
-              const isActive = activeCategory === cat;
-              return (
-                <Pressable
-                  key={cat}
-                  onPress={() => setActiveCategory(cat)}
-                  className="px-5 py-2 rounded-full border"
-                  style={{
-                    backgroundColor: isActive ? theme.primary : theme.card,
-                    borderColor: isActive ? theme.primary : theme.border,
-                  }}
-                >
-                  <Text
-                    className="text-sm font-bold"
-                    style={{ color: isActive ? "#fff" : theme.text }}
-                  >
-                    {cat}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-        </View>
-
         {/* UNIFIED FOOD CARDS GRID */}
         <View className="flex-row flex-wrap justify-between px-4">
-          {filteredItems.map((item) => {
+          {filteredItems.map((item: any) => {
             const cartItem = activeCart.find((c: any) => c.id === item.id);
             return (
               <View key={item.id} style={{ width: "48%" }} className="mb-4">
@@ -192,6 +347,7 @@ export default function SearchScreen() {
           })}
         </View>
       </ScrollView>
+
     </View>
   );
 }
