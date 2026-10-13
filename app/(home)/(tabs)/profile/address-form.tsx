@@ -17,11 +17,11 @@ import {
   ProfileError,
   ProfileScreenHeader,
   ProfileTextField,
-} from "../../../components/profile/ProfileUi";
-import { Button } from "../../../components/ui/Button";
-import { useAppTheme } from "../../../hooks/useAppTheme";
-import { api } from "../../../services/api";
-import type { AddressInput } from "../../../services/api/profile";
+} from "../../../../components/profile/ProfileUi";
+import { Button } from "../../../../components/ui/Button";
+import { useAppTheme } from "../../../../hooks/useAppTheme";
+import { api } from "../../../../services/api";
+import type { AddressInput } from "../../../../services/api/profile";
 
 function emptyAddress(): AddressInput {
   return {

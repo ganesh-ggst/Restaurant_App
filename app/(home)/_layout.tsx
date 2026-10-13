@@ -1,5 +1,5 @@
 import { BlurView } from "expo-blur";
-import { Tabs } from "expo-router";
+import { Stack, usePathname, useRouter } from "expo-router";
 import {
   CheckCircle2,
   Compass,
@@ -13,8 +13,15 @@ import {
   XCircle,
 } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
-import { createContext, useContext, useEffect, useState } from "react";
 import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
+import {
+  AppState,
   Alert,
   Dimensions,
   Modal,
@@ -32,7 +39,6 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { DeliveryCartModal } from "../../components/home/DeliveryCartModal";
 import ViewCartButton from "../../components/home/ViewCartButton";
 import {
   CATEGORIES as CATEGORY_PRESENTATION,
@@ -45,6 +51,7 @@ import type {
   CustomerCart,
   CustomerCartItem,
   CustomerCategory,
+  CustomerCustomizationSelection,
   CustomerFeaturedReel,
   CustomerMenuItem,
   CustomerOffer,
@@ -64,6 +71,8 @@ export function useFavorites() {
 const { width } = Dimensions.get("window");
 const MARGIN = 20;
 const TAB_BAR_WIDTH = width - MARGIN * 2;
+const TAB_BAR_HEIGHT = 72;
+const MIN_TAB_BAR_BOTTOM = 16;
 
 const getNumericPrice = (price: any) => {
   if (typeof price === "number") return price;
@@ -151,7 +160,12 @@ function getFavoriteIds(favorites: unknown[]): string[] {
   });
 }
 
-function CustomTabBar({ state, descriptors, navigation }: any) {
+export function CustomTabBar({
+  state,
+  descriptors,
+  navigation,
+  bottomInset,
+}: any) {
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === "dark";
 
@@ -175,7 +189,9 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
     : "hsla(143, 61%, 91%, 0.85)";
 
   const visibleRoutes = state.routes.filter(
-    (route: any) => route.name !== "profile" && route.name !== "favorites",
+    (route: any) =>
+      route.name !== "profile" &&
+      route.name !== "favorites",
   );
 
   const TAB_WIDTH = TAB_BAR_WIDTH / visibleRoutes.length;
@@ -201,7 +217,7 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
   }, [currentVisibleIndex, TAB_WIDTH]);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { bottom: bottomInset }]}>
       <View
         style={[
           styles.tabContainer,
@@ -308,10 +324,9 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
 const styles = StyleSheet.create({
   container: {
     position: "absolute",
-    bottom: Platform.OS === "ios" ? 34 : 20,
     left: MARGIN,
     right: MARGIN,
-    height: 72,
+    height: TAB_BAR_HEIGHT,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.15,
@@ -346,12 +361,17 @@ const styles = StyleSheet.create({
 export default function HomeLayout() {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const pathname = usePathname();
+  const isDeliveryCartScreen = pathname.endsWith("/delivery-cart");
+  const tabBarBottom = Math.max(insets.bottom, MIN_TAB_BAR_BOTTOM);
 
   const [mode, setMode] = useState("Delivery");
   const [favorites, setFavorites] = useState<string[]>([]);
   const [menuItems, setMenuItems] = useState<ReturnType<typeof toMenuCardItem>[]>(
     [],
   );
+  const [isRefreshingHome, setIsRefreshingHome] = useState(false);
   const [categories, setCategories] = useState<
     (CustomerCategory & {
       id: string;
@@ -372,20 +392,22 @@ export default function HomeLayout() {
     (CustomerAddress & { id: string; type: string; address: string })[]
   >([]);
   const [cartPricing, setCartPricing] = useState<CustomerCart["pricing"]>();
+  const [cartBranchId, setCartBranchId] = useState<string | null>(null);
 
   const [carts, setCarts] = useState<{ [key: string]: any[] }>({
     Delivery: [],
     "Dine-in": [],
     Takeaway: [],
   });
+  const [deliveryCartsByBranch, setDeliveryCartsByBranch] = useState<
+    Record<string, any[]>
+  >({});
   const [activeAddress, setActiveAddress] = useState<
     (CustomerAddress & { id: string; type: string; address: string }) | null
   >(null);
   const [activeBranch, setActiveBranch] = useState<
     (CustomerBranch & { id: string; address: string }) | null
   >(null);
-  const [showCartModal, setShowCartModal] = useState(false);
-
   const [activeTable, setActiveTable] = useState<string | null>(null);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [confirmedOrders, setConfirmedOrders] = useState<any[]>([]);
@@ -396,9 +418,11 @@ export default function HomeLayout() {
   const [orderCountdown, setOrderCountdown] = useState(60);
   const [pendingOrderSnapshot, setPendingOrderSnapshot] = useState<any[]>([]);
   const [showDineInCartModal, setShowDineInCartModal] = useState(false);
-  const [showTimeoutModal, setShowTimeoutModal] = useState(false);
 
-  const activeCart = carts[mode] || [];
+  const activeCart =
+    mode === "Delivery" && activeBranch
+      ? deliveryCartsByBranch[activeBranch.id] || []
+      : carts[mode] || [];
   const activeCartTotalItems = activeCart.reduce(
     (sum: number, item: any) => sum + item.quantity,
     0,
@@ -410,214 +434,320 @@ export default function HomeLayout() {
     0,
   );
 
-  useEffect(() => {
-    let isMounted = true;
-    const loadUserData = async () => {
-      const [menuResult, categoryResult, branchResult, offerResult, reelResult] =
+  const loadUserData = useCallback(async () => {
+    const [
+      menuResult,
+      categoryResult,
+      branchResult,
+      offerResult,
+      reelResult,
+    ] = await Promise.allSettled([
+      api.getMenuItems("all", activeBranch?.id),
+      api.getCategories(),
+      api.getBranches(),
+      api.getOffers(),
+      api.getFeaturedReels(),
+    ]);
+
+    const menuCardItems =
+      menuResult.status === "fulfilled"
+        ? menuResult.value.map((item) =>
+            toMenuCardItem(
+              item,
+              categoryResult.status === "fulfilled" ? categoryResult.value : [],
+            ),
+          )
+        : [];
+
+    if (menuResult.status === "fulfilled") {
+      setMenuItems(menuCardItems);
+    } else {
+      Alert.alert("Unable to Load Menu", menuResult.reason.message);
+    }
+
+    if (categoryResult.status === "fulfilled") {
+      const iconForCategory = (name: string) =>
+        CATEGORY_PRESENTATION.find(
+          (category) => category.name.toLowerCase() === name.toLowerCase(),
+        )?.icon || CATEGORY_PRESENTATION[0].icon;
+      setCategories(
+        categoryResult.value
+          .filter((category) => category.isActive)
+          .sort((first, second) => (first.sortOrder || 0) - (second.sortOrder || 0))
+          .map((category) => ({
+            ...category,
+            id: category._id,
+            displayIcon: iconForCategory(category.name),
+          })),
+      );
+    } else {
+      Alert.alert("Unable to Load Categories", categoryResult.reason.message);
+    }
+
+    if (branchResult.status === "fulfilled") {
+      const activeBranches = branchResult.value.filter((branch) => branch.isActive);
+      const branchOptions = activeBranches.map((branch) => {
+        const activeName = branch.restaurantNames?.find(
+          (option) => option.isActive,
+        )?.name;
+        const activeAddress = branch.storeAddresses?.find(
+          (option) => option.isActive,
+        )?.address;
+        return {
+          ...branch,
+          id: branch._id,
+          name: activeName || branch.name,
+          address: activeAddress || branch.address || branch.city || "",
+        };
+      });
+      const menuBranchIds = new Set(
+        menuCardItems
+          .filter((item) => item.isAvailable === true)
+          .flatMap((item) => [
+            ...(item.branchIds || []),
+            ...(item.branchId ? [item.branchId] : []),
+          ]),
+      );
+      const defaultBranch =
+        branchOptions.find((branch) => menuBranchIds.has(branch.id)) ||
+        branchOptions[0] ||
+        null;
+      setBranches(branchOptions);
+      setActiveBranch(
+        (current) =>
+          branchOptions.find((branch) => branch.id === current?.id) ||
+          defaultBranch,
+      );
+      setBranchesLoaded(true);
+    } else {
+      Alert.alert("Unable to Load Branches", branchResult.reason.message);
+    }
+
+    if (offerResult.status === "fulfilled") {
+      setOffers(
+        offerResult.value
+          .filter((offer) => offer.isActive)
+          .map((offer) => ({
+            ...offer,
+            id: offer.id || offer._id || "",
+            subtitle: offer.description || "",
+            image: offer.imageUrl || "",
+          })),
+      );
+    } else {
+      Alert.alert("Unable to Load Offers", offerResult.reason.message);
+    }
+
+    if (reelResult.status === "fulfilled") {
+      setFeaturedReels(
+        reelResult.value
+          .filter((reel) => reel.isActive)
+          .sort(
+            (first, second) =>
+              (first.displayOrder || 0) - (second.displayOrder || 0),
+          ),
+      );
+    } else {
+      Alert.alert("Unable to Load Featured Content", reelResult.reason.message);
+    }
+
+    try {
+      const token = await authApi.getAccessToken();
+      if (!token) return;
+
+      const [favoriteResult, cartResult, addressResult] =
         await Promise.allSettled([
-          api.getMenuItems(),
-          api.getCategories(),
-          api.getBranches(),
-          api.getOffers(),
-          api.getFeaturedReels(),
+          api.getFavorites(),
+          api.getCart(),
+          api.getAddresses(),
         ]);
 
-      if (!isMounted) return;
-
-      const menuCardItems =
-        menuResult.status === "fulfilled"
-          ? menuResult.value.map((item) =>
-              toMenuCardItem(
-                item,
-                categoryResult.status === "fulfilled" ? categoryResult.value : [],
-              ),
-            )
-          : [];
-
-      if (menuResult.status === "fulfilled") {
-        setMenuItems(menuCardItems);
+      if (favoriteResult.status === "fulfilled") {
+        setFavorites(getFavoriteIds(favoriteResult.value));
       } else {
-        Alert.alert("Unable to Load Menu", menuResult.reason.message);
+        Alert.alert("Unable to Load Favorites", favoriteResult.reason.message);
       }
 
-      if (categoryResult.status === "fulfilled") {
-        const iconForCategory = (name: string) =>
-          CATEGORY_PRESENTATION.find(
-            (category) => category.name.toLowerCase() === name.toLowerCase(),
-          )?.icon || CATEGORY_PRESENTATION[0].icon;
-        setCategories(
-          categoryResult.value
-            .filter((category) => category.isActive)
-            .sort((first, second) => (first.sortOrder || 0) - (second.sortOrder || 0))
-            .map((category) => ({
-              ...category,
-              id: category._id,
-              displayIcon: iconForCategory(category.name),
-            })),
-        );
-      } else {
-        Alert.alert("Unable to Load Categories", categoryResult.reason.message);
-      }
-
-      if (branchResult.status === "fulfilled") {
-        const activeBranches = branchResult.value.filter(
-          (branch) => branch.isActive,
-        );
-        const branchOptions = activeBranches.map((branch) => {
-          const activeName = branch.restaurantNames?.find(
-            (option) => option.isActive,
-          )?.name;
-          const activeAddress = branch.storeAddresses?.find(
-            (option) => option.isActive,
-          )?.address;
-          return {
-            ...branch,
-            id: branch._id,
-            name: activeName || branch.name,
-            address: activeAddress || branch.address || branch.city || "",
-          };
+      if (cartResult.status === "fulfilled") {
+        const cartItems = toCartCardItems(cartResult.value, menuCardItems);
+        setCarts({
+          Delivery: cartItems,
+          "Dine-in": cartItems,
+          Takeaway: cartItems,
         });
-        const menuBranchIds = new Set(
-          menuCardItems
-            .filter((item) => item.isAvailable)
-            .flatMap((item) => [
-              ...(item.branchIds || []),
-              ...(item.branchId ? [item.branchId] : []),
-            ]),
-        );
-        const defaultBranch =
-          branchOptions.find((branch) => menuBranchIds.has(branch.id)) ||
-          branchOptions[0] ||
-          null;
-        setBranches(branchOptions);
-        setActiveBranch(
-          (current) =>
-            branchOptions.find((branch) => branch.id === current?.id) ||
-            defaultBranch,
-        );
-        setBranchesLoaded(true);
-      } else {
-        Alert.alert("Unable to Load Branches", branchResult.reason.message);
-      }
-
-      if (offerResult.status === "fulfilled") {
-        setOffers(
-          offerResult.value
-            .filter((offer) => offer.isActive)
-            .map((offer) => ({
-              ...offer,
-              id: offer.id || offer._id || "",
-              subtitle: offer.description || "",
-              image: offer.imageUrl || "",
-            })),
-        );
-      } else {
-        Alert.alert("Unable to Load Offers", offerResult.reason.message);
-      }
-
-      if (reelResult.status === "fulfilled") {
-        setFeaturedReels(
-          reelResult.value
-            .filter((reel) => reel.isActive)
-            .sort(
-              (first, second) =>
-                (first.displayOrder || 0) - (second.displayOrder || 0),
-            ),
-        );
-      } else {
-        Alert.alert("Unable to Load Featured Content", reelResult.reason.message);
-      }
-
-      try {
-        const token = await authApi.getAccessToken();
-        if (!token) return;
-
-        const [favoriteResult, cartResult, addressResult] =
-          await Promise.allSettled([
-            api.getFavorites(),
-            api.getCart(),
-            api.getAddresses(),
-          ]);
-
-        if (!isMounted) return;
-        if (favoriteResult.status === "fulfilled") {
-          setFavorites(getFavoriteIds(favoriteResult.value));
-        } else {
-          Alert.alert("Unable to Load Favorites", favoriteResult.reason.message);
-        }
-
-        if (cartResult.status === "fulfilled") {
-          const cartItems = toCartCardItems(cartResult.value, menuCardItems);
-          setCarts({
-            Delivery: cartItems,
-            "Dine-in": cartItems,
-            Takeaway: cartItems,
-          });
-          setCartPricing(cartResult.value.pricing);
-        } else {
-          Alert.alert("Unable to Load Cart", cartResult.reason.message);
-        }
-
-        if (addressResult.status === "fulfilled") {
-          const addressOptions = addressResult.value.map((address) => ({
-            ...address,
-            id: address._id,
-            type: address.label,
-            address: [
-              address.line1,
-              address.line2,
-              address.landmark,
-              address.city,
-              address.state,
-              address.pincode,
-            ]
-              .filter(Boolean)
-              .join(", "),
+        if (cartResult.value.branchId) {
+          setDeliveryCartsByBranch((previous) => ({
+            ...previous,
+            [cartResult.value.branchId!]: cartItems,
           }));
-          setAddresses(addressOptions);
-          setActiveAddress(
-            addressOptions.find((address) => address.isDefault) ||
-              addressOptions[0] ||
-              null,
-          );
-        } else {
-          Alert.alert("Unable to Load Addresses", addressResult.reason.message);
         }
-      } catch (error) {
-        if (isMounted) {
-          Alert.alert(
-            "Unable to Load Account Data",
-            error instanceof Error ? error.message : "Please try again.",
-          );
-        }
+        setCartBranchId(cartResult.value.branchId || null);
+        setCartPricing(cartResult.value.pricing);
+      } else {
+        Alert.alert("Unable to Load Cart", cartResult.reason.message);
       }
-    };
 
+      if (addressResult.status === "fulfilled") {
+        const addressOptions = addressResult.value.map((address) => ({
+          ...address,
+          id: address._id,
+          type: address.label,
+          address: [
+            address.line1,
+            address.line2,
+            address.landmark,
+            address.city,
+            address.state,
+            address.pincode,
+          ]
+            .filter(Boolean)
+            .join(", "),
+        }));
+        setAddresses(addressOptions);
+        setActiveAddress(
+          addressOptions.find((address) => address.isDefault) ||
+            addressOptions[0] ||
+            null,
+        );
+      } else {
+        Alert.alert("Unable to Load Addresses", addressResult.reason.message);
+      }
+    } catch (error) {
+      Alert.alert(
+        "Unable to Load Account Data",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    }
+  }, [activeBranch?.id]);
+
+  const refreshHomeData = useCallback(async () => {
+    setIsRefreshingHome(true);
+    try {
+      await loadUserData();
+    } finally {
+      setIsRefreshingHome(false);
+    }
+  }, [loadUserData]);
+
+  useEffect(() => {
     void loadUserData();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+  }, [loadUserData]);
 
-  const reloadCart = async () => {
+  const reloadCart = useCallback(async (expectedBranchId?: string) => {
     const cart = await api.getCart();
     const cartItems = toCartCardItems(cart, menuItems);
+    const branchId = cart.branchId || expectedBranchId;
     setCarts({
       Delivery: cartItems,
       "Dine-in": cartItems,
       Takeaway: cartItems,
     });
+    if (branchId) {
+      setDeliveryCartsByBranch((previous) => ({
+        ...previous,
+        [branchId]: cartItems,
+      }));
+    }
+    setCartBranchId(cart.branchId || null);
     setCartPricing(cart.pricing);
+  }, [menuItems]);
+
+  useEffect(() => {
+    let isMounted = true;
+    let isRefreshing = false;
+
+    const refreshCart = async () => {
+      if (!isMounted || AppState.currentState !== "active" || isRefreshing) {
+        return;
+      }
+
+      isRefreshing = true;
+      try {
+        const token = await authApi.getAccessToken();
+        if (token && isMounted) {
+          await reloadCart(activeBranch?.id);
+        }
+      } catch (error) {
+        console.error(
+          "Unable to refresh cart",
+          error instanceof Error ? error.message : error,
+        );
+      } finally {
+        isRefreshing = false;
+      }
+    };
+
+    const appStateSubscription = AppState.addEventListener(
+      "change",
+      (nextAppState) => {
+        if (nextAppState === "active") void refreshCart();
+      },
+    );
+    const interval = setInterval(() => void refreshCart(), 5000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+      appStateSubscription.remove();
+    };
+  }, [activeBranch?.id, reloadCart]);
+
+  const replaceServerCart = async (branchId: string, items: any[]) => {
+    await api.clearCart();
+    for (const item of items) {
+      await api.addCartItem({
+        menuItemId: String(item.id),
+        quantity: item.quantity,
+        selectedCustomizations: item.addons || [],
+        branchId,
+      });
+    }
+  };
+
+  const selectActiveBranch = async (
+    branch: CustomerBranch & { id: string; address: string },
+  ) => {
+    if (mode !== "Delivery" || !cartBranchId || cartBranchId === branch.id) {
+      setActiveBranch(branch);
+      return;
+    }
+
+    const targetCart = deliveryCartsByBranch[branch.id] || [];
+    try {
+      await replaceServerCart(branch.id, targetCart);
+      await reloadCart(branch.id);
+      setActiveBranch(branch);
+    } catch (error) {
+      try {
+        const previousCart = deliveryCartsByBranch[cartBranchId] || [];
+        await replaceServerCart(cartBranchId, previousCart);
+        await reloadCart(cartBranchId);
+        setDeliveryCartsByBranch((previous) => ({
+          ...previous,
+          [branch.id]: targetCart,
+        }));
+      } catch (restoreError) {
+        Alert.alert(
+          "Unable to Switch Branch Cart",
+          `${error instanceof Error ? error.message : "Please try again."}\n\nThe previous cart could not be restored: ${restoreError instanceof Error ? restoreError.message : "Please try again."}`,
+        );
+        return;
+      }
+      Alert.alert(
+        "Unable to Switch Branch Cart",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    }
   };
 
   const applyCartCoupon = async (code: string) => {
     await api.applyCartCoupon(code);
-    await reloadCart();
+    await reloadCart(activeBranch?.id);
   };
 
   const removeCartCoupon = async () => {
     await api.removeCartCoupon();
-    await reloadCart();
+    await reloadCart(activeBranch?.id);
   };
 
   const previewCheckout = async (offerCode?: string) => {
@@ -659,10 +789,11 @@ export default function HomeLayout() {
   const handleAddToCart = async (
     item: any,
     quantity: number,
-    addons: unknown[],
+    addons: CustomerCustomizationSelection[],
     totalAmount: number,
   ) => {
     const menuItemId = item?._id || item?.id;
+    const branchId = activeBranch?.id;
     const existing = activeCart.find((cartItem) => cartItem.id === menuItemId);
     const cartItemId = existing?.cartItemId;
 
@@ -678,17 +809,20 @@ export default function HomeLayout() {
           await api.updateCartItem(cartItemId, updatedQuantity);
         }
       } else {
-        if (!activeBranch?.id) {
+        if (item?.isAvailable !== true) {
+          throw new Error("This item is out of stock.");
+        }
+        if (!branchId) {
           throw new Error("Choose a restaurant branch before adding items.");
         }
         await api.addCartItem({
           menuItemId: String(menuItemId),
           quantity,
           selectedCustomizations: addons,
-          branchId: activeBranch.id,
+          branchId,
         });
       }
-      await reloadCart();
+      await reloadCart(branchId);
     } catch (error) {
       Alert.alert(
         "Unable to Update Cart",
@@ -705,9 +839,8 @@ export default function HomeLayout() {
         await api.updateCartItem(existing.cartItemId, existing.quantity - 1);
       } else {
         await api.removeCartItem(existing.cartItemId);
-        if (activeCart.length === 1) setShowCartModal(false);
       }
-      await reloadCart();
+      await reloadCart(activeBranch?.id);
     } catch (error) {
       Alert.alert(
         "Unable to Update Cart",
@@ -731,7 +864,6 @@ export default function HomeLayout() {
             clearInterval(interval);
             setActiveTable(null);
             setMode("Delivery");
-            setShowTimeoutModal(true);
             setDineInCartState("idle");
             setPendingOrderSnapshot([]);
             return null;
@@ -792,8 +924,9 @@ export default function HomeLayout() {
   };
 
   const shouldShowGlobalCartButton =
-    activeCartTotalItems > 0 ||
-    (mode === "Dine-in" && dineInCartState !== "idle");
+    (mode !== "Delivery" || activeBranch?.id === cartBranchId) &&
+    (activeCartTotalItems > 0 ||
+      (mode === "Dine-in" && dineInCartState !== "idle"));
 
   return (
     <FavoritesContext.Provider value={{ favorites, toggleFavorite }}>
@@ -807,10 +940,13 @@ export default function HomeLayout() {
           categories,
           offers,
           featuredReels,
+          refreshHomeData,
+          isRefreshingHome,
           branches,
           branchesLoaded,
           addresses,
           cartPricing,
+          activeCart,
           reloadCart,
           applyCartCoupon,
           removeCartCoupon,
@@ -818,7 +954,7 @@ export default function HomeLayout() {
           activeAddress,
           setActiveAddress,
           activeBranch,
-          setActiveBranch,
+          setActiveBranch: selectActiveBranch,
           handleAddToCart,
           handleDecrementCartItem,
           activeTable,
@@ -832,28 +968,20 @@ export default function HomeLayout() {
         }}
       >
         <View className="flex-1" style={{ backgroundColor: theme.bg }}>
-          <Tabs
-            backBehavior="history"
-            tabBar={(props) => <CustomTabBar {...props} />}
-            screenOptions={{ headerShown: false }}
-          >
-            <Tabs.Screen name="index" options={{ title: "Home" }} />
-            <Tabs.Screen name="offers" options={{ title: "Offers" }} />
-            <Tabs.Screen name="search" options={{ title: "Menu" }} />
-            <Tabs.Screen name="orders" options={{ title: "Orders" }} />
-            <Tabs.Screen
-              name="profile"
-              options={{ href: null, title: "My Profile" }}
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="(tabs)" />
+            <Stack.Screen
+              name="delivery-cart"
+              options={{
+                gestureEnabled: true,
+                animation: "slide_from_right",
+              }}
             />
-            <Tabs.Screen
-              name="favorites"
-              options={{ href: null, title: "Favorites" }}
-            />
-          </Tabs>
+          </Stack>
 
           {/* GLOBAL VIEW CART BAR (Handles all modes reliably across all tabs) */}
           {shouldShowGlobalCartButton &&
-            !showCartModal &&
+            !isDeliveryCartScreen &&
             !showDineInCartModal && (
               <ViewCartButton
                 orderMode={mode}
@@ -861,42 +989,16 @@ export default function HomeLayout() {
                 dineInCartState={dineInCartState}
                 orderCountdown={orderCountdown}
                 theme={theme}
+                bottomOffset={tabBarBottom + TAB_BAR_HEIGHT}
                 onPress={() => {
                   if (mode === "Dine-in") {
                     setShowDineInCartModal(true);
                   } else {
-                    setShowCartModal(true);
+                    router.push("/(home)/delivery-cart");
                   }
                 }}
               />
             )}
-
-          {/* DELIVERY & TAKEAWAY MODAL */}
-          <DeliveryCartModal
-            visible={showCartModal}
-            onClose={() => setShowCartModal(false)}
-            cart={activeCart}
-            onIncrement={handleAddToCart}
-            onDecrement={handleDecrementCartItem}
-            theme={theme}
-            insets={insets}
-            activeAddress={mode === "Delivery" ? activeAddress : activeBranch}
-            setActiveAddress={
-              mode === "Delivery" ? setActiveAddress : setActiveBranch
-            }
-            orderMode={mode}
-            activeBranch={activeBranch}
-            addresses={addresses}
-            branches={branches}
-            offers={offers}
-            crossSellItems={menuItems.filter(
-              (item) => !activeCart.some((cartItem) => cartItem.id === item.id),
-            )}
-            cartPricing={cartPricing}
-            onApplyCoupon={applyCartCoupon}
-            onRemoveCoupon={removeCartCoupon}
-            onCheckout={previewCheckout}
-          />
 
           {/* DINE-IN MODAL (Now Global, supports minus/plus functionality) */}
           <Modal

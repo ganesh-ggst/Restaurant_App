@@ -3,9 +3,9 @@ import { ArrowLeft, Heart, UserRound } from "lucide-react-native";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import FoodCard from "../../components/home/FoodCard";
-import { useAppTheme } from "../../hooks/useAppTheme";
-import { useFavorites, useOrderMode } from "./_layout";
+import FoodCard from "../../../components/home/FoodCard";
+import { useAppTheme } from "../../../hooks/useAppTheme";
+import { useFavorites, useOrderMode } from "../_layout";
 
 export default function FavoritesScreen() {
   const router = useRouter();
@@ -100,12 +100,17 @@ export default function FavoritesScreen() {
         ) : (
           <View className="flex-row flex-wrap justify-between px-4 mt-2">
             {favoriteItems.map((item: any) => {
-              const cartItem = activeCart.find((c: any) => c.id === item.id);
+              const cartQuantity = activeCart.reduce(
+                (quantity: number, cartItem: any) =>
+                  quantity +
+                  (cartItem.id === item.id ? cartItem.quantity : 0),
+                0,
+              );
               return (
                 <View key={item.id} style={{ width: "48%" }} className="mb-4">
                   <FoodCard
                     item={item}
-                    cartQuantity={cartItem?.quantity || 0}
+                    cartQuantity={cartQuantity}
                     onAddToCart={(qty, addons, total) =>
                       handleAddToCart(item, qty, addons, total)
                     }

@@ -96,7 +96,6 @@ const formatPrice = (price: number) => {
 
 export const DeliveryCartModal = memo(
   ({
-    visible,
     onClose,
     cart,
     onIncrement,
@@ -164,13 +163,6 @@ export const DeliveryCartModal = memo(
       : ["Instructions"];
 
     useEffect(() => {
-      if (visible) {
-        setIsBillExpanded(false);
-        setActiveTab(isDelivery ? "Delivery" : "Instructions");
-      }
-    }, [visible, isDelivery]);
-
-    useEffect(() => {
       if (!cart || cart.length === 0) {
         setTipAmount(0);
         setCustomTipInput("");
@@ -178,8 +170,6 @@ export const DeliveryCartModal = memo(
         setIsBillExpanded(false);
       }
     }, [cart]);
-
-    if (!visible) return null;
 
     const handleClose = () => {
       Keyboard.dismiss();
@@ -315,12 +305,6 @@ export const DeliveryCartModal = memo(
     };
 
     return (
-      <Modal
-        visible={visible}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={handleClose}
-      >
         <View
           style={{ backgroundColor: theme.bg, paddingTop: insets.top, flex: 1 }}
         >
@@ -1855,7 +1839,6 @@ export const DeliveryCartModal = memo(
             </View>
           </Modal>
         </View>
-      </Modal>
     );
   },
 );

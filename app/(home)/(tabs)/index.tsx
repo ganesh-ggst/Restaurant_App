@@ -28,6 +28,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   Text,
   TextInput,
@@ -37,11 +38,11 @@ import {
 import Animated, { FadeIn } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import FoodCard from "../../components/home/FoodCard";
-import { HomeHeader } from "../../components/home/HomeHeader";
-import { useAppTheme } from "../../hooks/useAppTheme";
-import { api } from "../../services/api";
-import { useOrderMode } from "./_layout";
+import FoodCard from "../../../components/home/FoodCard";
+import { HomeHeader } from "../../../components/home/HomeHeader";
+import { useAppTheme } from "../../../hooks/useAppTheme";
+import { api } from "../../../services/api";
+import { useOrderMode } from "../_layout";
 
 const hasImageUri = (uri: unknown): uri is string =>
   typeof uri === "string" && uri.trim().length > 0;
@@ -70,6 +71,8 @@ export default function HomeScreen() {
     categories,
     offers,
     featuredReels,
+    refreshHomeData,
+    isRefreshingHome,
     addresses,
     branches,
     branchesLoaded,
@@ -172,11 +175,7 @@ export default function HomeScreen() {
   const emptyState = useMemo(
     () =>
       activeBranch?.storefrontDisplay?.emptyStates?.find(
-        (state: {
-          title: string;
-          description: string;
-          isActive: boolean;
-        }) =>
+        (state: { title: string; description: string; isActive: boolean }) =>
           state.isActive &&
           (state.title.trim().length > 0 ||
             state.description.trim().length > 0),
@@ -186,8 +185,7 @@ export default function HomeScreen() {
   const taxPercentage =
     activeBranch?.taxDetailOptions?.find(
       (option: { gstPercentage: number; isActive: boolean }) => option.isActive,
-    )
-      ?.gstPercentage ??
+    )?.gstPercentage ??
     activeBranch?.taxDetails?.gstPercentage ??
     0;
   const gstRate = taxPercentage / 100;
@@ -197,12 +195,16 @@ export default function HomeScreen() {
   );
   const assignedWaiter = Array.isArray(activeBranch?.managerIds)
     ? activeBranch.managerIds.find(
-        (manager: string | {
-          _id: string;
-          firstName?: string;
-          lastName?: string;
-          managerType?: string;
-        }) =>
+        (
+          manager:
+            | string
+            | {
+                _id: string;
+                firstName?: string;
+                lastName?: string;
+                managerType?: string;
+              },
+        ) =>
           typeof manager !== "string" &&
           manager.managerType?.toLowerCase().includes("waiter"),
       )
@@ -317,7 +319,7 @@ export default function HomeScreen() {
   };
 
   const getFilteredData = () => {
-    let filtered = menuItems.filter((item: any) => item.isAvailable);
+    let filtered = [...menuItems];
     if (activeBranch?.id) {
       filtered = filtered.filter((item: any) => {
         const itemBranchIds = item.branchIds || [];
@@ -343,17 +345,18 @@ export default function HomeScreen() {
         );
       });
     }
-    return filtered;
+    return filtered.sort(
+      (first: any, second: any) =>
+        Number(first.isAvailable !== true) -
+        Number(second.isAvailable !== true),
+    );
   };
 
   const listData = getFilteredData();
   const offerCardHeight = offersViewportWidth * 0.4;
   const offersCarousel =
     (orderMode === "Delivery" || orderMode === "Takeaway") && !searchQuery ? (
-      <View
-        className="w-full px-4"
-        style={{ overflow: "hidden" }}
-      >
+      <View className="w-full px-4" style={{ overflow: "hidden" }}>
         <ScrollView
           horizontal
           pagingEnabled
@@ -386,7 +389,7 @@ export default function HomeScreen() {
               disabled={offersViewportWidth <= 0}
               onPress={() =>
                 router.push({
-                  pathname: "/(home)/offers",
+                  pathname: "/(home)/(tabs)/offers",
                   params: { offerId: offer.id },
                 })
               }
@@ -630,7 +633,7 @@ export default function HomeScreen() {
 
         <View className="flex-row items-center">
           <Pressable
-            onPress={() => router.push("/(home)/favorites")}
+            onPress={() => router.push("/(home)/(tabs)/favorites")}
             className="h-11 w-11 items-center justify-center rounded-full shadow-sm border mr-3"
             style={{ backgroundColor: theme.card, borderColor: theme.border }}
           >
@@ -638,7 +641,7 @@ export default function HomeScreen() {
           </Pressable>
 
           <Pressable
-            onPress={() => router.push("/(home)/profile")}
+            onPress={() => router.push("/(home)/(tabs)/profile")}
             className="h-11 w-11 items-center justify-center rounded-full shadow-sm border"
             style={{ backgroundColor: theme.card, borderColor: theme.border }}
           >
@@ -663,12 +666,16 @@ export default function HomeScreen() {
             marginBottom: 16,
           }}
           renderItem={({ item }) => {
-            const cartItem = activeCart.find((c: any) => c.id === item.id);
+            const cartQuantity = activeCart.reduce(
+              (quantity: number, cartItem: any) =>
+                quantity + (cartItem.id === item.id ? cartItem.quantity : 0),
+              0,
+            );
             return (
               <View style={{ width: "48%" }}>
                 <FoodCard
                   item={item}
-                  cartQuantity={cartItem?.quantity || 0}
+                  cartQuantity={cartQuantity}
                   onAddToCart={(qty, addons, total) =>
                     handleAddToCart(item, qty, addons, total)
                   }
@@ -721,6 +728,14 @@ export default function HomeScreen() {
             paddingBottom: activeCart.length > 0 ? 180 : 120,
           }}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshingHome}
+              onRefresh={() => void refreshHomeData()}
+              tintColor={theme.primary}
+              colors={[theme.primary]}
+            />
+          }
         />
       </Animated.View>
 
@@ -755,10 +770,12 @@ export default function HomeScreen() {
                   backgroundColor: theme.card,
                 }}
               >
-                {([
-                  { id: "address", label: "Delivery Address" },
-                  { id: "branch", label: "Restaurant Branch" },
-                ] as const).map((option) => {
+                {(
+                  [
+                    { id: "address", label: "Delivery Address" },
+                    { id: "branch", label: "Restaurant Branch" },
+                  ] as const
+                ).map((option) => {
                   const isSelected = addressModalSelection === option.id;
                   return (
                     <Pressable

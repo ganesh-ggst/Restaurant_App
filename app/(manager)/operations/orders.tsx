@@ -23,6 +23,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Card } from "../../../components/ui/Card";
 import { useAppTheme } from "../../../hooks/useAppTheme";
+import { useCurrentManager } from "../../../hooks/useCurrentManager";
 import {
   OperationsOrder,
   operationsApi,
@@ -31,39 +32,61 @@ import {
 const ORDER_TABS = [
   "pending",
   "rejected",
+  "cancelled",
   "accepted",
   "preparing",
   "ready",
   "out_for_delivery",
+  "delivered",
   "completed",
 ] as const;
 
-let cachedOrders: OperationsOrder[] | null = null;
+let cachedOrders: { branchId: string; orders: OperationsOrder[] } | null = null;
+
+function getOrderBranchId(order: OperationsOrder): string | null {
+  if (typeof order.branchId === "string") return order.branchId;
+  return order.branchId?._id || order.branchId?.id || null;
+}
 
 function cacheOrderStatus(orderId: string, status: string): OperationsOrder[] {
-  const updatedOrders = (cachedOrders ?? []).map((order) =>
+  const updatedOrders = (cachedOrders?.orders ?? []).map((order) =>
     order._id === orderId ? { ...order, status } : order,
   );
-  cachedOrders = updatedOrders;
+  if (cachedOrders) {
+    cachedOrders = { ...cachedOrders, orders: updatedOrders };
+  }
   return updatedOrders;
 }
 
+function normalizeOrderStatus(status: string) {
+  const normalized = status.trim().toLowerCase().replace(/[-\s]+/g, "_");
+  return normalized === "canceled" ? "cancelled" : normalized;
+}
+
+function normalizeFulfillmentType(fulfillmentType?: string) {
+  return fulfillmentType?.trim().toLowerCase().replace(/[_\s]+/g, "-") || "";
+}
+
 function nextOrderStatus(order: OperationsOrder): string | null {
-  switch (order.status.toLowerCase()) {
+  const fulfillmentType = normalizeFulfillmentType(order.fulfillmentType);
+  const status = normalizeOrderStatus(order.status);
+  switch (status) {
     case "pending":
       return "accepted";
     case "accepted":
-      return "preparing";
+      return fulfillmentType === "dine-in" ? "completed" : "preparing";
     case "preparing":
       return "ready";
     case "ready":
-      return ["delivery", "takeaway"].includes(
-        order.fulfillmentType?.toLowerCase() || "",
-      )
-        ? "out_for_delivery"
-        : "completed";
+      if (fulfillmentType === "delivery") return "out_for_delivery";
+      if (fulfillmentType === "takeaway" || fulfillmentType === "dine-in") {
+        return "completed";
+      }
+      return null;
     case "out_for_delivery":
-      return "completed";
+      return fulfillmentType === "delivery" ? "delivered" : null;
+    case "delivered":
+      return fulfillmentType === "delivery" ? "completed" : null;
     default:
       return null;
   }
@@ -73,31 +96,46 @@ export default function OperationsOrdersScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const theme = useAppTheme();
+  const { currentManager, loading: managerLoading } = useCurrentManager();
+  const branchId = currentManager?.branchId || null;
   const [orders, setOrders] = useState<OperationsOrder[]>(
-    () => cachedOrders ?? [],
+    () =>
+      cachedOrders?.branchId === branchId ? cachedOrders.orders : [],
   );
   const [activeTab, setActiveTab] =
     useState<(typeof ORDER_TABS)[number]>("pending");
-  const [modeFilter, setModeFilter] = useState<"all" | "delivery" | "takeaway">(
-    "all",
+  const [modeFilter, setModeFilter] = useState<
+    "all" | "delivery" | "takeaway"
+  >("all");
+  const [loading, setLoading] = useState(
+    () => managerLoading || cachedOrders?.branchId !== branchId,
   );
-  const [loading, setLoading] = useState(() => cachedOrders === null);
   const [refreshing, setRefreshing] = useState(false);
   const [updatingOrderId, setUpdatingOrderId] = useState("");
   const [updatingOrderAction, setUpdatingOrderAction] = useState<
-    "advance" | "reject" | null
+    "advance" | "reject" | "cancel" | null
   >(null);
 
   const loadOrders = useCallback(async (showRefreshIndicator = false) => {
-    if (cachedOrders === null) {
+    if (!branchId) {
+      setOrders([]);
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+    if (cachedOrders?.branchId !== branchId) {
       setLoading(true);
+      setOrders([]);
     } else if (showRefreshIndicator) {
       setRefreshing(true);
     }
     try {
-      const freshOrders = await operationsApi.getAllOrders();
-      cachedOrders = freshOrders;
-      setOrders(freshOrders);
+      const allOrders = await operationsApi.getAllOrders();
+      const branchOrders = allOrders.filter(
+        (order) => getOrderBranchId(order) === branchId,
+      );
+      cachedOrders = { branchId, orders: branchOrders };
+      setOrders(branchOrders);
     } catch (error) {
       Alert.alert(
         "Unable to load orders",
@@ -107,28 +145,34 @@ export default function OperationsOrdersScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [branchId]);
 
   useFocusEffect(
     useCallback(() => {
-      if (cachedOrders === null) {
-        void loadOrders();
-      } else {
-        setOrders(cachedOrders);
+      if (managerLoading) return;
+      if (!branchId) {
+        setLoading(false);
+        Alert.alert(
+          "Unable to load orders",
+          "Your manager account is not linked to a branch.",
+        );
+        return;
       }
-    }, [loadOrders]),
+      if (cachedOrders?.branchId === branchId) {
+        setOrders(cachedOrders.orders);
+      }
+      void loadOrders();
+    }, [branchId, loadOrders, managerLoading]),
   );
 
   const filteredOrders = orders.filter((order) => {
     const matchesStatus =
       activeTab === "completed"
-        ? ["completed", "cancelled", "canceled"].includes(
-            order.status.toLowerCase(),
-          )
-        : order.status.toLowerCase() === activeTab;
+        ? normalizeOrderStatus(order.status) === "completed"
+        : normalizeOrderStatus(order.status) === activeTab;
     const matchesMode =
       modeFilter === "all" ||
-      order.fulfillmentType?.toLowerCase() === modeFilter;
+      normalizeFulfillmentType(order.fulfillmentType) === modeFilter;
     return matchesStatus && matchesMode;
   });
 
@@ -168,7 +212,7 @@ export default function OperationsOrdersScreen() {
     order: OperationsOrder,
     status: string,
     note: string,
-    action: "advance" | "reject",
+    action: "advance" | "reject" | "cancel",
   ) => {
     setUpdatingOrderId(order._id);
     setUpdatingOrderAction(action);
@@ -179,7 +223,9 @@ export default function OperationsOrdersScreen() {
         note,
       );
       setOrders(cacheOrderStatus(order._id, status));
-      if (status === "rejected") setActiveTab("rejected");
+      if (status === "rejected" || status === "cancelled") {
+        setActiveTab(status);
+      }
       await loadOrders();
     } catch (error) {
       Alert.alert(
@@ -279,10 +325,14 @@ export default function OperationsOrdersScreen() {
         >
           {filteredOrders.map((order) => {
             const nextStatus = nextOrderStatus(order);
+            const fulfillmentType = normalizeFulfillmentType(
+              order.fulfillmentType,
+            );
+            const orderStatus = normalizeOrderStatus(order.status);
             const FulfillmentIcon =
-              order.fulfillmentType === "delivery"
+              fulfillmentType === "delivery"
                 ? Bike
-                : order.fulfillmentType === "dine-in"
+                : fulfillmentType === "dine-in"
                   ? ChefHat
                   : ShoppingBag;
             const customerName = [
@@ -319,7 +369,7 @@ export default function OperationsOrdersScreen() {
                     style={{ backgroundColor: theme.primary }}
                   >
                     <Text className="text-[10px] font-bold uppercase text-white">
-                      {order.status.replace(/_/g, " ")}
+                      {orderStatus.replace(/_/g, " ")}
                     </Text>
                   </View>
                 </View>
@@ -327,7 +377,7 @@ export default function OperationsOrdersScreen() {
                 <View className="mb-3 flex-row items-center gap-2">
                   <FulfillmentIcon size={16} color={theme.muted} />
                   <Text className="text-xs capitalize" style={{ color: theme.muted }}>
-                    {order.fulfillmentType?.replace(/-/g, " ") || "Order"}
+                    {fulfillmentType.replace(/-/g, " ") || "Order"}
                   </Text>
                   {customerName ? (
                     <Text className="flex-1 text-right text-xs" style={{ color: theme.muted }}>
@@ -379,32 +429,76 @@ export default function OperationsOrdersScreen() {
                         Mark {nextStatus.replace(/_/g, " ")}
                       </Text>
                     </Pressable>
-                    {order.status.toLowerCase() === "pending" ? (
-                      <Pressable
-                        onPress={() => rejectOrder(order)}
-                        disabled={updatingOrderId === order._id}
-                        className="flex-1 flex-row items-center justify-center gap-2 rounded-xl border py-3"
-                        style={{
-                          borderColor: theme.danger,
-                          backgroundColor: theme.card,
-                        }}
-                      >
-                        {updatingOrderId === order._id &&
-                        updatingOrderAction === "reject" ? (
-                          <ActivityIndicator size="small" color={theme.danger} />
-                        ) : (
-                          <XCircle size={17} color={theme.danger} />
-                        )}
-                        <Text
-                          className="text-xs font-bold"
-                          style={{ color: theme.danger }}
+                    {orderStatus === "pending" &&
+                    fulfillmentType === "delivery" ? (
+                      <>
+                        <Pressable
+                          onPress={() => rejectOrder(order)}
+                          disabled={updatingOrderId === order._id}
+                          className="flex-1 flex-row items-center justify-center gap-2 rounded-xl border py-3"
+                          style={{
+                            borderColor: theme.danger,
+                            backgroundColor: theme.card,
+                          }}
                         >
                           {updatingOrderId === order._id &&
-                          updatingOrderAction === "reject"
-                            ? "Rejecting..."
-                            : "Reject Order"}
-                        </Text>
-                      </Pressable>
+                          updatingOrderAction === "reject" ? (
+                            <ActivityIndicator size="small" color={theme.danger} />
+                          ) : (
+                            <XCircle size={17} color={theme.danger} />
+                          )}
+                          <Text
+                            className="text-xs font-bold"
+                            style={{ color: theme.danger }}
+                          >
+                            {updatingOrderId === order._id &&
+                            updatingOrderAction === "reject"
+                              ? "Rejecting..."
+                              : "Reject"}
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() =>
+                            Alert.alert(
+                              "Cancel this order?",
+                              `Cancel order ${order.orderNumber}?`,
+                              [
+                                { text: "Keep Order", style: "cancel" },
+                                {
+                                  text: "Cancel Order",
+                                  style: "destructive",
+                                  onPress: () =>
+                                    void updateOrder(
+                                      order,
+                                      "cancelled",
+                                      "Order cancelled by operations manager",
+                                      "cancel",
+                                    ),
+                                },
+                              ],
+                            )
+                          }
+                          disabled={updatingOrderId === order._id}
+                          className="flex-1 flex-row items-center justify-center gap-2 rounded-xl border py-3"
+                          style={{
+                            borderColor: theme.danger,
+                            backgroundColor: theme.card,
+                          }}
+                        >
+                          {updatingOrderId === order._id &&
+                          updatingOrderAction === "cancel" ? (
+                            <ActivityIndicator size="small" color={theme.danger} />
+                          ) : (
+                            <XCircle size={17} color={theme.danger} />
+                          )}
+                          <Text
+                            className="text-xs font-bold"
+                            style={{ color: theme.danger }}
+                          >
+                            Cancel
+                          </Text>
+                        </Pressable>
+                      </>
                     ) : null}
                   </View>
                 ) : null}

@@ -1,7 +1,7 @@
 import { Stack } from "expo-router";
 
-import { ProfileProvider } from "../../../components/profile/ProfileContext";
-import { useAppTheme } from "../../../hooks/useAppTheme";
+import { ProfileProvider } from "../../../../components/profile/ProfileContext";
+import { useAppTheme } from "../../../../hooks/useAppTheme";
 
 export default function ProfileStackLayout() {
   const theme = useAppTheme();

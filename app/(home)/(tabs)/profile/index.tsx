@@ -36,11 +36,11 @@ import {
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { useProfile } from "../../../components/profile/ProfileContext";
-import { formatProfilePhone } from "../../../components/profile/ProfileUi";
-import { useAppTheme } from "../../../hooks/useAppTheme";
-import { api } from "../../../services/api";
-import { useOrderMode } from "../_layout";
+import { useProfile } from "../../../../components/profile/ProfileContext";
+import { formatProfilePhone } from "../../../../components/profile/ProfileUi";
+import { useAppTheme } from "../../../../hooks/useAppTheme";
+import { api } from "../../../../services/api";
+import { useOrderMode } from "../../_layout";
 
 const themeOptions = [
   { label: "Light Mode", value: "light", icon: Sun },

@@ -14,13 +14,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import {
   ProfileError,
   ProfileScreenHeader,
-} from "../../../components/profile/ProfileUi";
-import { useAppTheme } from "../../../hooks/useAppTheme";
-import { api } from "../../../services/api";
+} from "../../../../components/profile/ProfileUi";
+import { useAppTheme } from "../../../../hooks/useAppTheme";
+import { api } from "../../../../services/api";
 import type {
   CustomerNotification,
   NotificationPage,
-} from "../../../services/api/profile";
+} from "../../../../services/api/profile";
 
 function notificationId(notification: CustomerNotification): string | undefined {
   return notification._id || notification.id;
