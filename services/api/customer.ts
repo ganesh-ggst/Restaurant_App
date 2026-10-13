@@ -213,8 +213,13 @@ export interface CustomerOrder {
 export interface CustomerCartItemInput {
   menuItemId: string;
   quantity: number;
-  selectedCustomizations: unknown[];
+  selectedCustomizations: CustomerCustomizationSelection[];
   branchId: string;
+}
+
+export interface CustomerCustomizationSelection {
+  groupId: string;
+  optionIds: string[];
 }
 
 export interface CheckoutPreviewInput {
@@ -297,9 +302,20 @@ function requireArray<T>(data: T[] | undefined, message: string): T[] {
 const encode = (value: string) => encodeURIComponent(value);
 
 export const customerApi = {
-  async getMenuItems(): Promise<CustomerMenuItem[]> {
+  async getMenuItems(
+    stock?: "all" | "in_stock" | "out_of_stock",
+    branchId?: string,
+  ): Promise<CustomerMenuItem[]> {
+    const query = new URLSearchParams();
+    if (branchId) query.set("branchId", branchId);
+    if (stock) query.set("stock", stock);
+    const queryString = query.toString();
+
     return requireArray(
-      await request<CustomerMenuItem[]>("GET", "/menu-items"),
+      await request<CustomerMenuItem[]>(
+        "GET",
+        `/menu-items${queryString ? `?${queryString}` : ""}`,
+      ),
       "The server did not return menu items.",
     );
   },

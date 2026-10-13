@@ -76,6 +76,12 @@ export default function EditMenuItemScreen() {
   const [customizationEditor, setCustomizationEditor] =
     useState<CustomizationEditor | null>(null);
   const [customizationName, setCustomizationName] = useState("");
+  const [customizationSelectionType, setCustomizationSelectionType] =
+    useState<"single" | "multiple">("single");
+  const [customizationMinSelections, setCustomizationMinSelections] =
+    useState("0");
+  const [customizationMaxSelections, setCustomizationMaxSelections] =
+    useState("1");
   const [optionName, setOptionName] = useState("");
   const [optionPrice, setOptionPrice] = useState("0");
   const hasLoadedItem = useRef(false);
@@ -344,11 +350,17 @@ export default function EditMenuItemScreen() {
 
   const openNewGroupEditor = () => {
     setCustomizationName("");
+    setCustomizationSelectionType("multiple");
+    setCustomizationMinSelections("0");
+    setCustomizationMaxSelections("2");
     setCustomizationEditor({ type: "group", groupIndex: null });
   };
 
   const openEditGroupEditor = (group: OperationsCustomizationGroup, index: number) => {
     setCustomizationName(group.name);
+    setCustomizationSelectionType(group.selectionType);
+    setCustomizationMinSelections(String(group.minSelections));
+    setCustomizationMaxSelections(String(group.maxSelections));
     setCustomizationEditor({ type: "group", groupIndex: index });
   };
 
@@ -363,12 +375,29 @@ export default function EditMenuItemScreen() {
         Alert.alert("Add-on name required", "Enter a name for this add-on section.");
         return;
       }
+      const minSelections = Number(customizationMinSelections);
+      const maxSelections = Number(customizationMaxSelections);
+      if (
+        !Number.isInteger(minSelections) ||
+        !Number.isInteger(maxSelections) ||
+        minSelections < 0 ||
+        maxSelections < 1 ||
+        minSelections > maxSelections ||
+        (customizationSelectionType === "single" && maxSelections > 1)
+      ) {
+        Alert.alert(
+          "Invalid selection limits",
+          "Enter whole-number limits, with minimum no greater than maximum. Single-selection sections can allow only one option.",
+        );
+        return;
+      }
 
       const group: OperationsCustomizationGroup = {
+        ...existingGroup,
         name,
-        selectionType: existingGroup?.selectionType ?? "single",
-        minSelections: existingGroup?.minSelections ?? 0,
-        maxSelections: existingGroup?.maxSelections ?? 1,
+        selectionType: customizationSelectionType,
+        minSelections,
+        maxSelections,
         options: existingGroup?.options ?? [],
       };
       setCustomizationGroups((current) => {
@@ -939,6 +968,82 @@ export default function EditMenuItemScreen() {
                     "default",
                     false,
                     true,
+                  )}
+                  <Text
+                    className="mb-2 text-xs font-bold uppercase"
+                    style={{ color: theme.muted }}
+                  >
+                    How many options can customers select?
+                  </Text>
+                  <View className="mb-4 flex-row gap-2">
+                    {(["single", "multiple"] as const).map((selectionType) => {
+                      const isSelected =
+                        customizationSelectionType === selectionType;
+                      return (
+                        <Pressable
+                          key={selectionType}
+                          onPress={() => {
+                            setCustomizationSelectionType(selectionType);
+                            if (selectionType === "single") {
+                              setCustomizationMaxSelections("1");
+                              setCustomizationMinSelections((current) =>
+                                Number(current) > 1 ? "1" : current,
+                              );
+                            } else if (Number(customizationMaxSelections) < 2) {
+                              const existingGroup =
+                                customizationEditor.groupIndex === null
+                                  ? null
+                                  : customizationGroups[
+                                      customizationEditor.groupIndex
+                                    ];
+                              const availableOptionCount =
+                                existingGroup?.options.filter(
+                                  (option) => option.isAvailable,
+                                ).length ?? 0;
+                              setCustomizationMaxSelections(
+                                String(Math.max(2, availableOptionCount)),
+                              );
+                            }
+                          }}
+                          className="flex-1 items-center rounded-xl border px-3 py-3"
+                          style={{
+                            backgroundColor: isSelected
+                              ? theme.primary
+                              : theme.bg,
+                            borderColor: isSelected
+                              ? theme.primary
+                              : theme.border,
+                          }}
+                        >
+                          <Text
+                            className="text-sm font-bold"
+                            style={{
+                              color: isSelected
+                                ? theme.primaryForeground
+                                : theme.text,
+                            }}
+                          >
+                            {selectionType === "single"
+                              ? "Choose one"
+                              : "Choose multiple"}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                  {field(
+                    "Minimum choices",
+                    customizationMinSelections,
+                    setCustomizationMinSelections,
+                    "0",
+                    "numeric",
+                  )}
+                  {field(
+                    "Maximum choices",
+                    customizationMaxSelections,
+                    setCustomizationMaxSelections,
+                    "1",
+                    "numeric",
                   )}
                 </>
               ) : (

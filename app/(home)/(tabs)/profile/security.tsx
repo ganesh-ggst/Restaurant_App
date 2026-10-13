@@ -4,8 +4,8 @@ import { ChevronRight, Smartphone } from "lucide-react-native";
 import { Alert, Pressable, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { ProfileScreenHeader } from "../../../components/profile/ProfileUi";
-import { useAppTheme } from "../../../hooks/useAppTheme";
+import { ProfileScreenHeader } from "../../../../components/profile/ProfileUi";
+import { useAppTheme } from "../../../../hooks/useAppTheme";
 
 export default function SecurityScreen() {
   const router = useRouter();

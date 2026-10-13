@@ -8,6 +8,7 @@ export default function ViewCartButton({
   orderCountdown = 0,
   onPress,
   theme,
+  bottomOffset,
 }: any) {
   const shouldShow =
     activeCartTotalItems > 0 ||
@@ -24,7 +25,10 @@ export default function ViewCartButton({
   if (isRejected) bgColor = "#EF4444";
 
   return (
-    <View className="absolute left-4 right-4 z-50" style={{ bottom: 110 }}>
+    <View
+      className="absolute left-4 right-4 z-50"
+      style={{ bottom: bottomOffset }}
+    >
       <Pressable
         onPress={onPress}
         className="w-full h-[55px] rounded-[20px] flex-row items-center justify-between px-6 shadow-md"

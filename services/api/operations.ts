@@ -33,6 +33,7 @@ export interface OperationsCustomizationOption {
 }
 
 export interface OperationsCustomizationGroup {
+  _id?: string;
   name: string;
   selectionType: "single" | "multiple";
   minSelections: number;
@@ -133,16 +134,6 @@ export interface OperationsOrder {
   };
 }
 
-export interface OperationsOrdersPage {
-  orders: OperationsOrder[];
-  pagination: {
-    total: number;
-    limit: number;
-    skip: number;
-    hasMore: boolean;
-  };
-}
-
 export interface OperationsManagerAssignment {
   _id: string;
   managerType: string;
@@ -165,7 +156,7 @@ async function request<T>(
   method: "GET" | "POST" | "PATCH" | "DELETE",
   path: string,
   body?: Record<string, unknown>,
-  resource: "operations" | "offers" = "operations",
+  resource: "operations" | "offers" | "orders" = "operations",
 ): Promise<T | undefined> {
   if (!API_BASE_URL) {
     throw new Error(
@@ -456,41 +447,11 @@ export const operationsApi = {
     await request("DELETE", `/inventory/${encode(id)}`);
   },
 
-  async getOrdersPage(
-    limit = 50,
-    skip = 0,
-    status = "all",
-  ): Promise<OperationsOrdersPage> {
-    const page = requireData(
-      await request<OperationsOrdersPage>(
-        "GET",
-        `/orders?status=${encode(status)}&limit=${limit}&skip=${skip}`,
-      ),
-      "The server did not return operations orders.",
-    );
-    if (!Array.isArray(page.orders) || !page.pagination) {
-      throw new Error("The server returned an invalid operations orders response.");
-    }
-    return page;
-  },
-
   async getAllOrders(): Promise<OperationsOrder[]> {
-    const limit = 50;
-    const orders: OperationsOrder[] = [];
-    let skip = 0;
-    let hasMore = true;
-    let pageCount = 0;
-    while (hasMore) {
-      const page = await operationsApi.getOrdersPage(limit, skip, "all");
-      orders.push(...page.orders);
-      hasMore = page.pagination.hasMore;
-      skip += page.pagination.limit || limit;
-      pageCount += 1;
-      if (hasMore && pageCount >= 100) {
-        throw new Error("The server did not finish paginating operations orders.");
-      }
-    }
-    return orders;
+    return requireArray(
+      await request<OperationsOrder[]>("GET", "/", undefined, "orders"),
+      "The server did not return a valid orders list.",
+    );
   },
 
   async updateOrderStatus(

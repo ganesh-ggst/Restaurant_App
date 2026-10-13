@@ -10,17 +10,17 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
 
-import { Button } from "../../../components/ui/Button";
+import { Button } from "../../../../components/ui/Button";
 import {
   formatProfilePhone,
   ProfileError,
   ProfileScreenHeader,
   ProfileTextField,
-} from "../../../components/profile/ProfileUi";
-import { useProfile } from "../../../components/profile/ProfileContext";
-import { useAppTheme } from "../../../hooks/useAppTheme";
-import { api } from "../../../services/api";
-import type { UserProfile } from "../../../services/api/profile";
+} from "../../../../components/profile/ProfileUi";
+import { useProfile } from "../../../../components/profile/ProfileContext";
+import { useAppTheme } from "../../../../hooks/useAppTheme";
+import { api } from "../../../../services/api";
+import type { UserProfile } from "../../../../services/api/profile";
 
 export default function PersonalInfoScreen() {
   const router = useRouter();

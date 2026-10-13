@@ -7,13 +7,20 @@ import {
   UserRound,
   UtensilsCrossed,
 } from "lucide-react-native";
-import { useMemo, useState } from "react";
-import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import FoodCard from "../../components/home/FoodCard";
-import { useAppTheme } from "../../hooks/useAppTheme";
-import { useOrderMode } from "./_layout";
+import FoodCard from "../../../components/home/FoodCard";
+import { useAppTheme } from "../../../hooks/useAppTheme";
+import { useOrderMode } from "../_layout";
 
 export default function SearchScreen() {
   const router = useRouter();
@@ -31,7 +38,7 @@ export default function SearchScreen() {
     routeCategory: string | null;
     name: string;
   } | null>(null);
-  const activeCategory =
+  const selectedCategoryName =
     selectedCategory?.routeCategory === routeCategory
       ? selectedCategory.name
       : routeCategory || "All";
@@ -45,10 +52,14 @@ export default function SearchScreen() {
     menuItems,
     categories,
     activeBranch,
+    refreshHomeData,
+    isRefreshingHome,
     handleAddToCart,
     handleDecrementCartItem,
   } = useOrderMode();
   const activeCart = carts[orderMode] || [];
+  const activeBranchId = activeBranch?.id;
+  const previousBranchId = useRef(activeBranchId);
 
   const activeCartTotalItems = activeCart.reduce(
     (sum: number, item: any) => sum + item.quantity,
@@ -58,10 +69,67 @@ export default function SearchScreen() {
     () =>
       categories.filter(
         (category: any) =>
-          !category.branchId || category.branchId === activeBranch?.id,
+          !category.branchId || category.branchId === activeBranchId,
       ),
-    [activeBranch?.id, categories],
+    [activeBranchId, categories],
   );
+  const allCategoryOption = {
+    id: "all",
+    name: "All",
+    displayIcon: UtensilsCrossed,
+  };
+  const activeCategory =
+    selectedCategoryName === "All" ||
+    branchCategories.some(
+      (category: any) => category.name === selectedCategoryName,
+    )
+      ? selectedCategoryName
+      : "All";
+
+  useEffect(() => {
+    if (previousBranchId.current === activeBranchId) return;
+
+    previousBranchId.current = activeBranchId;
+    setSelectedCategory(null);
+    setCategorySearchQuery("");
+    setShowCategoryList(false);
+    router.setParams({ category: undefined });
+  }, [activeBranchId, router]);
+
+  const branchMenuItems = useMemo(
+    () =>
+      menuItems.filter((item: any) => {
+        const itemBranchIds = item.branchIds || [];
+        const isAvailableAtBranch =
+          !activeBranchId ||
+          (itemBranchIds.length > 0
+            ? itemBranchIds.includes(activeBranchId)
+            : !item.branchId || item.branchId === activeBranchId);
+        return isAvailableAtBranch;
+      }),
+    [activeBranchId, menuItems],
+  );
+
+  const getCategoryItemCount = (category: any) =>
+    branchMenuItems.filter((item: any) => {
+      const itemCategoryId =
+        typeof item.categoryId === "string"
+          ? item.categoryId
+          : item.categoryId?._id;
+      return (
+        itemCategoryId === category.id ||
+        (!itemCategoryId && item.category === category.name)
+      );
+    }).length;
+  const activeCategoryData = branchCategories.find(
+    (category: any) => category.name === activeCategory,
+  );
+  const activeCategoryItemCount =
+    activeCategory === "All"
+      ? branchMenuItems.length
+      : activeCategoryData
+        ? getCategoryItemCount(activeCategoryData)
+        : 0;
 
   const matchesFlexibleQuery = (query: string, value: string) => {
     const normalizedQuery = query.trim().toLowerCase().replace(/\s+/g, "");
@@ -91,32 +159,26 @@ export default function SearchScreen() {
     return query.length > 1 && initials.startsWith(query.replace(/\s+/g, ""));
   };
 
-  const filteredItems = menuItems.filter(
-    (item: any) => {
-      const itemBranchIds = item.branchIds || [];
-      const isAvailableAtBranch =
-        !activeBranch?.id ||
-        (itemBranchIds.length > 0
-          ? itemBranchIds.includes(activeBranch.id)
-          : !item.branchId || item.branchId === activeBranch.id);
+  const filteredItems = branchMenuItems
+    .filter((item: any) => {
       const matchesCategory =
         activeCategory === "All" || item.category === activeCategory;
 
       return (
-        matchesCategory &&
-        item.isAvailable &&
-        isAvailableAtBranch &&
-        (!isVegOnly || item.isVeg) &&
-        matchesSearch(item)
+        matchesCategory && (!isVegOnly || item.isVeg) && matchesSearch(item)
       );
-    },
+    })
+    .sort(
+      (first: any, second: any) =>
+        Number(first.isAvailable !== true) -
+        Number(second.isAvailable !== true),
+    );
+  const displayedCategories = [allCategoryOption, ...branchCategories];
+  const matchingCategories = displayedCategories.filter(
+    (category: any) =>
+      category.name === "All" ||
+      matchesFlexibleQuery(categorySearchQuery, category.name),
   );
-  const displayedCategories = branchCategories;
-  const matchingCategories = displayedCategories.filter((category: any) =>
-    matchesFlexibleQuery(categorySearchQuery, category.name),
-  );
-
-  const categoryCount = branchCategories.length;
 
   const selectCategory = (categoryName: string) => {
     setSelectedCategory({ routeCategory, name: categoryName });
@@ -137,7 +199,7 @@ export default function SearchScreen() {
           </Text>
           <View className="flex-row items-center">
             <Pressable
-              onPress={() => router.push("/(home)/favorites")}
+              onPress={() => router.push("/(home)/(tabs)/favorites")}
               className="h-11 w-11 items-center justify-center rounded-full border mr-3"
               style={{ backgroundColor: theme.card, borderColor: theme.border }}
             >
@@ -145,7 +207,7 @@ export default function SearchScreen() {
             </Pressable>
 
             <Pressable
-              onPress={() => router.push("/(home)/profile")}
+              onPress={() => router.push("/(home)/(tabs)/profile")}
               className="h-11 w-11 items-center justify-center rounded-full border"
               style={{ backgroundColor: theme.card, borderColor: theme.border }}
             >
@@ -180,6 +242,7 @@ export default function SearchScreen() {
             onPress={() => setIsVegOnly(!isVegOnly)}
             className="flex-row items-center justify-center rounded-2xl px-4 border"
             style={{
+              flexShrink: 0,
               backgroundColor: isVegOnly ? theme.primary : theme.card,
               borderColor: isVegOnly ? theme.primary : theme.border,
             }}
@@ -193,6 +256,7 @@ export default function SearchScreen() {
               )}
             </View>
             <Text
+              numberOfLines={1}
               className="text-xs font-black tracking-wider"
               style={{ color: isVegOnly ? "#fff" : theme.muted }}
             >
@@ -208,7 +272,8 @@ export default function SearchScreen() {
             className="rounded-2xl border p-3"
             style={{ backgroundColor: theme.card, borderColor: theme.border }}
           >
-            <View className="flex-row items-center rounded-xl border px-3 h-11 mb-2"
+            <View
+              className="flex-row items-center rounded-xl border px-3 h-11 mb-2"
               style={{ backgroundColor: theme.bg, borderColor: theme.border }}
             >
               <Search size={18} color={theme.muted} />
@@ -221,7 +286,10 @@ export default function SearchScreen() {
                 className="flex-1 ml-2 text-sm font-medium"
                 style={{ color: theme.text, paddingVertical: 0 }}
               />
-              <Pressable onPress={() => setShowCategoryList(false)} hitSlop={10}>
+              <Pressable
+                onPress={() => setShowCategoryList(false)}
+                hitSlop={10}
+              >
                 <ChevronDown size={19} color={theme.muted} />
               </Pressable>
             </View>
@@ -234,22 +302,33 @@ export default function SearchScreen() {
               {matchingCategories.map((category: any) => {
                 const isSelected = activeCategory === category.name;
                 const CategoryIcon = category.displayIcon;
+                const categoryItemCount =
+                  category.name === "All"
+                    ? branchMenuItems.length
+                    : getCategoryItemCount(category);
                 return (
                   <Pressable
                     key={category.id}
                     onPress={() => selectCategory(category.name)}
                     className="flex-row items-center rounded-xl border px-3 py-2.5 mb-2"
                     style={{
-                      backgroundColor: isSelected ? theme.primary + "18" : theme.bg,
+                      backgroundColor: isSelected
+                        ? theme.secondaryBg
+                        : theme.bg,
                       borderColor: isSelected ? theme.primary : theme.border,
+                      borderWidth: isSelected ? 1.5 : 1,
                     }}
                   >
                     <View
                       className="h-9 w-9 items-center justify-center rounded-lg mr-3"
-                      style={{ backgroundColor: theme.card }}
+                      style={{
+                        backgroundColor: isSelected
+                          ? theme.primary
+                          : theme.card,
+                      }}
                     >
                       {isSelected ? (
-                        <Check size={18} color={theme.primary} />
+                        <Check size={18} color={theme.primaryForeground} />
                       ) : CategoryIcon ? (
                         <CategoryIcon size={18} color={theme.primary} />
                       ) : (
@@ -259,21 +338,28 @@ export default function SearchScreen() {
                     <Text
                       className="flex-1 text-sm font-bold"
                       numberOfLines={1}
-                      style={{ color: theme.text }}
+                      style={{
+                        color: isSelected ? theme.secondaryText : theme.text,
+                      }}
                     >
                       {category.name}
                     </Text>
                     <Text
                       className="text-xs font-semibold"
-                      style={{ color: theme.muted }}
+                      style={{
+                        color: isSelected ? theme.secondaryText : theme.muted,
+                      }}
                     >
-                      {categoryCount} items
+                      {categoryItemCount} items
                     </Text>
                   </Pressable>
                 );
               })}
               {matchingCategories.length === 0 && (
-                <Text className="py-6 text-center text-sm font-semibold" style={{ color: theme.muted }}>
+                <Text
+                  className="py-6 text-center text-sm font-semibold"
+                  style={{ color: theme.muted }}
+                >
                   No categories match your search.
                 </Text>
               )}
@@ -310,9 +396,15 @@ export default function SearchScreen() {
                 {activeCategory}
               </Text>
             </View>
-            <View className="rounded-full px-2.5 py-1 mr-2" style={{ backgroundColor: theme.bg }}>
-              <Text className="text-xs font-bold" style={{ color: theme.muted }}>
-                {categoryCount}
+            <View
+              className="rounded-full px-2.5 py-1 mr-2"
+              style={{ backgroundColor: theme.bg }}
+            >
+              <Text
+                className="text-xs font-bold"
+                style={{ color: theme.muted }}
+              >
+                {activeCategoryItemCount} items
               </Text>
             </View>
             <ChevronDown size={19} color={theme.muted} />
@@ -327,16 +419,29 @@ export default function SearchScreen() {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshingHome}
+            onRefresh={() => void refreshHomeData()}
+            tintColor={theme.primary}
+            colors={[theme.primary]}
+          />
+        }
       >
         {/* UNIFIED FOOD CARDS GRID */}
         <View className="flex-row flex-wrap justify-between px-4">
           {filteredItems.map((item: any) => {
-            const cartItem = activeCart.find((c: any) => c.id === item.id);
+            const cartQuantity = activeCart.reduce(
+              (quantity: number, cartItem: any) =>
+                quantity +
+                (cartItem.id === item.id ? cartItem.quantity : 0),
+              0,
+            );
             return (
               <View key={item.id} style={{ width: "48%" }} className="mb-4">
                 <FoodCard
                   item={item}
-                  cartQuantity={cartItem?.quantity || 0}
+                  cartQuantity={cartQuantity}
                   onAddToCart={(qty, addons, total) =>
                     handleAddToCart(item, qty, addons, total)
                   }
@@ -347,7 +452,6 @@ export default function SearchScreen() {
           })}
         </View>
       </ScrollView>
-
     </View>
   );
 }

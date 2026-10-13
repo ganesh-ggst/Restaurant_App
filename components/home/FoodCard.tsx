@@ -10,6 +10,7 @@ import {
 } from "lucide-react-native";
 import { useState } from "react";
 import {
+  Alert,
   Dimensions,
   Image,
   Modal,
@@ -33,18 +34,22 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFavorites } from "../../app/(home)/_layout";
 import { useAppTheme } from "../../hooks/useAppTheme";
+import type { CustomerCustomizationSelection } from "../../services/api/customer";
 
 const { width, height } = Dimensions.get("window");
 
 const hasImageUri = (uri: unknown): uri is string =>
   typeof uri === "string" && uri.trim().length > 0;
-const CARD_WIDTH = width * 0.43;
 
 interface FoodCardProps {
   item: any;
   widthOverride?: number;
   cartQuantity?: number;
-  onAddToCart?: (qty: number, addons: unknown[], total: number) => void;
+  onAddToCart?: (
+    qty: number,
+    addons: CustomerCustomizationSelection[],
+    total: number,
+  ) => void;
   onDecrement?: () => void;
 }
 
@@ -98,6 +103,24 @@ export default function FoodCard({
 
   const [customQty, setCustomQty] = useState(1);
   const [selectedAddons, setSelectedAddons] = useState<string[]>([]);
+  const isItemAvailable = item.isAvailable === true;
+
+  const getGroupSelectionMode = (group: any) => {
+    const selectionType = String(group?.selectionType ?? "single")
+      .trim()
+      .toLowerCase();
+
+    if (
+      selectionType === "multiple" ||
+      selectionType === "multi" ||
+      selectionType === "multiselect" ||
+      selectionType === "checkbox"
+    ) {
+      return "multiple";
+    }
+
+    return "single";
+  };
 
   const customizationGroups = item.customizationGroups || [];
   const customizationOptions = customizationGroups.flatMap(
@@ -155,6 +178,7 @@ export default function FoodCard({
   };
 
   const handleCardPress = () => {
+    if (!isItemAvailable) return;
     if (isAnimating) return;
     setIsAnimating(true);
     cardZIndex.value = 100;
@@ -193,24 +217,48 @@ export default function FoodCard({
   };
 
   const toggleAddon = (addon: any) => {
-    setSelectedAddons((previous) => {
-      if (previous.includes(addon.key)) {
-        return previous.filter((id) => id !== addon.key);
-      }
-      if (addon.group.selectionType === "single") {
-        const otherGroupOptionKeys = customizationOptions
-          .filter(
-            (option: any) =>
-              option.group === addon.group && option.key !== addon.key,
-          )
-          .map((option: any) => option.key);
-        return [
-          ...previous.filter((id) => !otherGroupOptionKeys.includes(id)),
-          addon.key,
-        ];
-      }
-      return [...previous, addon.key];
-    });
+    const groupOptions = customizationOptions.filter(
+      (option: any) => option.group === addon.group,
+    );
+    const isSelected = selectedAddons.includes(addon.key);
+    const selectionMode = getGroupSelectionMode(addon.group);
+
+    if (selectionMode === "single") {
+      setSelectedAddons((previous) =>
+        isSelected
+          ? previous.filter((id) => id !== addon.key)
+          : [
+              ...previous.filter(
+                (id) => !groupOptions.some((option: any) => option.key === id),
+              ),
+              addon.key,
+            ],
+      );
+      return;
+    }
+
+    const maxSelections = Number(addon.group.maxSelections);
+    const effectiveMaxSelections =
+      Number.isFinite(maxSelections) && maxSelections > 0
+        ? Math.min(maxSelections, groupOptions.length)
+        : groupOptions.length;
+    const selectedInGroup = groupOptions.filter((option: any) =>
+      selectedAddons.includes(option.key),
+    ).length;
+
+    if (!isSelected && selectedInGroup >= effectiveMaxSelections) {
+      Alert.alert(
+        "Selection limit reached",
+        `Choose up to ${effectiveMaxSelections} option${effectiveMaxSelections === 1 ? "" : "s"} for ${addon.group.name}.`,
+      );
+      return;
+    }
+
+    setSelectedAddons((previous) =>
+      isSelected
+        ? previous.filter((id) => id !== addon.key)
+        : [...previous, addon.key],
+    );
   };
 
   const getBasePrice = () =>
@@ -219,31 +267,72 @@ export default function FoodCard({
   const calculateTotal = () => {
     const base = getBasePrice();
     const addonsCost = selectedAddons.reduce((sum, id) => {
-      const addon = customizationOptions.find((option: any) => option.key === id);
+      const addon = customizationOptions.find(
+        (option: any) => option.key === id,
+      );
       return sum + (addon ? addon.price : 0);
     }, 0);
     return (base + addonsCost) * customQty;
   };
 
-  const getSelectedCustomizations = () =>
+  const getSelectedCustomizations = (): CustomerCustomizationSelection[] =>
     customizationGroups.flatMap((group: any) => {
       const options = customizationOptions
         .filter(
           (option: any) =>
             option.group === group && selectedAddons.includes(option.key),
         )
-        .map((option: any) => ({
-          name: option.name,
-          price: option.price,
-        }));
+        .map((option: any) => option._id)
+        .filter(
+          (optionId: unknown): optionId is string =>
+            typeof optionId === "string" && optionId.length > 0,
+        );
       return options.length > 0
-        ? [{ groupName: group.name, options }]
+        ? [{ groupId: group._id, optionIds: options }]
         : [];
     });
 
+  const handleAddCustomizedItem = () => {
+    const missingRequiredGroup = customizationGroups.find((group: any) => {
+      const selectedCount = customizationOptions.filter(
+        (option: any) =>
+          option.group === group && selectedAddons.includes(option.key),
+      ).length;
+      return selectedCount < (group.minSelections || 0);
+    });
+    if (missingRequiredGroup) {
+      Alert.alert(
+        "Choose required options",
+        `Select at least ${missingRequiredGroup.minSelections} option${missingRequiredGroup.minSelections === 1 ? "" : "s"} for ${missingRequiredGroup.name}.`,
+      );
+      return;
+    }
+
+    const selectedCustomizations = getSelectedCustomizations();
+    if (
+      selectedCustomizations.some(
+        (customization) =>
+          !customization.groupId || customization.optionIds.length === 0,
+      ) ||
+      selectedCustomizations.reduce(
+        (count, customization) => count + customization.optionIds.length,
+        0,
+      ) !== selectedAddons.length
+    ) {
+      Alert.alert(
+        "Unable to add item",
+        "One or more selected options are missing API identifiers. Refresh the menu and try again.",
+      );
+      return;
+    }
+
+    onAddToCart?.(customQty, selectedCustomizations, calculateTotal());
+    setShowCustomization(false);
+  };
+
   return (
     <View
-      style={{ width: widthOverride || CARD_WIDTH }}
+      style={{ width: widthOverride ?? "100%" }}
       className="relative mb-4"
     >
       {[0, 45, 90, 135, 180, 225, 270, 315].map((angle, i) => (
@@ -255,10 +344,14 @@ export default function FoodCard({
         />
       ))}
 
-      <Pressable onPress={handleCardPress}>
+      <Pressable onPress={handleCardPress} disabled={!isItemAvailable}>
         <Animated.View
           style={[
-            { backgroundColor: theme.card, borderColor: theme.border },
+            {
+              backgroundColor: isItemAvailable ? theme.card : theme.bg,
+              borderColor: isItemAvailable ? theme.border : theme.border,
+              opacity: isItemAvailable ? 1 : 0.9,
+            },
             animatedCardStyle,
           ]}
           className="border rounded-[24px] overflow-hidden"
@@ -296,8 +389,18 @@ export default function FoodCard({
                 />
               </Animated.View>
             </Pressable>
+            {!isItemAvailable && (
+              <View className="absolute inset-x-0 bottom-0 bg-black/65 px-2 py-1.5">
+                <Text className="text-center text-[10px] font-black uppercase tracking-[1.5px] text-white">
+                  Out of stock
+                </Text>
+              </View>
+            )}
             {item.offer && (
-              <Text className="absolute bottom-3 left-3 text-lg font-black text-white tracking-tight">
+              <Text
+                className="absolute left-3 text-lg font-black text-white tracking-tight"
+                style={{ bottom: isItemAvailable ? 12 : 32 }}
+              >
                 {item.offer}
               </Text>
             )}
@@ -316,6 +419,7 @@ export default function FoodCard({
               <Text
                 className="ml-1 text-xs font-bold"
                 style={{ color: theme.muted }}
+                numberOfLines={1}
               >
                 {item.rating}
               </Text>
@@ -325,72 +429,103 @@ export default function FoodCard({
               <Text
                 className="text-xs font-semibold"
                 style={{ color: theme.muted }}
+                numberOfLines={1}
               >
                 {item.time}
               </Text>
             </View>
 
-            <View className="mt-4 flex-row items-center justify-between">
-              <Text
-                className="text-lg font-black"
-                style={{ color: theme.text }}
-              >
-                {item.price}
-              </Text>
-
-              {cartQuantity > 0 ? (
+            {!isItemAvailable ? (
+              <View className="mt-4">
+                <Text
+                  className="text-lg font-black"
+                  style={{ color: theme.text }}
+                >
+                  {item.price}
+                </Text>
                 <View
-                  className="flex-row items-center rounded-lg border"
+                  className="mt-3 h-10 w-full items-center justify-center rounded-xl border"
                   style={{
-                    backgroundColor: theme.primary,
-                    borderColor: theme.primary,
+                    backgroundColor: theme.isDark
+                      ? "rgba(255,255,255,0.04)"
+                      : "rgba(0,0,0,0.04)",
+                    borderColor: theme.border,
                   }}
                 >
-                  <Pressable
-                    onPress={(e) => {
-                      e.stopPropagation();
-                      onDecrement && onDecrement();
-                    }}
-                    className="p-1.5 px-2"
+                  <Text
+                    className="text-[11px] font-black uppercase tracking-wider"
+                    style={{ color: theme.muted }}
                   >
-                    <Minus size={16} color="#fff" strokeWidth={3} />
-                  </Pressable>
-                  <Text className="font-black text-white px-1.5">
-                    {cartQuantity}
+                    Out of stock
                   </Text>
+                </View>
+              </View>
+            ) : (
+              <View className="mt-4 flex-row items-center justify-between">
+                <Text
+                  className="text-lg font-black"
+                  style={{ color: theme.text }}
+                >
+                  {item.price}
+                </Text>
+
+                {cartQuantity > 0 ? (
+                  <View
+                    className="h-10 min-w-[88px] flex-row items-center justify-between rounded-lg border"
+                    style={{
+                      backgroundColor: theme.primary,
+                      borderColor: theme.primary,
+                    }}
+                  >
+                    <Pressable
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        onDecrement && onDecrement();
+                      }}
+                      className="h-full justify-center px-2"
+                    >
+                      <Minus size={16} color="#fff" strokeWidth={3} />
+                    </Pressable>
+                    <Text
+                      className="min-w-5 px-1 text-center font-black"
+                      style={{ color: "#fff" }}
+                    >
+                      {cartQuantity}
+                    </Text>
+                    <Pressable
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        openCustomization();
+                      }}
+                      className="h-full justify-center px-2"
+                    >
+                      <Plus size={16} color="#fff" strokeWidth={3} />
+                    </Pressable>
+                  </View>
+                ) : (
                   <Pressable
                     onPress={(e) => {
                       e.stopPropagation();
                       openCustomization();
                     }}
-                    className="p-1.5 px-2"
+                    className="h-10 min-w-[88px] items-center justify-center rounded-xl border px-5"
+                    style={{
+                      backgroundColor: theme.isDark
+                        ? "rgba(255,255,255,0.05)"
+                        : "rgba(0,0,0,0.03)",
+                      borderColor: theme.border,
+                    }}
                   >
-                    <Plus size={16} color="#fff" strokeWidth={3} />
+                    <Text
+                      className="text-sm font-black uppercase"
+                      style={{ color: theme.primary }}
+                    >
+                      ADD
+                    </Text>
                   </Pressable>
-                </View>
-              ) : (
-                <Pressable
-                  onPress={(e) => {
-                    e.stopPropagation();
-                    openCustomization();
-                  }}
-                  className="rounded-xl px-5 py-2.5 border"
-                  style={{
-                    backgroundColor: theme.isDark
-                      ? "rgba(255,255,255,0.05)"
-                      : "rgba(0,0,0,0.03)",
-                    borderColor: theme.border,
-                  }}
-                >
-                  <Text
-                    className="text-sm font-black uppercase"
-                    style={{ color: theme.primary }}
-                  >
-                    ADD
-                  </Text>
-                </Pressable>
-              )}
-            </View>
+                )}
+              </View>
+            )}
           </View>
         </Animated.View>
       </Pressable>
@@ -616,7 +751,7 @@ export default function FoodCard({
                   style={{ color: theme.muted }}
                   className="text-[13px] font-semibold mb-4"
                 >
-                  Choose as many as you like
+                  Select from the options below
                 </Text>
 
                 <View
@@ -631,6 +766,16 @@ export default function FoodCard({
                       (option: any) => option.group === group,
                     );
                     if (options.length === 0) return null;
+                    const selectionMode = getGroupSelectionMode(group);
+                    const maxSelections =
+                      selectionMode === "single"
+                        ? 1
+                        : (() => {
+                            const configuredMax = Number(group.maxSelections);
+                            return Number.isFinite(configuredMax) && configuredMax > 0
+                              ? Math.min(configuredMax, options.length)
+                              : options.length;
+                          })();
                     return (
                       <View key={group._id || `${group.name}-${groupIndex}`}>
                         <Text
@@ -638,6 +783,14 @@ export default function FoodCard({
                           style={{ color: theme.muted }}
                         >
                           {group.name}
+                        </Text>
+                        <Text
+                          className="px-4 pb-1 text-xs font-semibold"
+                          style={{ color: theme.muted }}
+                        >
+                          {selectionMode === "single"
+                            ? "Choose one"
+                            : `Choose up to ${maxSelections}`}
                         </Text>
                         {options.map((addon: any, index: number) => {
                           const isSelected = selectedAddons.includes(addon.key);
@@ -698,15 +851,7 @@ export default function FoodCard({
               className="absolute bottom-0 inset-x-0 px-5 pt-4 border-t"
             >
               <Pressable
-                onPress={() => {
-                  if (onAddToCart)
-                    onAddToCart(
-                      customQty,
-                      getSelectedCustomizations(),
-                      calculateTotal(),
-                    );
-                  setShowCustomization(false);
-                }}
+                onPress={handleAddCustomizedItem}
                 style={{ backgroundColor: theme.primary }}
                 className="py-3.5 rounded-xl items-center flex-row justify-center"
               >

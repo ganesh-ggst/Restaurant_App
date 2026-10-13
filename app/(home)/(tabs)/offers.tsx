@@ -9,14 +9,22 @@ import {
   X,
 } from "lucide-react-native";
 import { useState } from "react";
-import { Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
+import {
+  Alert,
+  Image,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  Text,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import FoodCard from "../../components/home/FoodCard";
-import { useAppTheme } from "../../hooks/useAppTheme";
-import { useOrderMode } from "./_layout";
+import FoodCard from "../../../components/home/FoodCard";
+import { useAppTheme } from "../../../hooks/useAppTheme";
+import { useOrderMode } from "../_layout";
 
-import { api } from "../../services/api";
+import { api } from "../../../services/api";
 
 export default function OffersScreen() {
   const router = useRouter();
@@ -32,6 +40,8 @@ export default function OffersScreen() {
     menuItems,
     offers,
     activeBranch,
+    refreshHomeData,
+    isRefreshingHome,
     handleAddToCart,
     handleDecrementCartItem,
   } = useOrderMode();
@@ -92,7 +102,7 @@ export default function OffersScreen() {
         </Text>
         <View className="flex-row items-center">
           <Pressable
-            onPress={() => router.push("/(home)/favorites")}
+            onPress={() => router.push("/(home)/(tabs)/favorites")}
             className="h-11 w-11 items-center justify-center rounded-full border mr-3"
             style={{ backgroundColor: theme.card, borderColor: theme.border }}
           >
@@ -100,7 +110,7 @@ export default function OffersScreen() {
           </Pressable>
 
           <Pressable
-            onPress={() => router.push("/(home)/profile")}
+            onPress={() => router.push("/(home)/(tabs)/profile")}
             className="h-11 w-11 items-center justify-center rounded-full border"
             style={{ backgroundColor: theme.card, borderColor: theme.border }}
           >
@@ -115,6 +125,14 @@ export default function OffersScreen() {
           paddingBottom: activeCartTotalItems > 0 ? 180 : 120,
         }}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshingHome}
+            onRefresh={() => void refreshHomeData()}
+            tintColor={theme.primary}
+            colors={[theme.primary]}
+          />
+        }
       >
         {targetOfferId && (
           <Pressable
@@ -146,7 +164,9 @@ export default function OffersScreen() {
                 void api.getOffer(offer.id).catch((error: unknown) => {
                   Alert.alert(
                     "Unable to Load Offer",
-                    error instanceof Error ? error.message : "Please try again.",
+                    error instanceof Error
+                      ? error.message
+                      : "Please try again.",
                   );
                 });
               }}
@@ -216,8 +236,11 @@ export default function OffersScreen() {
                 </Text>
                 <View className="flex-row flex-wrap justify-between">
                   {applicableItems.map((item: any) => {
-                    const cartItem = activeCart.find(
-                      (c: any) => c.id === item.id,
+                    const cartQuantity = activeCart.reduce(
+                      (quantity: number, cartItem: any) =>
+                        quantity +
+                        (cartItem.id === item.id ? cartItem.quantity : 0),
+                      0,
                     );
                     return (
                       <View
@@ -227,7 +250,7 @@ export default function OffersScreen() {
                       >
                         <FoodCard
                           item={item}
-                          cartQuantity={cartItem?.quantity || 0}
+                          cartQuantity={cartQuantity}
                           onAddToCart={(qty, addons, total) =>
                             handleAddToCart(item, qty, addons, total)
                           }

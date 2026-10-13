@@ -15,10 +15,10 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import {
   ProfileError,
   ProfileScreenHeader,
-} from "../../../components/profile/ProfileUi";
-import { useAppTheme } from "../../../hooks/useAppTheme";
-import { api } from "../../../services/api";
-import type { CustomerAddress } from "../../../services/api/profile";
+} from "../../../../components/profile/ProfileUi";
+import { useAppTheme } from "../../../../hooks/useAppTheme";
+import { api } from "../../../../services/api";
+import type { CustomerAddress } from "../../../../services/api/profile";
 
 function formatAddress(address: CustomerAddress): string {
   return [

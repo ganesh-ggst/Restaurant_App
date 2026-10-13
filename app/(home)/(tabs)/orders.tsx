@@ -10,12 +10,13 @@ import {
   UserRound,
   X,
 } from "lucide-react-native";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Alert,
   Dimensions,
   Modal,
   Pressable,
+  RefreshControl,
   ScrollView,
   Text,
   View,
@@ -28,14 +29,12 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import {
-  TAX_DETAILS,
-} from "../../constants/mockData";
-import { useAppTheme } from "../../hooks/useAppTheme";
-import { api } from "../../services/api";
-import { authApi } from "../../services/api/auth";
-import type { CustomerOrder } from "../../services/api/customer";
-import { useOrderMode } from "./_layout";
+import { TAX_DETAILS } from "../../../constants/mockData";
+import { useAppTheme } from "../../../hooks/useAppTheme";
+import { api } from "../../../services/api";
+import { authApi } from "../../../services/api/auth";
+import type { CustomerOrder } from "../../../services/api/customer";
+import { useOrderMode } from "../_layout";
 
 const { width, height } = Dimensions.get("window");
 
@@ -67,11 +66,28 @@ function formatOrderStatus(status: unknown) {
   );
 }
 
+function formatFulfillmentType(fulfillmentType: unknown) {
+  const normalized = String(fulfillmentType || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-");
+
+  switch (normalized) {
+    case "delivery":
+      return "Delivery";
+    case "takeaway":
+      return "Takeaway";
+    case "dine-in":
+      return "Dine-in";
+    default:
+      return "Order type unavailable";
+  }
+}
+
 function mapCustomerOrder(order: CustomerOrder) {
   const status = normalizeOrderStatus(order.status);
   const isActive = ![
     "completed",
-    "delivered",
     "cancelled",
     "rejected",
     "refunded",
@@ -95,6 +111,68 @@ function mapCustomerOrder(order: CustomerOrder) {
       price: `₹${item.unitPrice}`,
     })),
   };
+}
+
+function getOrderStatusTimeline(order: any) {
+  const fulfillmentType = String(order?.fulfillmentType || "delivery")
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-");
+  const currentStatus = normalizeOrderStatus(order?.status);
+  const history = Array.isArray(order?.statusHistory)
+    ? order.statusHistory
+    : [];
+  const statusDescriptions: Record<string, string> = {
+    pending: "Order placed",
+    accepted: "Order accepted by the restaurant",
+    preparing: "Your order is being prepared",
+    ready: "Your order is ready",
+    "out for delivery": "Your order is on the way",
+    delivered: "Your order has been delivered",
+    completed: "Order completed",
+    rejected: "Order rejected by the restaurant",
+    cancelled: "Order cancelled",
+  };
+  const standardStatuses = fulfillmentType === "dine-in"
+    ? ["pending", "accepted", "completed"]
+    : fulfillmentType === "takeaway"
+      ? ["pending", "accepted", "preparing", "ready", "completed"]
+      : [
+          "pending",
+          "accepted",
+          "preparing",
+          "ready",
+          "out for delivery",
+          "delivered",
+          "completed",
+        ];
+  const statuses =
+    currentStatus === "rejected" || currentStatus === "cancelled"
+      ? ["pending", currentStatus]
+      : standardStatuses.includes(currentStatus)
+        ? standardStatuses
+        : [...standardStatuses, currentStatus];
+  const currentIndex = Math.max(statuses.indexOf(currentStatus), 0);
+
+  return statuses.map((status, index) => {
+    const historyEntry = [...history]
+      .reverse()
+      .find((entry: any) => normalizeOrderStatus(entry.status) === status);
+
+    return {
+      status,
+      label: formatOrderStatus(status),
+      note:
+        historyEntry?.note ||
+        statusDescriptions[status] ||
+        (index < currentIndex
+          ? "Order status updated"
+          : "Status update pending"),
+      changedAt: historyEntry?.changedAt,
+      isComplete: index < currentIndex,
+      isCurrent: index === currentIndex,
+    };
+  });
 }
 
 const calculateOrderTotals = (order: any) => {
@@ -572,36 +650,53 @@ export default function OrdersScreen() {
 
   const { mode: orderMode, carts, reloadCart, branches } = useOrderMode();
   const [orders, setOrders] = useState<any[]>([]);
+  const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
   const activeCart = carts[orderMode] || [];
   const activeCartTotalItems = activeCart.reduce(
     (sum: number, item: any) => sum + item.quantity,
     0,
   );
 
+  const loadOrders = useCallback(async () => {
+    const token = await authApi.getAccessToken();
+    if (!token) return;
+    const fetchedOrders = await api.getOrders();
+    return fetchedOrders.map((order) => mapCustomerOrder(order));
+  }, []);
+
+  const refreshOrders = useCallback(async () => {
+    setIsRefreshingOrders(true);
+    try {
+      const fetchedOrders = await loadOrders();
+      if (fetchedOrders) setOrders(fetchedOrders);
+    } catch (error) {
+      Alert.alert(
+        "Unable to Load Orders",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setIsRefreshingOrders(false);
+    }
+  }, [loadOrders]);
+
   useEffect(() => {
     let isMounted = true;
-    const loadOrders = async () => {
-      try {
-        const token = await authApi.getAccessToken();
-        if (!token) return;
-        const fetchedOrders = await api.getOrders();
-        if (isMounted) {
-          setOrders(fetchedOrders.map((order) => mapCustomerOrder(order)));
-        }
-      } catch (error) {
+    void loadOrders()
+      .then((fetchedOrders) => {
+        if (isMounted && fetchedOrders) setOrders(fetchedOrders);
+      })
+      .catch((error: unknown) => {
         if (isMounted) {
           Alert.alert(
             "Unable to Load Orders",
             error instanceof Error ? error.message : "Please try again.",
           );
         }
-      }
-    };
-    void loadOrders();
+      });
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [loadOrders]);
 
   const displayOrders = orders.filter((order) =>
     activeTab === "Active" ? order.isActive : !order.isActive,
@@ -616,11 +711,10 @@ export default function OrdersScreen() {
         ? order.branchId
         : orderBranch?._id || orderBranch?.id;
     const branch = branches.find((candidate: any) => candidate.id === branchId);
-    const restaurantName =
-      branch?.restaurantNames?.find(
-        (restaurant: { name: string; isActive: boolean }) =>
-          restaurant.isActive && restaurant.name.trim().length > 0,
-      )?.name;
+    const restaurantName = branch?.restaurantNames?.find(
+      (restaurant: { name: string; isActive: boolean }) =>
+        restaurant.isActive && restaurant.name.trim().length > 0,
+    )?.name;
 
     return (
       orderBranch?.restaurantName ||
@@ -701,7 +795,7 @@ export default function OrdersScreen() {
         </Text>
         <View className="flex-row items-center">
           <Pressable
-            onPress={() => router.push("/(home)/favorites")}
+            onPress={() => router.push("/(home)/(tabs)/favorites")}
             className="h-11 w-11 items-center justify-center rounded-full border mr-3"
             style={{ backgroundColor: theme.card, borderColor: theme.border }}
           >
@@ -709,7 +803,7 @@ export default function OrdersScreen() {
           </Pressable>
 
           <Pressable
-            onPress={() => router.push("/(home)/profile")}
+            onPress={() => router.push("/(home)/(tabs)/profile")}
             className="h-11 w-11 items-center justify-center rounded-full border"
             style={{ backgroundColor: theme.card, borderColor: theme.border }}
           >
@@ -751,6 +845,14 @@ export default function OrdersScreen() {
           gap: 16,
         }}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshingOrders}
+            onRefresh={() => void refreshOrders()}
+            tintColor={theme.primary}
+            colors={[theme.primary]}
+          />
+        }
       >
         {displayOrders.length === 0 ? (
           <Animated.View
@@ -923,21 +1025,37 @@ export default function OrdersScreen() {
                   {trackingOrder?.id}
                 </Text>
                 {trackingOrder && (
-                  <View
-                    className="self-start mt-2 rounded-full border px-3 py-1"
-                    style={{
-                      backgroundColor: theme.card,
-                      borderColor: theme.primary,
-                      maxWidth: "100%",
-                    }}
-                  >
-                    <Text
-                      className="text-xs font-black"
-                      numberOfLines={1}
-                      style={{ color: theme.text }}
+                  <View className="mt-2 flex-row flex-wrap gap-2">
+                    <View
+                      className="rounded-full border px-3 py-1"
+                      style={{
+                        backgroundColor: theme.secondaryBg,
+                        borderColor: theme.primary,
+                      }}
                     >
-                      {`Branch: ${getOrderBranchLabel(trackingOrder)}`}
-                    </Text>
+                      <Text
+                        className="text-xs font-black"
+                        style={{ color: theme.primary }}
+                      >
+                        {formatFulfillmentType(trackingOrder.fulfillmentType)}
+                      </Text>
+                    </View>
+                    <View
+                      className="rounded-full border px-3 py-1"
+                      style={{
+                        backgroundColor: theme.card,
+                        borderColor: theme.primary,
+                        maxWidth: "100%",
+                      }}
+                    >
+                      <Text
+                        className="text-xs font-black"
+                        numberOfLines={1}
+                        style={{ color: theme.text }}
+                      >
+                        {`Branch: ${getOrderBranchLabel(trackingOrder)}`}
+                      </Text>
+                    </View>
                   </View>
                 )}
               </View>
@@ -979,59 +1097,74 @@ export default function OrdersScreen() {
                   borderColor: theme.border,
                 }}
               >
-                {(trackingOrder?.statusHistory?.length
-                  ? trackingOrder.statusHistory
-                  : [
-                      {
-                        status: trackingOrder?.status || "pending",
-                        note: "Latest order status",
-                      },
-                    ]
-                ).map((step: any, index: number, steps: any[]) => {
-                  const isLatest = index === steps.length - 1;
-                  const label = formatOrderStatus(step.status);
-                  return (
+                {getOrderStatusTimeline(trackingOrder).map(
+                  (step: any, index: number, steps: any[]) => (
                     <View
-                      key={`${step.status}-${step.changedAt || index}`}
-                      className={`flex-row items-start ${isLatest ? "" : "mb-6"}`}
+                      key={step.status}
+                      className={`flex-row items-start ${index === steps.length - 1 ? "" : "mb-6"}`}
                     >
                       <View className="items-center mr-4">
-                        {isLatest ? (
-                          <View
-                            className="w-6 h-6 rounded-full items-center justify-center"
-                            style={{ backgroundColor: theme.primary }}
-                          >
-                            <View className="w-2 h-2 bg-white rounded-full" />
-                          </View>
-                        ) : (
+                        {step.isComplete ? (
                           <CheckCircle2 size={24} color={theme.primary} />
+                        ) : (
+                          <View
+                            className="w-6 h-6 rounded-full items-center justify-center border-2"
+                            style={{
+                              backgroundColor: step.isCurrent
+                                ? theme.primary
+                                : "transparent",
+                              borderColor: step.isCurrent
+                                ? theme.primary
+                                : theme.border,
+                            }}
+                          >
+                            {step.isCurrent && (
+                              <View className="w-2 h-2 rounded-full bg-white" />
+                            )}
+                          </View>
                         )}
-                        {!isLatest && (
+                        {index < steps.length - 1 && (
                           <View
                             className="w-0.5 h-10 my-1"
-                            style={{ backgroundColor: theme.border }}
+                            style={{
+                              backgroundColor: step.isComplete
+                                ? theme.primary
+                                : theme.border,
+                            }}
                           />
                         )}
                       </View>
                       <View className="flex-1">
                         <Text
                           className="text-base font-bold"
-                          style={{ color: isLatest ? theme.primary : theme.text }}
+                          style={{
+                            color: step.isCurrent
+                              ? theme.primary
+                              : step.isComplete
+                                ? theme.text
+                                : theme.muted,
+                          }}
                         >
-                          {label}
+                          {step.label}
                         </Text>
-                        {step.note ? (
+                        <Text
+                          className="text-xs font-semibold mt-1"
+                          style={{ color: theme.muted }}
+                        >
+                          {step.note}
+                        </Text>
+                        {step.changedAt ? (
                           <Text
-                            className="text-xs font-semibold mt-1"
+                            className="text-[11px] font-medium mt-1"
                             style={{ color: theme.muted }}
                           >
-                            {step.note}
+                            {new Date(step.changedAt).toLocaleString()}
                           </Text>
                         ) : null}
                       </View>
                     </View>
-                  );
-                })}
+                  ),
+                )}
               </View>
             </ScrollView>
           </Animated.View>
@@ -1066,21 +1199,37 @@ export default function OrdersScreen() {
                   {detailsOrder?.id} • {detailsOrder?.date}
                 </Text>
                 {detailsOrder && (
-                  <View
-                    className="self-start mt-2 rounded-full border px-3 py-1"
-                    style={{
-                      backgroundColor: theme.card,
-                      borderColor: theme.primary,
-                      maxWidth: "100%",
-                    }}
-                  >
-                    <Text
-                      className="text-xs font-black"
-                      numberOfLines={1}
-                      style={{ color: theme.text }}
+                  <View className="mt-2 flex-row flex-wrap gap-2">
+                    <View
+                      className="rounded-full border px-3 py-1"
+                      style={{
+                        backgroundColor: theme.secondaryBg,
+                        borderColor: theme.primary,
+                      }}
                     >
-                      {`Branch: ${getOrderBranchLabel(detailsOrder)}`}
-                    </Text>
+                      <Text
+                        className="text-xs font-black"
+                        style={{ color: theme.primary }}
+                      >
+                        {formatFulfillmentType(detailsOrder.fulfillmentType)}
+                      </Text>
+                    </View>
+                    <View
+                      className="rounded-full border px-3 py-1"
+                      style={{
+                        backgroundColor: theme.card,
+                        borderColor: theme.primary,
+                        maxWidth: "100%",
+                      }}
+                    >
+                      <Text
+                        className="text-xs font-black"
+                        numberOfLines={1}
+                        style={{ color: theme.text }}
+                      >
+                        {`Branch: ${getOrderBranchLabel(detailsOrder)}`}
+                      </Text>
+                    </View>
                   </View>
                 )}
               </View>

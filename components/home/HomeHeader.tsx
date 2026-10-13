@@ -116,13 +116,10 @@ export const HomeHeader = memo(
     const greetingPhrases = greetings;
     const categoryItemWidth =
       categoryViewportWidth > 0
-        ? Math.min(
-            CATEGORY_ITEM_WIDTH,
-            categoryViewportWidth / MAX_VISIBLE_CATEGORIES,
-          )
+        ? categoryViewportWidth / MAX_VISIBLE_CATEGORIES
         : CATEGORY_ITEM_WIDTH;
     const visibleCategoryViewportWidth =
-      categoryItemWidth * MAX_VISIBLE_CATEGORIES;
+      categoryViewportWidth || categoryItemWidth * MAX_VISIBLE_CATEGORIES;
     const titleScale = useSharedValue(1);
     const micPulse = useSharedValue(1);
     const typedGreeting = useTypewriter(
@@ -337,6 +334,7 @@ export const HomeHeader = memo(
               onPress={() => setIsVegOnly(!isVegOnly)}
               className="flex-row items-center justify-center rounded-2xl px-4 border"
               style={{
+                flexShrink: 0,
                 backgroundColor: isVegOnly ? theme.primary : theme.card,
                 borderColor: isVegOnly ? theme.primary : theme.border,
               }}
@@ -350,6 +348,7 @@ export const HomeHeader = memo(
                 )}
               </View>
               <Text
+                numberOfLines={1}
                 className="text-xs font-black tracking-wider"
                 style={{ color: isVegOnly ? "#fff" : theme.muted }}
               >
@@ -409,53 +408,52 @@ export const HomeHeader = memo(
                 Explore Menu
               </Text>
               <View
-                className="w-full"
-                style={{ overflow: "hidden" }}
-                onLayout={(event) =>
-                  setCategoryViewportWidth(event.nativeEvent.layout.width)
-                }
+                className="w-full px-4"
+                style={{
+                  overflow: "hidden",
+                }}
               >
-                <View
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  bounces={false}
+                  overScrollMode="never"
                   style={{
-                    width: visibleCategoryViewportWidth,
-                    maxWidth: "100%",
-                    alignSelf: "center",
+                    width: "100%",
+                    flexGrow: 0,
                   }}
+                  nestedScrollEnabled
+                  directionalLockEnabled
+                  snapToInterval={categoryItemWidth}
+                  snapToAlignment="start"
+                  decelerationRate="fast"
+                  onLayout={(event) =>
+                    setCategoryViewportWidth(event.nativeEvent.layout.width)
+                  }
+                  onContentSizeChange={(contentWidth) =>
+                    setCategoryContentWidth(contentWidth)
+                  }
+                  onScroll={(event) => {
+                    const maxOffset =
+                      categoryContentWidth - visibleCategoryViewportWidth;
+                    setCategoryScrollProgress(
+                      maxOffset > 0
+                        ? Math.max(
+                            0,
+                            Math.min(
+                              event.nativeEvent.contentOffset.x / maxOffset,
+                              1,
+                            ),
+                          )
+                        : 0,
+                    );
+                  }}
+                  scrollEventThrottle={16}
                 >
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    style={{
-                      width: visibleCategoryViewportWidth,
-                      flexGrow: 0,
-                    }}
-                    nestedScrollEnabled
-                    directionalLockEnabled
-                    onContentSizeChange={(contentWidth) =>
-                      setCategoryContentWidth(contentWidth)
-                    }
-                    onScroll={(event) => {
-                      const maxOffset =
-                        categoryContentWidth - visibleCategoryViewportWidth;
-                      setCategoryScrollProgress(
-                        maxOffset > 0
-                          ? Math.max(
-                              0,
-                              Math.min(
-                                event.nativeEvent.contentOffset.x / maxOffset,
-                                1,
-                              ),
-                            )
-                          : 0,
-                      );
-                    }}
-                    scrollEventThrottle={16}
-                  >
-                    {categories.map((item: any) => (
-                      <View key={item.id}>{renderCategory({ item })}</View>
-                    ))}
-                  </ScrollView>
-                </View>
+                  {categories.map((item: any) => (
+                    <View key={item.id}>{renderCategory({ item })}</View>
+                  ))}
+                </ScrollView>
                 {categoryContentWidth > visibleCategoryViewportWidth && (
                   <View className="mt-3 mb-1 items-center">
                     <View
