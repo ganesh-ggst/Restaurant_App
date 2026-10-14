@@ -54,6 +54,19 @@
       "@clerk/expo",
       "expo-secure-store",
       "expo-video",
+      [
+        "expo-navigation-bar",
+        {
+          "enforceContrast": false
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow $(PRODUCT_NAME) to use the microphone for voice search.",
+          "speechRecognitionPermission": "Allow $(PRODUCT_NAME) to convert voice searches into text."
+        }
+      ],
       "expo-font",
       "expo-image",
       "expo-status-bar",

@@ -14,12 +14,12 @@ import {
   Dimensions,
   Image,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   Text,
   View,
 } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import Animated, {
   Extrapolation,
   interpolate,
@@ -36,7 +36,7 @@ import { useFavorites } from "../../app/(home)/_layout";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import type { CustomerCustomizationSelection } from "../../services/api/customer";
 
-const { width, height } = Dimensions.get("window");
+const { width } = Dimensions.get("window");
 
 const hasImageUri = (uri: unknown): uri is string =>
   typeof uri === "string" && uri.trim().length > 0;
@@ -364,7 +364,20 @@ export default function FoodCard({
                 resizeMode="cover"
               />
             ) : null}
-            <View className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent" />
+            <LinearGradient
+              colors={["transparent", "rgba(0, 0, 0, 0.12)", "rgba(0, 0, 0, 0.88)"]}
+              locations={[0, 0.48, 1]}
+              start={{ x: 0.5, y: 0 }}
+              end={{ x: 0.5, y: 1 }}
+              pointerEvents="none"
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+              }}
+            />
             <View className="absolute top-3 left-3 flex-row items-center rounded-lg bg-white/95 px-1.5 py-1 backdrop-blur-md">
               {item.isVeg ? (
                 <Leaf size={14} color="hsl(146, 80%, 40%)" strokeWidth={3} />
@@ -535,17 +548,32 @@ export default function FoodCard({
         visible={showDetails}
         transparent
         animationType="slide"
+        statusBarTranslucent
+        navigationBarTranslucent
         onRequestClose={handleCloseDetails}
       >
-        <View className="flex-1 justify-end bg-black/60">
-          <Pressable className="flex-1" onPress={handleCloseDetails} />
+        <View className="flex-1">
+          <Pressable
+            onPress={handleCloseDetails}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: "rgba(0, 0, 0, 0.6)",
+            }}
+          />
           <View
-            style={{ height: height * 0.85, backgroundColor: theme.bg }}
+            style={{ flex: 1, backgroundColor: theme.bg }}
             className="rounded-t-[32px] overflow-hidden"
           >
             <ScrollView
               showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ paddingBottom: 100 }}
+              contentContainerStyle={{
+                paddingTop: insets.top,
+                paddingBottom: 100,
+              }}
             >
               <View className="h-[280px] w-full relative">
                 <ScrollView
@@ -616,7 +644,7 @@ export default function FoodCard({
               style={{
                 backgroundColor: theme.card,
                 borderTopColor: theme.border,
-                paddingBottom: Platform.OS === "ios" ? insets.bottom : 20,
+                paddingBottom: Math.max(insets.bottom, 16),
               }}
               className="absolute bottom-0 inset-x-0 px-5 pt-4 border-t"
             >
@@ -642,21 +670,31 @@ export default function FoodCard({
         visible={showCustomization}
         transparent
         animationType="slide"
+        statusBarTranslucent
+        navigationBarTranslucent
         onRequestClose={() => setShowCustomization(false)}
       >
-        <View className="flex-1 justify-end bg-black/60">
+        <View className="flex-1">
           <Pressable
-            className="flex-1"
             onPress={() => setShowCustomization(false)}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: "rgba(0, 0, 0, 0.6)",
+            }}
           />
           <View
-            style={{ height: height * 0.85, backgroundColor: theme.bg }}
+            style={{ flex: 1, backgroundColor: theme.bg }}
             className="rounded-t-[24px] overflow-hidden"
           >
             <View
               style={{
                 backgroundColor: theme.card,
                 borderBottomColor: theme.border,
+                paddingTop: insets.top + 16,
               }}
               className="flex-row items-center p-4 border-b z-10"
             >
@@ -687,6 +725,7 @@ export default function FoodCard({
             </View>
 
             <ScrollView
+              style={{ flex: 1 }}
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingBottom: 140 }}
             >
@@ -846,7 +885,7 @@ export default function FoodCard({
               style={{
                 backgroundColor: theme.card,
                 borderTopColor: theme.border,
-                paddingBottom: Platform.OS === "ios" ? insets.bottom : 20,
+                paddingBottom: Math.max(insets.bottom, 16),
               }}
               className="absolute bottom-0 inset-x-0 px-5 pt-4 border-t"
             >

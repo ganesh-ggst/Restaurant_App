@@ -47,6 +47,14 @@ export interface CustomerMenuItem {
   }[];
 }
 
+export interface CustomerCrossSell {
+  _id?: string;
+  id?: string;
+  menuItem?: string | CustomerMenuItem;
+  item?: string | CustomerMenuItem;
+  menuItemId?: string | CustomerMenuItem;
+}
+
 export interface CustomerCategory {
   _id: string;
   name: string;
@@ -74,9 +82,22 @@ export interface CustomerBranch {
     platform?: number;
     delivery?: number;
   };
-  taxDetails?: { gstPercentage?: number };
+  restaurantChargeOptions?: {
+    packaging: number;
+    platform: number;
+    delivery: number;
+    description?: string;
+    isActive: boolean;
+  }[];
+  taxDetails?: {
+    gstPercentage?: number;
+    cgstPercentage?: number;
+    sgstPercentage?: number;
+  };
   taxDetailOptions?: {
     gstPercentage: number;
+    cgstPercentage?: number;
+    sgstPercentage?: number;
     isActive: boolean;
   }[];
   wifiConnections?: {
@@ -187,6 +208,7 @@ export interface CustomerOrder {
     unitPrice: number;
     quantity: number;
     customizations?: unknown[];
+    selectedCustomizations?: unknown[];
     itemTotal?: number;
   }[];
   fulfillmentType: string;
@@ -227,6 +249,15 @@ export interface CheckoutPreviewInput {
   fulfillmentType: "delivery" | "takeaway" | "dine-in";
   addressId?: string;
   offerCode?: string;
+}
+
+export interface CreateCustomerOrderInput {
+  branchId: string;
+  fulfillmentType: "delivery" | "takeaway" | "dine-in";
+  addressId?: string;
+  paymentMethod: "online";
+  status: "pending" | "rejected";
+  paymentStatus: "paid" | "rejected";
 }
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL?.trim().replace(/\/+$/, "");
@@ -343,6 +374,16 @@ export const customerApi = {
         `/categories/${encode(id)}/items`,
       ),
       "The server did not return items for this category.",
+    );
+  },
+
+  async getCategoryCrossSells(id: string): Promise<CustomerCrossSell[]> {
+    return requireArray(
+      await request<CustomerCrossSell[]>(
+        "GET",
+        `/categories/${encode(id)}/cross-sells`,
+      ),
+      "The server did not return cross-sell items for this category.",
     );
   },
 
@@ -482,9 +523,11 @@ export const customerApi = {
     );
   },
 
-  async createOrder(item: CustomerCartItemInput): Promise<CustomerOrder> {
+  async createOrder(
+    input: CreateCustomerOrderInput,
+  ): Promise<CustomerOrder> {
     return requireData(
-      await request<CustomerOrder>("POST", "/orders", item, true),
+      await request<CustomerOrder>("POST", "/orders", input, true),
       "The server did not return the created order.",
     );
   },

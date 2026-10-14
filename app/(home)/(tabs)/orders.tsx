@@ -1,4 +1,4 @@
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import {
   CheckCircle2,
   ChevronDown,
@@ -6,11 +6,12 @@ import {
   Heart,
   Package,
   Receipt,
+  Search,
   ScrollText,
   UserRound,
   X,
 } from "lucide-react-native";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   Alert,
   Dimensions,
@@ -19,6 +20,7 @@ import {
   RefreshControl,
   ScrollView,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import Animated, {
@@ -33,7 +35,10 @@ import { TAX_DETAILS } from "../../../constants/mockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { api } from "../../../services/api";
 import { authApi } from "../../../services/api/auth";
-import type { CustomerOrder } from "../../../services/api/customer";
+import type {
+  CustomerCustomizationSelection,
+  CustomerOrder,
+} from "../../../services/api/customer";
 import { useOrderMode } from "../_layout";
 
 const { width, height } = Dimensions.get("window");
@@ -52,8 +57,10 @@ function normalizeOrderStatus(status: unknown) {
     case "cancel":
     case "canceled":
     case "cancled":
-      return "cancelled";
+    case "cancelled":
+      return "rejected";
     case "complete":
+    case "delivered":
       return "completed";
     default:
       return normalized;
@@ -85,7 +92,12 @@ function formatFulfillmentType(fulfillmentType: unknown) {
 }
 
 function mapCustomerOrder(order: CustomerOrder) {
-  const status = normalizeOrderStatus(order.status);
+  const isPaymentRejected = ["rejected", "failed", "declined"].includes(
+    String(order.paymentStatus || "").trim().toLowerCase(),
+  );
+  const status = isPaymentRejected
+    ? "rejected"
+    : normalizeOrderStatus(order.status);
   const isActive = ![
     "completed",
     "cancelled",
@@ -102,6 +114,7 @@ function mapCustomerOrder(order: CustomerOrder) {
     id: order.orderNumber,
     date,
     status: formatOrderStatus(status),
+    isPaymentRejected,
     total: order.total,
     isActive,
     items: order.items.map((item) => ({
@@ -128,10 +141,8 @@ function getOrderStatusTimeline(order: any) {
     preparing: "Your order is being prepared",
     ready: "Your order is ready",
     "out for delivery": "Your order is on the way",
-    delivered: "Your order has been delivered",
     completed: "Order completed",
     rejected: "Order rejected by the restaurant",
-    cancelled: "Order cancelled",
   };
   const standardStatuses = fulfillmentType === "dine-in"
     ? ["pending", "accepted", "completed"]
@@ -143,7 +154,6 @@ function getOrderStatusTimeline(order: any) {
           "preparing",
           "ready",
           "out for delivery",
-          "delivered",
           "completed",
         ];
   const statuses =
@@ -259,7 +269,7 @@ const OrderItemsList = ({ order, theme }: any) => {
               borderBottomColor: theme.border,
             }}
           >
-            <View className="flex-row items-center flex-1">
+            <View className="mr-2 flex-1 flex-row items-center">
               <View className="bg-gray-500/10 px-2 py-1 rounded mr-3">
                 <Text
                   className="font-black text-xs"
@@ -269,15 +279,17 @@ const OrderItemsList = ({ order, theme }: any) => {
                 </Text>
               </View>
               <Text
-                className="font-bold text-sm flex-1"
+                className="min-w-0 flex-1 font-bold text-sm"
+                numberOfLines={1}
                 style={{ color: theme.text }}
               >
                 {item.name}
               </Text>
             </View>
             <Text
-              className="font-bold text-sm ml-2"
-              style={{ color: theme.muted }}
+              className="shrink-0 font-bold text-sm"
+              numberOfLines={1}
+              style={{ color: theme.muted, flexShrink: 0 }}
             >
               ₹{formatPrice(rowTotal)}
             </Text>
@@ -311,20 +323,25 @@ const BillDetailsAccordion = ({ order, theme }: any) => {
       <Pressable
         onPress={() => setIsExpanded(!isExpanded)}
         className="flex-row justify-between items-center"
-        style={{ marginBottom: isExpanded ? 16 : 0 }}
+        style={{ marginBottom: isExpanded ? 16 : 0, gap: 8 }}
       >
-        <View className="flex-row items-center">
+        <View className="min-w-0 flex-1 flex-row items-center">
           <View className="bg-emerald-500 p-1.5 rounded-md mr-2">
             <Receipt size={16} color="white" />
           </View>
-          <Text style={{ color: theme.text }} className="font-black text-lg">
+          <Text
+            numberOfLines={1}
+            style={{ color: theme.text }}
+            className="shrink font-black text-base"
+          >
             Bill Details
           </Text>
         </View>
-        <View className="flex-row items-center">
+        <View className="shrink-0 flex-row items-center">
           <Text
-            style={{ color: theme.text }}
-            className="font-black text-lg ml-1"
+            numberOfLines={1}
+            style={{ color: theme.text, flexShrink: 0 }}
+            className="font-black text-base"
           >
             ₹{formatPrice(totals.finalPayable)}
           </Text>
@@ -644,11 +661,22 @@ export default function OrdersScreen() {
   const insets = useSafeAreaInsets();
 
   const [activeTab, setActiveTab] = useState("Active");
+  const [branchFilter, setBranchFilter] = useState("all");
+  const [fulfillmentFilter, setFulfillmentFilter] = useState("all");
+  const [orderSearch, setOrderSearch] = useState("");
+  const [isBranchPickerVisible, setIsBranchPickerVisible] = useState(false);
 
   const [trackingOrder, setTrackingOrder] = useState<any>(null);
   const [detailsOrder, setDetailsOrder] = useState<any>(null);
 
-  const { mode: orderMode, carts, reloadCart, branches } = useOrderMode();
+  const {
+    mode: orderMode,
+    setMode,
+    carts,
+    reloadCart,
+    branches = [],
+    setActiveBranch,
+  } = useOrderMode();
   const [orders, setOrders] = useState<any[]>([]);
   const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
   const activeCart = carts[orderMode] || [];
@@ -679,38 +707,31 @@ export default function OrdersScreen() {
     }
   }, [loadOrders]);
 
-  useEffect(() => {
-    let isMounted = true;
-    void loadOrders()
-      .then((fetchedOrders) => {
-        if (isMounted && fetchedOrders) setOrders(fetchedOrders);
-      })
-      .catch((error: unknown) => {
-        if (isMounted) {
-          Alert.alert(
-            "Unable to Load Orders",
-            error instanceof Error ? error.message : "Please try again.",
-          );
-        }
-      });
-    return () => {
-      isMounted = false;
-    };
-  }, [loadOrders]);
-
-  const displayOrders = orders.filter((order) =>
-    activeTab === "Active" ? order.isActive : !order.isActive,
+  useFocusEffect(
+    useCallback(() => {
+      void refreshOrders();
+    }, [refreshOrders]),
   );
+
+  const getOrderBranchId = (order: any): string | null => {
+    const branch = order.branchId || order.branch;
+    if (typeof branch === "string") return branch;
+    return branch?._id || branch?.id || null;
+  };
+
   const getOrderBranchLabel = (order: any) => {
     const orderBranch =
       order.branchId && typeof order.branchId === "object"
         ? order.branchId
-        : null;
-    const branchId =
-      typeof order.branchId === "string"
-        ? order.branchId
-        : orderBranch?._id || orderBranch?.id;
-    const branch = branches.find((candidate: any) => candidate.id === branchId);
+        : order.branch && typeof order.branch === "object"
+          ? order.branch
+          : null;
+    const branchId = getOrderBranchId(order);
+    const branch = branches.find(
+      (candidate: any) =>
+        String(candidate.id || candidate._id || "").toLowerCase() ===
+        String(branchId || "").toLowerCase(),
+    );
     const restaurantName = branch?.restaurantNames?.find(
       (restaurant: { name: string; isActive: boolean }) =>
         restaurant.isActive && restaurant.name.trim().length > 0,
@@ -726,11 +747,125 @@ export default function OrdersScreen() {
     );
   };
 
+  const displayOrders = orders.filter((order) => {
+    const matchesStatus =
+      activeTab === "Active" ? order.isActive : !order.isActive;
+    const orderBranchId = getOrderBranchId(order);
+    const matchesBranch =
+      branchFilter === "all" ||
+      String(orderBranchId || "").toLowerCase() === branchFilter.toLowerCase();
+    const fulfillmentType = String(order.fulfillmentType || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[_\s]+/g, "-");
+    const matchesFulfillment =
+      fulfillmentFilter === "all" || fulfillmentType === fulfillmentFilter;
+    const searchTerm = orderSearch.trim().toLowerCase();
+    const searchableOrder = [
+      order.id,
+      order.orderId,
+      order.status,
+      order.isPaymentRejected ? "payment rejected" : "",
+      fulfillmentType,
+      orderBranchId,
+      getOrderBranchLabel(order),
+      ...order.items.map((item: any) => item.name),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return (
+      matchesStatus &&
+      matchesBranch &&
+      matchesFulfillment &&
+      (!searchTerm || searchableOrder.includes(searchTerm))
+    );
+  });
+
   const handleReorder = async (e: any, order: any) => {
     e.stopPropagation();
     try {
-      await api.reorder(order.orderId);
-      await reloadCart();
+      if (
+        order.isPaymentRejected ||
+        normalizeOrderStatus(order.status) === "rejected"
+      ) {
+        const sourceOrder = await api.getOrder(order.orderId);
+        const branchId =
+          typeof sourceOrder.branchId === "string"
+            ? sourceOrder.branchId
+            : sourceOrder.branchId?._id;
+        if (!branchId) {
+          throw new Error(
+            "This order does not include its restaurant branch, so it cannot be reordered.",
+          );
+        }
+
+        const cartItems = sourceOrder.items.map((item) => {
+          const menuItemId = item.menuItemId;
+          if (!menuItemId || !Number.isFinite(item.quantity) || item.quantity < 1) {
+            throw new Error(
+              "This order has incomplete item information and cannot be reordered.",
+            );
+          }
+          const customizations =
+            item.selectedCustomizations || item.customizations || [];
+          const selectedCustomizations: CustomerCustomizationSelection[] =
+            customizations.map((customization) => {
+              if (
+                !customization ||
+                typeof customization !== "object" ||
+                !("groupId" in customization) ||
+                typeof customization.groupId !== "string" ||
+                !("optionIds" in customization) ||
+                !Array.isArray(customization.optionIds) ||
+                !customization.optionIds.every(
+                  (optionId) => typeof optionId === "string",
+                )
+              ) {
+                throw new Error(
+                  "The saved customizations for this order cannot be restored. Please add the items from the menu.",
+                );
+              }
+              return {
+                groupId: customization.groupId,
+                optionIds: customization.optionIds,
+              };
+            });
+          return {
+            menuItemId,
+            quantity: item.quantity,
+            selectedCustomizations,
+            branchId,
+          };
+        });
+
+        const matchingBranch = branches.find(
+          (branch: any) =>
+            String(branch.id || branch._id).toLowerCase() ===
+            branchId.toLowerCase(),
+        );
+        if (!matchingBranch) {
+          throw new Error(
+            "This restaurant branch is unavailable. Refresh the app and try again.",
+          );
+        }
+        await setActiveBranch(matchingBranch);
+        const fulfillmentType = sourceOrder.fulfillmentType
+          .trim()
+          .toLowerCase()
+          .replace(/[_\s]+/g, "-");
+        if (fulfillmentType === "delivery") setMode("Delivery");
+        else if (fulfillmentType === "takeaway") setMode("Takeaway");
+        else if (fulfillmentType === "dine-in") setMode("Dine-in");
+
+        for (const item of cartItems) {
+          await api.addCartItem(item);
+        }
+        await reloadCart(branchId);
+      } else {
+        await api.reorder(order.orderId);
+        await reloadCart();
+      }
       Alert.alert(
         "Order Added to Cart",
         "Items from your previous order are ready in your cart.",
@@ -838,6 +973,85 @@ export default function OrdersScreen() {
         </View>
       </View>
 
+      <View className="mb-3">
+        <Pressable
+          onPress={() => setIsBranchPickerVisible(true)}
+          className="mx-4 flex-row items-center justify-between rounded-xl border px-4 py-3"
+          style={{ backgroundColor: theme.card, borderColor: theme.border }}
+          accessibilityRole="button"
+          accessibilityLabel={`Branch filter: ${
+            branches.find(
+              (branch: any) =>
+                String(branch.id || branch._id) === branchFilter,
+            )?.name || "All Branches"
+          }`}
+        >
+          <Text className="text-sm font-bold" style={{ color: theme.text }}>
+            {branchFilter === "all"
+              ? "All Branches"
+              : branches.find(
+                    (branch: any) =>
+                      String(branch.id || branch._id) === branchFilter,
+                  )?.name || "Selected Branch"}
+          </Text>
+          <ChevronDown size={18} color={theme.muted} />
+        </Pressable>
+      </View>
+
+      <View className="mb-3 flex-row items-center gap-2 px-4">
+        {(["all", "delivery", "takeaway", "dine-in"] as const).map((type) => (
+          <Pressable
+            key={type}
+            onPress={() => setFulfillmentFilter(type)}
+            className="rounded-full px-3 py-2"
+            style={{
+              backgroundColor:
+                fulfillmentFilter === type ? theme.primary : theme.card,
+              borderWidth: 1,
+              borderColor:
+                fulfillmentFilter === type ? theme.primary : theme.border,
+            }}
+          >
+            <Text
+              className="text-xs font-bold capitalize"
+              style={{
+                color: fulfillmentFilter === type ? "#fff" : theme.text,
+              }}
+            >
+              {type === "all" ? "All Types" : type.replace("-", " ")}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
+      <View
+        className="mx-4 mb-3 flex-row items-center rounded-xl border px-3"
+        style={{ backgroundColor: theme.card, borderColor: theme.border }}
+      >
+        <Search size={18} color={theme.muted} />
+        <TextInput
+          value={orderSearch}
+          onChangeText={setOrderSearch}
+          placeholder="Search orders or items"
+          placeholderTextColor={theme.muted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="search"
+          accessibilityLabel="Search orders by order number or item"
+          className="h-11 flex-1 px-3 text-sm"
+          style={{ color: theme.text }}
+        />
+        {orderSearch.length > 0 ? (
+          <Pressable
+            onPress={() => setOrderSearch("")}
+            accessibilityRole="button"
+            accessibilityLabel="Clear order search"
+          >
+            <X size={18} color={theme.muted} />
+          </Pressable>
+        ) : null}
+      </View>
+
       <ScrollView
         contentContainerStyle={{
           paddingHorizontal: 16,
@@ -876,7 +1090,10 @@ export default function OrdersScreen() {
               className="text-sm font-semibold"
               style={{ color: theme.muted }}
             >
-              Craving something delicious?
+              {orderSearch || branchFilter !== "all" ||
+              fulfillmentFilter !== "all"
+                ? "Try changing the branch, order type, or search."
+                : "Craving something delicious?"}
             </Text>
           </Animated.View>
         ) : (
@@ -912,21 +1129,37 @@ export default function OrdersScreen() {
                     >
                       {order.date}
                     </Text>
-                    <View
-                      className="self-start mt-2 flex-row items-center rounded-full border px-2.5 py-1"
-                      style={{
-                        backgroundColor: theme.card,
-                        borderColor: theme.primary,
-                        maxWidth: "100%",
-                      }}
-                    >
-                      <Text
-                        className="text-[10px] font-black"
-                        numberOfLines={1}
-                        style={{ color: theme.text }}
+                    <View className="mt-2 flex-row flex-wrap items-center gap-2">
+                      <View
+                        className="self-start flex-row items-center rounded-full border px-2.5 py-1"
+                        style={{
+                          backgroundColor: theme.secondaryBg,
+                          borderColor: theme.primary,
+                        }}
                       >
-                        {`Branch: ${getOrderBranchLabel(order)}`}
-                      </Text>
+                        <Text
+                          className="text-[10px] font-black"
+                          style={{ color: theme.primary }}
+                        >
+                          {formatFulfillmentType(order.fulfillmentType)}
+                        </Text>
+                      </View>
+                      <View
+                        className="self-start flex-row items-center rounded-full border px-2.5 py-1"
+                        style={{
+                          backgroundColor: theme.card,
+                          borderColor: theme.primary,
+                          maxWidth: "100%",
+                        }}
+                      >
+                        <Text
+                          className="text-[10px] font-black"
+                          numberOfLines={1}
+                          style={{ color: theme.text }}
+                        >
+                          {`Branch: ${getOrderBranchLabel(order)}`}
+                        </Text>
+                      </View>
                     </View>
                   </View>
                   <View
@@ -946,7 +1179,9 @@ export default function OrdersScreen() {
                       className="text-xs font-black"
                       style={{ color: order.isActive ? "#fff" : theme.text }}
                     >
-                      {order.status}
+                      {order.isPaymentRejected
+                        ? "Payment Rejected"
+                        : order.status}
                     </Text>
                   </View>
                 </View>
@@ -995,20 +1230,106 @@ export default function OrdersScreen() {
       </ScrollView>
 
       <Modal
+        visible={isBranchPickerVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsBranchPickerVisible(false)}
+      >
+        <View className="flex-1 justify-center bg-black/60 px-6">
+          <Pressable
+            className="absolute inset-0"
+            onPress={() => setIsBranchPickerVisible(false)}
+            accessibilityLabel="Close branch selector"
+          />
+          <View
+            className="max-h-[70%] rounded-3xl border p-5"
+            style={{ backgroundColor: theme.bg, borderColor: theme.border }}
+          >
+            <View className="mb-4 flex-row items-center justify-between">
+              <Text className="text-lg font-black" style={{ color: theme.text }}>
+                Filter by branch
+              </Text>
+              <Pressable
+                onPress={() => setIsBranchPickerVisible(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Close branch selector"
+                className="rounded-full p-2"
+                style={{ backgroundColor: theme.card }}
+              >
+                <X size={20} color={theme.text} />
+              </Pressable>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {[
+                { id: "all", label: "All Branches" },
+                ...branches.map((branch: any) => ({
+                  id: String(branch.id || branch._id),
+                  label: branch.name || branch.code || "Branch",
+                })),
+              ].map((branch) => (
+                <Pressable
+                  key={branch.id}
+                  onPress={() => {
+                    setBranchFilter(branch.id);
+                    setIsBranchPickerVisible(false);
+                  }}
+                  className="mb-2 rounded-xl border px-4 py-3"
+                  style={{
+                    backgroundColor:
+                      branchFilter === branch.id ? theme.secondaryBg : theme.card,
+                    borderColor:
+                      branchFilter === branch.id ? theme.primary : theme.border,
+                  }}
+                >
+                  <Text
+                    className="text-sm font-bold"
+                    style={{
+                      color:
+                        branchFilter === branch.id ? theme.primary : theme.text,
+                    }}
+                  >
+                    {branch.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
         visible={!!trackingOrder}
         transparent={true}
         animationType="fade"
+        statusBarTranslucent
+        navigationBarTranslucent
         onRequestClose={() => setTrackingOrder(null)}
       >
-        <View className="flex-1 justify-end bg-black/60">
+        <View className="flex-1">
           <Pressable
-            className="flex-1"
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: "rgba(0, 0, 0, 0.6)",
+            }}
             onPress={() => setTrackingOrder(null)}
           />
           <Animated.View
             entering={SlideInDown.duration(300)}
-            className="rounded-t-[32px] p-6 pb-12"
-            style={{ backgroundColor: theme.bg, maxHeight: "90%" }}
+            className="rounded-t-[32px] p-6"
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: theme.bg,
+              paddingTop: insets.top + 24,
+              paddingBottom: 0,
+            }}
           >
             <View className="flex-row items-center justify-between mb-6">
               <View>
@@ -1067,7 +1388,11 @@ export default function OrdersScreen() {
               </Pressable>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false}>
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              style={{ flex: 1 }}
+              contentContainerStyle={{ flexGrow: 1 }}
+            >
               <Text
                 className="text-xs font-black uppercase tracking-wider mb-3 ml-1"
                 style={{ color: theme.muted }}
@@ -1091,10 +1416,11 @@ export default function OrdersScreen() {
                 Live Status
               </Text>
               <View
-                className="p-5 rounded-2xl border mb-4 shadow-sm"
+                className="p-5 rounded-2xl border shadow-sm"
                 style={{
                   backgroundColor: theme.card,
                   borderColor: theme.border,
+                  flexGrow: 1,
                 }}
               >
                 {getOrderStatusTimeline(trackingOrder).map(

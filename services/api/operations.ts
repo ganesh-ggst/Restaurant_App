@@ -118,6 +118,7 @@ export interface OperationsOrder {
   _id: string;
   orderNumber: string;
   branchId?: string | { _id?: string; id?: string };
+  branch?: string | { _id?: string; id?: string };
   status: string;
   fulfillmentType?: string;
   createdAt?: string;
@@ -448,8 +449,12 @@ export const operationsApi = {
   },
 
   async getAllOrders(): Promise<OperationsOrder[]> {
+    const response = await request<
+      OperationsOrder[] | { orders: OperationsOrder[] }
+    >("GET", "/orders?status=all", undefined, "operations");
+    const orders = Array.isArray(response) ? response : response?.orders;
     return requireArray(
-      await request<OperationsOrder[]>("GET", "/", undefined, "orders"),
+      orders,
       "The server did not return a valid orders list.",
     );
   },
@@ -459,9 +464,14 @@ export const operationsApi = {
     status: string,
     note?: string,
   ): Promise<void> {
-    await request("PATCH", `/orders/${encode(id)}/status`, {
-      status,
-      ...(note ? { note } : {}),
-    });
+    await request(
+      "PATCH",
+      `/orders/${encode(id)}/status`,
+      {
+        status,
+        ...(note ? { note } : {}),
+      },
+      "operations",
+    );
   },
 };
