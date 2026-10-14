@@ -25,6 +25,7 @@ import {
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from "react-native";
 import Animated, {
   Extrapolation,
@@ -44,7 +45,7 @@ import {
   TIP_OPTIONS,
 } from "../../constants/mockData";
 
-const { height, width } = Dimensions.get("window");
+const { height } = Dimensions.get("window");
 
 const hasImageUri = (uri: unknown): uri is string =>
   typeof uri === "string" && uri.trim().length > 0;
@@ -87,7 +88,7 @@ const CelebrationParticle = ({ progress, index, total }: any) => {
 
 const getNumericPrice = (priceString: any) => {
   if (typeof priceString === "number") return priceString;
-  return parseInt(String(priceString).replace(/\D/g, ""), 10) || 0;
+  return parseFloat(String(priceString).replace(/[^\d.]/g, "")) || 0;
 };
 
 const formatPrice = (price: number) => {
@@ -110,19 +111,24 @@ export const DeliveryCartModal = memo(
     branches = [],
     offers = [],
     crossSellItems = [],
+    onRemoveCartItems,
     cartPricing,
     onApplyCoupon,
     onRemoveCoupon,
     onCheckout,
+    onCreateOrder,
+    onOrderPlaced,
   }: any) => {
+    const { width } = useWindowDimensions();
     const isDelivery = orderMode === "Delivery";
+    const crossSellCardWidth = (width - 48) / 3;
     const deliveryOptions = (activeBranch?.deliveryOptions || [])
       .filter((option: any) => option.isActive)
-      .map((option: any) => ({
-        id: option._id || option.name,
+      .map((option: any, index: number) => ({
+        id: option._id || `${option.name}-${index}`,
         title: option.name,
         subtitle: option.description || "",
-        price: option.price,
+        price: Number(option.price) || 0,
         time: option.estimatedTimeRange || "",
       }));
 
@@ -156,6 +162,7 @@ export const DeliveryCartModal = memo(
     >(null);
 
     const [isCelebrating, setIsCelebrating] = useState(false);
+    const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
     const celebrationProgress = useSharedValue(0);
 
     const TABS = isDelivery
@@ -178,61 +185,168 @@ export const DeliveryCartModal = memo(
       onClose();
     };
 
+    const handleRemoveCartItem = (item: any) => {
+      if (item.quantity > 1) {
+        onDecrement(item.id);
+        return;
+      }
+
+      const removedCategoryId =
+        typeof item.categoryId === "string"
+          ? item.categoryId
+          : item.categoryId?._id || item.categoryId?.id;
+      const remainingItems = cart.filter(
+        (cartItem: any) => cartItem.id !== item.id,
+      );
+      const remainingCategoryIds = new Set(
+        remainingItems
+          .map((cartItem: any) =>
+            typeof cartItem.categoryId === "string"
+              ? cartItem.categoryId
+              : cartItem.categoryId?._id || cartItem.categoryId?.id,
+          )
+          .filter(Boolean),
+      );
+      const orphanedCrossSells = removedCategoryId
+        ? crossSellItems.filter(
+            (crossSell: any) =>
+              remainingItems.some(
+                (cartItem: any) => cartItem.id === crossSell.id,
+              ) &&
+              crossSell.sourceCategoryIds?.includes(removedCategoryId) &&
+              !crossSell.sourceCategoryIds.some((categoryId: string) =>
+                remainingCategoryIds.has(categoryId),
+              ),
+          )
+        : [];
+
+      if (orphanedCrossSells.length === 0 || !onRemoveCartItems) {
+        onDecrement(item.id);
+        return;
+      }
+
+      const removedNames = orphanedCrossSells
+        .map((crossSell: any) => crossSell.name)
+        .join(", ");
+      Alert.alert(
+        "Remove related meal items?",
+        `Removing ${item.name} will also remove ${removedNames} from your cart. Continue?`,
+        [
+          { text: "Keep items", style: "cancel" },
+          {
+            text: "Remove all",
+            style: "destructive",
+            onPress: () => {
+              void onRemoveCartItems([
+                item.id,
+                ...orphanedCrossSells.map((crossSell: any) => crossSell.id),
+              ]).catch((error: unknown) => {
+                Alert.alert(
+                  "Unable to Remove Cart Items",
+                  error instanceof Error ? error.message : "Please try again.",
+                );
+              });
+            },
+          },
+        ],
+      );
+    };
+
     const cartTotal = cart.reduce(
       (sum: number, item: any) =>
         sum + (item.total || getNumericPrice(item.price) * item.quantity),
       0,
     );
     const itemTotal = cartPricing?.subtotal ?? cartTotal;
-    const originalItemTotal =
-      itemTotal + (cartPricing?.discount || appliedCoupon?.discount || 0);
+    const couponDiscount = appliedCoupon
+      ? (cartPricing?.discount ?? appliedCoupon.discount)
+      : cartPricing?.discount || 0;
+    const originalItemTotal = itemTotal + couponDiscount;
+    const cartItemIds = new Set(cart.map((item: any) => item.id));
+    const isOfferApplicableToCart = (offer: any) =>
+      offer.appliesToAllItems === true ||
+      (offer.applicableMenuItemIds || []).some((itemId: string) =>
+        cartItemIds.has(itemId),
+      );
+    const eligibleOffers = offers.filter(isOfferApplicableToCart);
+    const getOfferEligibleSubtotal = (offer: any) =>
+      cart.reduce((subtotal: number, item: any) => {
+        const appliesToItem =
+          offer.appliesToAllItems === true ||
+          (offer.applicableMenuItemIds || []).includes(item.id);
+        return appliesToItem
+          ? subtotal +
+            (item.total ?? getNumericPrice(item.price) * item.quantity)
+          : subtotal;
+      }, 0);
+    const appliedOffer = offers.find(
+      (offer: any) =>
+        offer.code?.toUpperCase() === appliedCoupon?.code?.toUpperCase(),
+    );
+    const getAppliedCouponItemDiscount = (item: any) => {
+      if (!appliedOffer) return 0;
+      const appliesToItem =
+        appliedOffer.appliesToAllItems === true ||
+        (appliedOffer.applicableMenuItemIds || []).includes(item.id);
+      if (!appliesToItem) return 0;
 
-    const charges = activeBranch?.restaurantCharges || {};
+      const eligibleSubtotal = getOfferEligibleSubtotal(appliedOffer);
+      return eligibleSubtotal > 0
+        ? (appliedCoupon.discount *
+            (item.total ?? getNumericPrice(item.price) * item.quantity)) /
+            eligibleSubtotal
+        : 0;
+    };
+
+    const charges =
+      activeBranch?.restaurantChargeOptions?.find(
+        (option: any) => option.isActive,
+      ) ??
+      activeBranch?.restaurantCharges ??
+      {};
     const isFreeDeliveryEligible = !isDelivery || itemTotal >= 99;
     const baseDeliveryFee = isDelivery ? charges.delivery || 0 : 0;
-    const standardFee = isFreeDeliveryEligible ? 0 : baseDeliveryFee;
+    const payableBaseDeliveryFee = isFreeDeliveryEligible
+      ? 0
+      : baseDeliveryFee;
 
     const selectedOption =
       deliveryOptions.find((option: any) => option.id === selectedDelivery) ||
       deliveryOptions[0];
     const optionPrice = isDelivery && selectedOption ? selectedOption.price : 0;
-
-    const actualDeliveryFee = isDelivery
-      ? Math.max(0, standardFee + optionPrice)
-      : 0;
-    const isFreeDelivery = actualDeliveryFee === 0;
-
-    const ecoDiscount =
-      isDelivery && isFreeDeliveryEligible && optionPrice < 0
-        ? Math.abs(optionPrice)
-        : 0;
-    const discount = (appliedCoupon ? appliedCoupon.discount : 0) + ecoDiscount;
+    const deliveryOptionCharge = Math.max(0, optionPrice);
+    const deliveryOptionDiscount = Math.max(0, -optionPrice);
+    const actualDeliveryFee = payableBaseDeliveryFee;
+    const isFreeDelivery = isDelivery && isFreeDeliveryEligible;
+    const discount = couponDiscount + deliveryOptionDiscount;
 
     const packagingCharge =
       orderMode === "Dine-in" ? 0 : charges.packaging || 0;
     const platformFee = charges.platform || 0;
-    const gstRate = (activeBranch?.taxDetails?.gstPercentage || 0) / 100;
+    const taxDetails =
+      activeBranch?.taxDetailOptions?.find((option: any) => option.isActive) ??
+      activeBranch?.taxDetails ??
+      {};
+    const gstRate = (taxDetails.gstPercentage || 0) / 100;
     const gstAmount = itemTotal * gstRate;
     const totalTaxesAndCharges = packagingCharge + platformFee + gstAmount;
 
-    const finalPayable =
-      cartPricing?.total ??
+    const finalPayable = Math.max(
+      0,
       itemTotal +
         actualDeliveryFee +
+        deliveryOptionCharge +
         totalTaxesAndCharges +
         (isDelivery ? tipAmount : 0) -
-        discount;
-
-    const totalSavings =
-      originalItemTotal -
+        discount,
+    );
+    const originalPayable =
       itemTotal +
-      discount +
-      (isDelivery && isFreeDeliveryEligible ? baseDeliveryFee : 0) +
-      (isDelivery && !isFreeDeliveryEligible && optionPrice < 0
-        ? Math.abs(optionPrice)
-        : 0);
-
-    const originalPayable = finalPayable + totalSavings;
+      baseDeliveryFee +
+      deliveryOptionCharge +
+      totalTaxesAndCharges +
+      (isDelivery ? tipAmount : 0);
+    const totalSavings = Math.max(0, originalPayable - finalPayable);
 
     const triggerCelebration = () => {
       celebrationProgress.value = 0; // Reset
@@ -262,17 +376,25 @@ export const DeliveryCartModal = memo(
       }
 
       try {
-        await onApplyCoupon(code);
         const offer = offers.find(
           (candidate: any) => candidate.code?.toUpperCase() === code,
         );
+        if (offer && !isOfferApplicableToCart(offer)) {
+          setCouponError("This coupon does not apply to items in your cart.");
+          return;
+        }
+
+        await onApplyCoupon(code);
+        const eligibleSubtotal = offer
+          ? getOfferEligibleSubtotal(offer)
+          : itemTotal;
         const discount =
           offer?.discountType === "percentage"
             ? Math.min(
-                itemTotal * ((offer.discountValue || 0) / 100),
+                eligibleSubtotal * ((offer.discountValue || 0) / 100),
                 offer.maxDiscountAmount ?? Number.POSITIVE_INFINITY,
               )
-            : offer?.discountValue || 0;
+            : Math.min(offer?.discountValue || 0, eligibleSubtotal);
         handleApplyCoupon({
           code,
           description: offer?.description || "Offer applied to your cart.",
@@ -302,6 +424,70 @@ export const DeliveryCartModal = memo(
       Keyboard.dismiss();
       setInstructionStatus("Instructions saved securely!");
       setTimeout(() => setInstructionStatus(""), 3000);
+    };
+
+    const handleSubmitOrder = async (
+      paymentResult: "success" | "rejected",
+    ) => {
+      if (isSubmittingOrder) return;
+      setIsSubmittingOrder(true);
+      try {
+        await onCreateOrder(paymentResult);
+        Alert.alert(
+          paymentResult === "success" ? "Payment Successful" : "Payment Rejected",
+          paymentResult === "success"
+            ? "Your order is placed and is now Pending."
+            : "Your order is in Past Orders as Payment Rejected. You can reorder it anytime.",
+          [
+            {
+              text: "View Orders",
+              onPress: () => {
+                void Promise.resolve(onOrderPlaced?.()).catch(
+                  (error: unknown) => {
+                    Alert.alert(
+                      "Unable to Open Orders",
+                      error instanceof Error
+                        ? error.message
+                        : "Please try again.",
+                    );
+                  },
+                );
+              },
+            },
+          ],
+        );
+      } catch (error) {
+        Alert.alert(
+          "Unable to Place Order",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      } finally {
+        setIsSubmittingOrder(false);
+      }
+    };
+
+    const handlePayPress = async () => {
+      if (isSubmittingOrder) return;
+      try {
+        await onCheckout(appliedCoupon?.code);
+        Alert.alert("Choose Payment Result", "Select a payment outcome.", [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Payment Success",
+            onPress: () => void handleSubmitOrder("success"),
+          },
+          {
+            text: "Payment Rejected",
+            style: "destructive",
+            onPress: () => void handleSubmitOrder("rejected"),
+          },
+        ]);
+      } catch (error) {
+        Alert.alert(
+          "Unable to Continue",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      }
     };
 
     return (
@@ -411,6 +597,12 @@ export const DeliveryCartModal = memo(
               >
                 {cart.map((item: any, index: number) => {
                   const itemPriceNumber = getNumericPrice(item.price);
+                  const couponItemDiscount =
+                    getAppliedCouponItemDiscount(item);
+                  const displayUnitPrice = Math.max(
+                    0,
+                    itemPriceNumber - couponItemDiscount / item.quantity,
+                  );
                   const itemTotal =
                     item.total || itemPriceNumber * item.quantity;
 
@@ -447,12 +639,35 @@ export const DeliveryCartModal = memo(
                             >
                               {item.name}
                             </Text>
-                            <Text
-                              style={{ color: theme.muted }}
-                              className="text-xs font-semibold mt-1"
-                            >
-                              ₹{formatPrice(itemPriceNumber)}
-                            </Text>
+                            <View className="mt-1 flex-row items-center gap-2">
+                              <Text
+                                style={{ color: theme.muted }}
+                                className="text-xs font-semibold"
+                              >
+                                ₹{formatPrice(displayUnitPrice)}
+                              </Text>
+                              {couponItemDiscount > 0 ? (
+                                <Text
+                                  style={{
+                                    color: theme.muted,
+                                    textDecorationLine: "line-through",
+                                  }}
+                                  className="text-xs"
+                                >
+                                  ₹{formatPrice(itemPriceNumber)}
+                                </Text>
+                              ) : Number(item.compareAtPrice) > itemPriceNumber ? (
+                                <Text
+                                  style={{
+                                    color: theme.muted,
+                                    textDecorationLine: "line-through",
+                                  }}
+                                  className="text-xs"
+                                >
+                                  ₹{formatPrice(Number(item.compareAtPrice))}
+                                </Text>
+                              ) : null}
+                            </View>
                             {item.addons?.length > 0 && (
                               <Text
                                 style={{ color: theme.muted }}
@@ -486,7 +701,7 @@ export const DeliveryCartModal = memo(
                                   -unitPrice,
                                 );
                               } else {
-                                onDecrement(item.id);
+                                handleRemoveCartItem(item);
                               }
                             }}
                             className="p-2"
@@ -520,7 +735,7 @@ export const DeliveryCartModal = memo(
                           style={{ color: theme.text }}
                           className="text-sm font-black mt-2"
                         >
-                          ₹{formatPrice(itemTotal)}
+                          ₹{formatPrice(itemTotal - couponItemDiscount)}
                         </Text>
                       </View>
                     </View>
@@ -547,110 +762,131 @@ export const DeliveryCartModal = memo(
                 </View>
               </Animated.View>
 
-              <Text
-                style={{ color: theme.muted }}
-                className="text-xs font-black uppercase tracking-wider mb-3 ml-2"
-              >
-                Complete Your Meal
-              </Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                className="mb-6 -mx-4 px-4"
-                keyboardShouldPersistTaps="handled"
-              >
-                {crossSellItems.map((cross: any) => {
-                  const cartItem = cart.find((c: any) => c.id === cross.id);
-                  const currentQty = cartItem ? cartItem.quantity : 0;
+              {crossSellItems.length > 0 && (
+                <>
+                  <Text
+                    style={{ color: theme.muted }}
+                    className="text-xs font-black uppercase tracking-wider mb-3 ml-2"
+                  >
+                    Complete Your Meal
+                  </Text>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    className="mb-6"
+                    style={{ flexGrow: 0 }}
+                    contentContainerStyle={{ gap: 8 }}
+                    keyboardShouldPersistTaps="handled"
+                  >
+                    {crossSellItems.map((cross: any) => {
+                      const cartItem = cart.find((c: any) => c.id === cross.id);
+                      const currentQty = cartItem ? cartItem.quantity : 0;
 
-                  return (
-                    <View
-                      key={cross.id}
-                      style={{
-                        backgroundColor: theme.card,
-                        borderColor: theme.border,
-                      }}
-                      className="w-32 rounded-[20px] border p-2 mr-4"
-                    >
-                      <View className="relative">
-                        {hasImageUri(cross.image) ? (
-                          <Image
-                            source={{ uri: cross.image }}
-                            className="w-full h-24 rounded-2xl mb-2"
-                            resizeMode="cover"
-                          />
-                        ) : null}
-
-                        {currentQty > 0 && (
-                          <View className="absolute top-2 right-2 bg-emerald-500 rounded-full px-1.5 py-0.5">
-                            <Text className="text-[10px] font-black text-white">
-                              {currentQty}
-                            </Text>
-                          </View>
-                        )}
-
-                        <Pressable
-                          onPress={() => {
-                            if (currentQty < 3) {
-                              onIncrement(
-                                cross,
-                                1,
-                                [],
-                                getNumericPrice(cross.price),
-                              );
-                            }
-                          }}
-                          className={`absolute -bottom-3 right-2 rounded-full p-1 shadow-sm border border-gray-100 ${currentQty >= 3 ? "bg-gray-200" : "bg-white"}`}
-                        >
-                          {currentQty >= 3 ? (
-                            <CheckCircle2
-                              size={20}
-                              color={theme.muted}
-                              strokeWidth={3}
-                            />
-                          ) : (
-                            <Plus
-                              size={20}
-                              color={theme.primary}
-                              strokeWidth={3}
-                            />
-                          )}
-                        </Pressable>
-                      </View>
-                      <View className="p-1 pt-2">
+                      return (
                         <View
+                          key={cross.id}
                           style={{
-                            borderColor: cross.isVeg ? "#16A34A" : "#DC2626",
+                            backgroundColor: theme.card,
+                            borderColor: theme.border,
+                            width: crossSellCardWidth,
                           }}
-                          className="p-[2px] border rounded self-start mb-1"
+                          className="rounded-[20px] border p-2"
                         >
-                          <View
-                            style={{
-                              backgroundColor: cross.isVeg
-                                ? "#16A34A"
-                                : "#DC2626",
-                            }}
-                            className="w-1 h-1 rounded-full"
-                          />
+                          <View className="relative">
+                            {hasImageUri(cross.image) ? (
+                              <Image
+                                source={{ uri: cross.image }}
+                                className="w-full h-24 rounded-2xl mb-2"
+                                resizeMode="cover"
+                              />
+                            ) : null}
+
+                            {currentQty > 0 && (
+                              <View className="absolute top-2 right-2 bg-emerald-500 rounded-full px-1.5 py-0.5">
+                                <Text className="text-[10px] font-black text-white">
+                                  {currentQty}
+                                </Text>
+                              </View>
+                            )}
+
+                            <Pressable
+                              onPress={() => {
+                                if (currentQty < 3) {
+                                  onIncrement(
+                                    cross,
+                                    1,
+                                    [],
+                                    getNumericPrice(cross.price),
+                                  );
+                                }
+                              }}
+                              className={`absolute -bottom-3 right-2 rounded-full p-1 shadow-sm border border-gray-100 ${currentQty >= 3 ? "bg-gray-200" : "bg-white"}`}
+                            >
+                              {currentQty >= 3 ? (
+                                <CheckCircle2
+                                  size={20}
+                                  color={theme.muted}
+                                  strokeWidth={3}
+                                />
+                              ) : (
+                                <Plus
+                                  size={20}
+                                  color={theme.primary}
+                                  strokeWidth={3}
+                                />
+                              )}
+                            </Pressable>
+                          </View>
+                          <View className="p-1 pt-2">
+                            <View
+                              style={{
+                                borderColor: cross.isVeg ? "#16A34A" : "#DC2626",
+                              }}
+                              className="p-[2px] border rounded self-start mb-1"
+                            >
+                              <View
+                                style={{
+                                  backgroundColor: cross.isVeg
+                                    ? "#16A34A"
+                                    : "#DC2626",
+                                }}
+                                className="w-1 h-1 rounded-full"
+                              />
+                            </View>
+                            <Text
+                              style={{ color: theme.text }}
+                              className="text-xs font-bold leading-tight"
+                              numberOfLines={2}
+                            >
+                              {cross.name}
+                            </Text>
+                            <View className="mt-1 flex-row flex-wrap items-center gap-1">
+                              <Text
+                                style={{ color: theme.muted }}
+                                className="text-xs font-semibold"
+                              >
+                                {cross.price}
+                              </Text>
+                              {Number(cross.compareAtPrice) >
+                                getNumericPrice(cross.price) && (
+                                <Text
+                                  style={{
+                                    color: theme.muted,
+                                    textDecorationLine: "line-through",
+                                  }}
+                                  className="text-[10px]"
+                                >
+                                  ₹{formatPrice(Number(cross.compareAtPrice))}
+                                </Text>
+                              )}
+                            </View>
+                          </View>
                         </View>
-                        <Text
-                          style={{ color: theme.text }}
-                          className="text-xs font-bold leading-tight"
-                          numberOfLines={2}
-                        >
-                          {cross.name}
-                        </Text>
-                        <Text
-                          style={{ color: theme.muted }}
-                          className="text-xs font-semibold mt-1"
-                        >
-                          {cross.price}
-                        </Text>
-                      </View>
-                    </View>
-                  );
-                })}
-              </ScrollView>
+                      );
+                    })}
+                  </ScrollView>
+                </>
+              )}
 
               <Text
                 style={{ color: theme.muted }}
@@ -765,13 +1001,13 @@ export const DeliveryCartModal = memo(
                       {couponError ? couponError : " "}
                     </Text>
 
-                    {offers.map((coupon: any, idx: number) => {
+                    {eligibleOffers.map((coupon: any, idx: number) => {
                       return (
                         <View
                           key={coupon.code}
                           style={{
                             borderBottomWidth:
-                              idx === offers.length - 1 ? 0 : 1,
+                              idx === eligibleOffers.length - 1 ? 0 : 1,
                             borderBottomColor: theme.border,
                           }}
                           className="py-4 flex-row items-center justify-between"
@@ -808,6 +1044,38 @@ export const DeliveryCartModal = memo(
                         </View>
                       );
                     })}
+                    {eligibleOffers.length === 0 && (
+                      <View
+                        style={{
+                          backgroundColor: theme.bg,
+                          borderColor: theme.border,
+                        }}
+                        className="mt-2 rounded-2xl border px-4 py-5 items-center"
+                      >
+                        <View
+                          style={{
+                            backgroundColor: theme.isDark
+                              ? "rgba(22, 163, 74, 0.12)"
+                              : "#f0fdf4",
+                          }}
+                          className="w-11 h-11 rounded-full items-center justify-center mb-3"
+                        >
+                          <Ticket size={21} color={theme.primary} />
+                        </View>
+                        <Text
+                          style={{ color: theme.text }}
+                          className="text-sm font-bold text-center"
+                        >
+                          No offers for these items yet
+                        </Text>
+                        <Text
+                          style={{ color: theme.muted }}
+                          className="text-xs font-medium text-center mt-1 leading-5"
+                        >
+                          Add eligible items or check back later for savings.
+                        </Text>
+                      </View>
+                    )}
                   </Animated.View>
                 )}
               </Animated.View>
@@ -856,7 +1124,15 @@ export const DeliveryCartModal = memo(
 
                 {activeTab === "Delivery" && isDelivery && (
                   <View>
-                    {deliveryOptions.map((opt: any, index: number) => {
+                    {deliveryOptions.length === 0 ? (
+                      <Text
+                        style={{ color: theme.muted }}
+                        className="p-4 text-sm"
+                      >
+                        Delivery options are not available for this branch.
+                      </Text>
+                    ) : (
+                      deliveryOptions.map((opt: any, index: number) => {
                       const isSelected = selectedOption?.id === opt.id;
                       return (
                         <Pressable
@@ -874,8 +1150,8 @@ export const DeliveryCartModal = memo(
                           ) : (
                             <Circle size={24} color={theme.muted} />
                           )}
-                          <View className="ml-3 flex-1">
-                            <View className="flex-row items-center">
+                          <View className="ml-3 flex-1 min-w-0">
+                            <View className="flex-row flex-wrap items-center">
                               <Text
                                 style={{
                                   color: isSelected
@@ -883,6 +1159,7 @@ export const DeliveryCartModal = memo(
                                     : theme.text,
                                 }}
                                 className="font-bold text-base"
+                                numberOfLines={1}
                               >
                                 {opt.title}
                               </Text>
@@ -903,24 +1180,28 @@ export const DeliveryCartModal = memo(
                                 </Text>
                               )}
                             </View>
-                            <Text
-                              style={{ color: theme.muted }}
-                              className="text-xs font-medium mt-1"
-                            >
-                              {opt.subtitle}
-                            </Text>
+                            <View className="flex-row items-center justify-between mt-1">
+                              <Text
+                                style={{ color: theme.muted }}
+                                className="text-xs font-medium flex-1 mr-2"
+                                numberOfLines={2}
+                              >
+                                {opt.subtitle}
+                              </Text>
+                              <Text
+                                style={{
+                                  color: isSelected ? theme.primary : theme.text,
+                                }}
+                                className="text-xs font-bold shrink-0"
+                              >
+                                {opt.time}
+                              </Text>
+                            </View>
                           </View>
-                          <Text
-                            style={{
-                              color: isSelected ? theme.primary : theme.text,
-                            }}
-                            className="font-bold"
-                          >
-                            {opt.time}
-                          </Text>
                         </Pressable>
                       );
-                    })}
+                     })
+                    )}
                   </View>
                 )}
 
@@ -1298,27 +1579,20 @@ export const DeliveryCartModal = memo(
                                 elevation: 15,
                               }}
                             >
-                              <Text
-                                style={{ color: theme.text }}
-                                className="font-black text-[14px] mb-3"
-                              >
-                                Delivery fee breakup for this order
-                              </Text>
-                              <View className="flex-row justify-between items-center">
+                              <View className="flex-row justify-between items-center mb-2">
                                 <Text
                                   style={{ color: theme.muted }}
                                   className="font-semibold text-[13px]"
                                 >
-                                  {selectedOption?.title || "Standard Fee"}
+                                  Base delivery fee
                                 </Text>
                                 <View className="flex-row items-center">
-                                  {isFreeDeliveryEligible && (
+                                  {isFreeDelivery && (
                                     <Text
                                       style={{ color: theme.muted }}
                                       className="font-semibold line-through mr-2 text-[13px]"
                                     >
-                                      ₹
-                                      {formatPrice(baseDeliveryFee)}
+                                      ₹{formatPrice(baseDeliveryFee)}
                                     </Text>
                                   )}
                                   <Text
@@ -1339,6 +1613,25 @@ export const DeliveryCartModal = memo(
                                   </Text>
                                 </View>
                               </View>
+                              {selectedOption && (
+                                <View className="flex-row justify-between items-center">
+                                  <Text
+                                    style={{ color: theme.muted }}
+                                    className="font-semibold text-[13px] flex-1 mr-3"
+                                    numberOfLines={1}
+                                  >
+                                    {selectedOption.title}
+                                  </Text>
+                                  <Text
+                                    style={{ color: theme.text }}
+                                    className="font-bold text-[13px]"
+                                  >
+                                    {optionPrice < 0
+                                      ? `Save ₹${formatPrice(deliveryOptionDiscount)}`
+                                      : `₹${formatPrice(deliveryOptionCharge)}`}
+                                  </Text>
+                                </View>
+                              )}
                               <View
                                 className="absolute -bottom-2 left-8 w-4 h-4 rotate-45 border-b border-r"
                                 style={{
@@ -1421,6 +1714,40 @@ export const DeliveryCartModal = memo(
                             </Text>
                           )}
                         </Pressable>
+                        {selectedOption && optionPrice > 0 && (
+                          <View className="flex-row justify-between mb-4">
+                            <Text
+                              style={{ color: theme.muted }}
+                              className="font-semibold text-[14px] flex-1 mr-3"
+                              numberOfLines={1}
+                            >
+                              {selectedOption.title}
+                            </Text>
+                            <Text
+                              style={{ color: theme.text }}
+                              className="font-semibold"
+                            >
+                              ₹{formatPrice(deliveryOptionCharge)}
+                            </Text>
+                          </View>
+                        )}
+                        {selectedOption && optionPrice < 0 && (
+                          <View className="flex-row justify-between mb-4">
+                            <Text
+                              style={{ color: theme.muted }}
+                              className="font-semibold text-[14px] flex-1 mr-3"
+                              numberOfLines={1}
+                            >
+                              {selectedOption.title} discount
+                            </Text>
+                            <Text
+                              style={{ color: theme.primary }}
+                              className="font-semibold"
+                            >
+                              −₹{formatPrice(deliveryOptionDiscount)}
+                            </Text>
+                          </View>
+                        )}
                       </View>
                     )}
 
@@ -1704,11 +2031,11 @@ export const DeliveryCartModal = memo(
             style={{
               backgroundColor: theme.card,
               borderTopColor: theme.border,
-              paddingBottom: Platform.OS === "ios" ? insets.bottom : 20,
+              paddingBottom: Math.max(insets.bottom, 16),
             }}
-            className="absolute bottom-0 inset-x-0 p-4 border-t flex-row items-center justify-between shadow-[0_-10px_40px_rgba(0,0,0,0.1)]"
+            className="absolute bottom-0 inset-x-0 px-4 pt-3 border-t flex-row items-center shadow-[0_-10px_40px_rgba(0,0,0,0.1)]"
           >
-            <View>
+            <View className="flex-1 min-w-0 mr-3">
               <Text
                 style={{ color: theme.muted }}
                 className="text-[10px] font-bold uppercase tracking-wider mb-1"
@@ -1728,31 +2055,20 @@ export const DeliveryCartModal = memo(
               </View>
             </View>
             <Pressable
-              onPress={async () => {
-                try {
-                  const preview = await onCheckout(appliedCoupon?.code);
-                  const total =
-                    preview && typeof preview === "object" && "total" in preview
-                      ? (preview as { total?: number }).total
-                      : undefined;
-                  Alert.alert(
-                    "Checkout Preview",
-                    total === undefined
-                      ? "Your checkout details are ready."
-                      : `Your total is ₹${formatPrice(total)}.`,
-                  );
-                } catch (error) {
-                  Alert.alert(
-                    "Unable to Continue",
-                    error instanceof Error ? error.message : "Please try again.",
-                  );
-                }
-              }}
+              onPress={() => void handlePayPress()}
+              disabled={isSubmittingOrder}
               style={{ backgroundColor: theme.primary }}
-              className="px-8 py-3.5 rounded-2xl"
+              className={`shrink-0 ml-2 px-4 py-3.5 rounded-2xl ${isSubmittingOrder ? "opacity-60" : ""}`}
             >
-              <Text className="text-white font-black text-lg">
-                Pay ₹{formatPrice(finalPayable)}
+              <Text
+                className="text-white font-black text-base"
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.75}
+              >
+                {isSubmittingOrder
+                  ? "Processing..."
+                  : `Pay ₹${formatPrice(finalPayable)}`}
               </Text>
             </Pressable>
           </View>

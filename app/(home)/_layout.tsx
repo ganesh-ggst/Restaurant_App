@@ -393,6 +393,7 @@ export default function HomeLayout() {
   >([]);
   const [cartPricing, setCartPricing] = useState<CustomerCart["pricing"]>();
   const [cartBranchId, setCartBranchId] = useState<string | null>(null);
+  const [cartLoaded, setCartLoaded] = useState(false);
 
   const [carts, setCarts] = useState<{ [key: string]: any[] }>({
     Delivery: [],
@@ -553,7 +554,10 @@ export default function HomeLayout() {
 
     try {
       const token = await authApi.getAccessToken();
-      if (!token) return;
+      if (!token) {
+        setCartLoaded(true);
+        return;
+      }
 
       const [favoriteResult, cartResult, addressResult] =
         await Promise.allSettled([
@@ -583,6 +587,7 @@ export default function HomeLayout() {
         }
         setCartBranchId(cartResult.value.branchId || null);
         setCartPricing(cartResult.value.pricing);
+        setCartLoaded(true);
       } else {
         Alert.alert("Unable to Load Cart", cartResult.reason.message);
       }
@@ -650,6 +655,7 @@ export default function HomeLayout() {
     }
     setCartBranchId(cart.branchId || null);
     setCartPricing(cart.pricing);
+    setCartLoaded(true);
   }, [menuItems]);
 
   useEffect(() => {
@@ -767,6 +773,31 @@ export default function HomeLayout() {
     });
   };
 
+  const createCustomerOrder = async (
+    paymentResult: "success" | "rejected",
+  ) => {
+    if (!activeBranch?.id) {
+      throw new Error("Choose a restaurant branch before checkout.");
+    }
+    const addressId = mode === "Delivery" ? activeAddress?.id : undefined;
+    if (mode === "Delivery" && !addressId) {
+      throw new Error("Choose a delivery address before checkout.");
+    }
+
+    const order = await api.createOrder({
+      branchId: activeBranch.id,
+      fulfillmentType:
+        mode === "Dine-in"
+          ? "dine-in"
+          : (mode.toLowerCase() as "delivery" | "takeaway"),
+      ...(addressId ? { addressId } : {}),
+      paymentMethod: "online",
+      status: paymentResult === "success" ? "pending" : "rejected",
+      paymentStatus: paymentResult === "success" ? "paid" : "rejected",
+    });
+    return order;
+  };
+
   const toggleFavorite = async (id: string) => {
     try {
       if (favorites.includes(id)) {
@@ -846,6 +877,44 @@ export default function HomeLayout() {
         "Unable to Update Cart",
         error instanceof Error ? error.message : "Please try again.",
       );
+    }
+  };
+
+  const handleRemoveCartItems = async (itemIds: string[]) => {
+    const uniqueIds = [...new Set(itemIds)];
+    const cartItemRemovals = uniqueIds.flatMap((itemId) => {
+      const matchingItems = activeCart.filter((item) => item.id === itemId);
+      const removals = matchingItems.flatMap((item) =>
+        item.cartItemId
+          ? [{ menuItemId: itemId, cartItemId: item.cartItemId }]
+          : [],
+      );
+      if (matchingItems.length === 0 || removals.length !== matchingItems.length) {
+        throw new Error(
+          "A selected cart item is no longer available. Refresh the cart.",
+        );
+      }
+      return removals;
+    });
+
+    const results = await Promise.allSettled(
+      cartItemRemovals.map(({ cartItemId }) => api.removeCartItem(cartItemId)),
+    );
+    await reloadCart(activeBranch?.id);
+
+    const failures = results.flatMap((result, index) =>
+      result.status === "rejected"
+        ? [
+            `${cartItemRemovals[index].menuItemId}: ${
+              result.reason instanceof Error
+                ? result.reason.message
+                : "Unable to remove item."
+            }`,
+          ]
+        : [],
+    );
+    if (failures.length > 0) {
+      throw new Error(`Some items could not be removed:\n${failures.join("\n")}`);
     }
   };
 
@@ -946,17 +1015,20 @@ export default function HomeLayout() {
           branchesLoaded,
           addresses,
           cartPricing,
+          cartLoaded,
           activeCart,
           reloadCart,
           applyCartCoupon,
           removeCartCoupon,
           previewCheckout,
+          createCustomerOrder,
           activeAddress,
           setActiveAddress,
           activeBranch,
           setActiveBranch: selectActiveBranch,
           handleAddToCart,
           handleDecrementCartItem,
+          handleRemoveCartItems,
           activeTable,
           setActiveTable,
           timeLeft,

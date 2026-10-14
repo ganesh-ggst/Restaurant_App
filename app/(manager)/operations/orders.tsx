@@ -9,7 +9,7 @@ import {
   ShoppingBag,
   XCircle,
 } from "lucide-react-native";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -30,41 +30,92 @@ import {
 } from "../../../services/api/operations";
 
 const ORDER_TABS = [
-  "pending",
-  "rejected",
-  "cancelled",
-  "accepted",
-  "preparing",
-  "ready",
-  "out_for_delivery",
-  "delivered",
-  "completed",
+  { key: "all", label: "All Orders", statuses: [] },
+  { key: "pending", label: "Pending", statuses: ["pending"] },
+  { key: "rejected", label: "Rejected", statuses: ["rejected"] },
+  { key: "accepted", label: "Accepted", statuses: ["accepted"] },
+  { key: "preparing", label: "Preparing", statuses: ["preparing"] },
+  { key: "ready", label: "Ready", statuses: ["ready"] },
+  {
+    key: "out_for_delivery",
+    label: "Out for delivery",
+    statuses: ["out_for_delivery"],
+  },
+  { key: "completed", label: "Completed", statuses: ["completed"] },
 ] as const;
+type OrderTabKey = (typeof ORDER_TABS)[number]["key"];
+
+const ORDER_STATUS_PRIORITY: Record<string, number> = {
+  pending: 0,
+  accepted: 1,
+  rejected: 1,
+  preparing: 2,
+  ready: 3,
+  out_for_delivery: 4,
+  completed: 5,
+};
 
 let cachedOrders: { branchId: string; orders: OperationsOrder[] } | null = null;
 
 function getOrderBranchId(order: OperationsOrder): string | null {
-  if (typeof order.branchId === "string") return order.branchId;
-  return order.branchId?._id || order.branchId?.id || null;
+  const branch = order.branchId || order.branch;
+  if (typeof branch === "string") return branch;
+  return branch?._id || branch?.id || null;
 }
 
-function cacheOrderStatus(orderId: string, status: string): OperationsOrder[] {
-  const updatedOrders = (cachedOrders?.orders ?? []).map((order) =>
-    order._id === orderId ? { ...order, status } : order,
+function updateOrderInList(
+  orders: OperationsOrder[],
+  updatedOrder: OperationsOrder,
+): OperationsOrder[] {
+  const existing = orders.some((order) => order._id === updatedOrder._id);
+  const updatedOrders = orders.map((order) =>
+    order._id === updatedOrder._id ? updatedOrder : order,
   );
-  if (cachedOrders) {
-    cachedOrders = { ...cachedOrders, orders: updatedOrders };
-  }
+  return existing ? updatedOrders : [...updatedOrders, updatedOrder];
+}
+
+function cacheOrderStatus(
+  branchId: string,
+  currentOrders: OperationsOrder[],
+  order: OperationsOrder,
+  status: string,
+): OperationsOrder[] {
+  const branchOrders =
+    cachedOrders?.branchId === branchId
+      ? cachedOrders.orders
+      : currentOrders;
+  const updatedOrders = updateOrderInList(branchOrders, { ...order, status });
+  cachedOrders = { branchId, orders: updatedOrders };
   return updatedOrders;
 }
 
 function normalizeOrderStatus(status: string) {
-  const normalized = status.trim().toLowerCase().replace(/[-\s]+/g, "_");
-  return normalized === "canceled" ? "cancelled" : normalized;
+  const normalized = status
+    .trim()
+    .toLowerCase()
+    .replace(/[-\s]+/g, "_");
+  if (normalized === "canceled" || normalized === "cancelled") return "rejected";
+  if (normalized === "delivered") return "completed";
+  return normalized;
+}
+
+function getOrderTabForStatus(status: string): OrderTabKey {
+  const normalizedStatus = normalizeOrderStatus(status);
+  const matchingTab = ORDER_TABS.find(
+    (tab) =>
+      tab.key !== "all" &&
+      tab.statuses.some((tabStatus) => tabStatus === normalizedStatus),
+  );
+  return matchingTab?.key ?? "all";
 }
 
 function normalizeFulfillmentType(fulfillmentType?: string) {
-  return fulfillmentType?.trim().toLowerCase().replace(/[_\s]+/g, "-") || "";
+  return (
+    fulfillmentType
+      ?.trim()
+      .toLowerCase()
+      .replace(/[_\s]+/g, "-") || ""
+  );
 }
 
 function nextOrderStatus(order: OperationsOrder): string | null {
@@ -84,8 +135,6 @@ function nextOrderStatus(order: OperationsOrder): string | null {
       }
       return null;
     case "out_for_delivery":
-      return fulfillmentType === "delivery" ? "delivered" : null;
-    case "delivered":
       return fulfillmentType === "delivery" ? "completed" : null;
     default:
       return null;
@@ -98,54 +147,63 @@ export default function OperationsOrdersScreen() {
   const theme = useAppTheme();
   const { currentManager, loading: managerLoading } = useCurrentManager();
   const branchId = currentManager?.branchId || null;
-  const [orders, setOrders] = useState<OperationsOrder[]>(
-    () =>
-      cachedOrders?.branchId === branchId ? cachedOrders.orders : [],
+  const [orders, setOrders] = useState<OperationsOrder[]>(() =>
+    cachedOrders?.branchId === branchId ? cachedOrders.orders : [],
   );
-  const [activeTab, setActiveTab] =
-    useState<(typeof ORDER_TABS)[number]>("pending");
-  const [modeFilter, setModeFilter] = useState<
-    "all" | "delivery" | "takeaway"
-  >("all");
+  const [activeTab, setActiveTab] = useState<OrderTabKey>("all");
+  const [modeFilter, setModeFilter] = useState<"all" | "delivery" | "takeaway">(
+    "all",
+  );
   const [loading, setLoading] = useState(
     () => managerLoading || cachedOrders?.branchId !== branchId,
   );
   const [refreshing, setRefreshing] = useState(false);
   const [updatingOrderId, setUpdatingOrderId] = useState("");
   const [updatingOrderAction, setUpdatingOrderAction] = useState<
-    "advance" | "reject" | "cancel" | null
+    "advance" | "reject" | null
   >(null);
+  const ordersLoadSequence = useRef(0);
 
-  const loadOrders = useCallback(async (showRefreshIndicator = false) => {
-    if (!branchId) {
-      setOrders([]);
-      setLoading(false);
-      setRefreshing(false);
-      return;
-    }
-    if (cachedOrders?.branchId !== branchId) {
-      setLoading(true);
-      setOrders([]);
-    } else if (showRefreshIndicator) {
-      setRefreshing(true);
-    }
-    try {
-      const allOrders = await operationsApi.getAllOrders();
-      const branchOrders = allOrders.filter(
-        (order) => getOrderBranchId(order) === branchId,
-      );
-      cachedOrders = { branchId, orders: branchOrders };
-      setOrders(branchOrders);
-    } catch (error) {
-      Alert.alert(
-        "Unable to load orders",
-        error instanceof Error ? error.message : "Please try again.",
-      );
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [branchId]);
+  const loadOrders = useCallback(
+    async (showRefreshIndicator = false) => {
+      if (!branchId) {
+        setOrders([]);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+      if (cachedOrders?.branchId !== branchId) {
+        setLoading(true);
+        setOrders([]);
+      } else if (showRefreshIndicator) {
+        setRefreshing(true);
+      }
+      const loadSequence = ++ordersLoadSequence.current;
+      try {
+        const allOrders = await operationsApi.getAllOrders();
+        if (loadSequence !== ordersLoadSequence.current) return;
+        const normalizedBranchId = branchId.trim().toLowerCase();
+        const branchOrders = allOrders.filter((order) => {
+          const orderBranchId = getOrderBranchId(order);
+          return orderBranchId?.trim().toLowerCase() === normalizedBranchId;
+        });
+        cachedOrders = { branchId, orders: branchOrders };
+        setOrders(branchOrders);
+      } catch (error) {
+        if (loadSequence !== ordersLoadSequence.current) return;
+        Alert.alert(
+          "Unable to load orders",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      } finally {
+        if (loadSequence === ordersLoadSequence.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
+      }
+    },
+    [branchId],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -165,16 +223,28 @@ export default function OperationsOrdersScreen() {
     }, [branchId, loadOrders, managerLoading]),
   );
 
-  const filteredOrders = orders.filter((order) => {
-    const matchesStatus =
-      activeTab === "completed"
-        ? normalizeOrderStatus(order.status) === "completed"
-        : normalizeOrderStatus(order.status) === activeTab;
-    const matchesMode =
-      modeFilter === "all" ||
-      normalizeFulfillmentType(order.fulfillmentType) === modeFilter;
-    return matchesStatus && matchesMode;
-  });
+  const selectedTab = ORDER_TABS.find((tab) => tab.key === activeTab);
+  const filteredOrders = orders
+    .filter((order) => {
+      const status = normalizeOrderStatus(order.status);
+      const matchesStatus =
+        activeTab === "all" ||
+        selectedTab?.statuses.some((tabStatus) => tabStatus === status);
+      const matchesMode =
+        modeFilter === "all" ||
+        normalizeFulfillmentType(order.fulfillmentType) === modeFilter;
+      return matchesStatus && matchesMode;
+    })
+    .sort((first, second) => {
+      if (activeTab !== "all") return 0;
+      const firstPriority =
+        ORDER_STATUS_PRIORITY[normalizeOrderStatus(first.status)] ??
+        Number.MAX_SAFE_INTEGER;
+      const secondPriority =
+        ORDER_STATUS_PRIORITY[normalizeOrderStatus(second.status)] ??
+        Number.MAX_SAFE_INTEGER;
+      return firstPriority - secondPriority;
+    });
 
   const advanceOrder = async (order: OperationsOrder) => {
     const status = nextOrderStatus(order);
@@ -187,14 +257,14 @@ export default function OperationsOrdersScreen() {
     );
   };
 
-  const rejectOrder = (order: OperationsOrder) => {
+  const chooseOrderRejection = (order: OperationsOrder) => {
     Alert.alert(
       "Reject this order?",
       `Reject order ${order.orderNumber}?`,
       [
         { text: "Keep Order", style: "cancel" },
         {
-          text: "Reject Order",
+          text: "Reject",
           style: "destructive",
           onPress: () =>
             void updateOrder(
@@ -212,21 +282,18 @@ export default function OperationsOrdersScreen() {
     order: OperationsOrder,
     status: string,
     note: string,
-    action: "advance" | "reject" | "cancel",
+    action: "advance" | "reject",
   ) => {
     setUpdatingOrderId(order._id);
     setUpdatingOrderAction(action);
     try {
-      await operationsApi.updateOrderStatus(
-        order._id,
-        status,
-        note,
-      );
-      setOrders(cacheOrderStatus(order._id, status));
-      if (status === "rejected" || status === "cancelled") {
-        setActiveTab(status);
-      }
-      await loadOrders();
+      await operationsApi.updateOrderStatus(order._id, status, note);
+      ordersLoadSequence.current += 1;
+      const updatedOrders = branchId
+        ? cacheOrderStatus(branchId, orders, order, status)
+        : updateOrderInList(orders, { ...order, status });
+      setOrders(updatedOrders);
+      setActiveTab(getOrderTabForStatus(status));
     } catch (error) {
       Alert.alert(
         "Unable to update order",
@@ -239,7 +306,9 @@ export default function OperationsOrdersScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.bg, paddingTop: insets.top }}>
+    <View
+      style={{ flex: 1, backgroundColor: theme.bg, paddingTop: insets.top }}
+    >
       <View
         className="flex-row items-center border-b px-4 py-4"
         style={{ borderBottomColor: theme.border }}
@@ -264,23 +333,23 @@ export default function OperationsOrdersScreen() {
         style={{ borderBottomColor: theme.border }}
         contentContainerStyle={{ paddingHorizontal: 12, alignItems: "center" }}
       >
-        {ORDER_TABS.map((status) => (
+        {ORDER_TABS.map((tab) => (
           <Pressable
-            key={status}
-            onPress={() => setActiveTab(status)}
+            key={tab.key}
+            onPress={() => setActiveTab(tab.key)}
             className="mr-2 rounded-full px-4 py-2"
             style={{
               backgroundColor:
-                activeTab === status ? theme.primary : theme.card,
+                activeTab === tab.key ? theme.primary : theme.card,
             }}
           >
             <Text
               className="text-xs font-bold capitalize"
               style={{
-                color: activeTab === status ? "#ffffff" : theme.text,
+                color: activeTab === tab.key ? "#ffffff" : theme.text,
               }}
             >
-              {status.replace(/_/g, " ")}
+              {tab.label}
             </Text>
           </Pressable>
         ))}
@@ -376,11 +445,17 @@ export default function OperationsOrdersScreen() {
 
                 <View className="mb-3 flex-row items-center gap-2">
                   <FulfillmentIcon size={16} color={theme.muted} />
-                  <Text className="text-xs capitalize" style={{ color: theme.muted }}>
+                  <Text
+                    className="text-xs capitalize"
+                    style={{ color: theme.muted }}
+                  >
                     {fulfillmentType.replace(/-/g, " ") || "Order"}
                   </Text>
                   {customerName ? (
-                    <Text className="flex-1 text-right text-xs" style={{ color: theme.muted }}>
+                    <Text
+                      className="flex-1 text-right text-xs"
+                      style={{ color: theme.muted }}
+                    >
                       {customerName}
                     </Text>
                   ) : null}
@@ -391,11 +466,17 @@ export default function OperationsOrdersScreen() {
                     key={`${order._id}-${index}`}
                     className="mb-1 flex-row justify-between"
                   >
-                    <Text className="flex-1 text-sm" style={{ color: theme.text }}>
+                    <Text
+                      className="flex-1 text-sm"
+                      style={{ color: theme.text }}
+                    >
                       {item.quantity} × {item.name}
                     </Text>
                     {item.itemTotal !== undefined ? (
-                      <Text className="ml-2 text-sm" style={{ color: theme.muted }}>
+                      <Text
+                        className="ml-2 text-sm"
+                        style={{ color: theme.muted }}
+                      >
                         ₹{item.itemTotal.toFixed(2)}
                       </Text>
                     ) : null}
@@ -405,7 +486,10 @@ export default function OperationsOrdersScreen() {
                 {order.createdAt ? (
                   <View className="mt-3 flex-row items-center gap-1">
                     <Clock size={13} color={theme.muted} />
-                    <Text className="text-[10px]" style={{ color: theme.muted }}>
+                    <Text
+                      className="text-[10px]"
+                      style={{ color: theme.muted }}
+                    >
                       {new Date(order.createdAt).toLocaleString()}
                     </Text>
                   </View>
@@ -431,74 +515,34 @@ export default function OperationsOrdersScreen() {
                     </Pressable>
                     {orderStatus === "pending" &&
                     fulfillmentType === "delivery" ? (
-                      <>
-                        <Pressable
-                          onPress={() => rejectOrder(order)}
-                          disabled={updatingOrderId === order._id}
-                          className="flex-1 flex-row items-center justify-center gap-2 rounded-xl border py-3"
-                          style={{
-                            borderColor: theme.danger,
-                            backgroundColor: theme.card,
-                          }}
+                      <Pressable
+                        onPress={() => chooseOrderRejection(order)}
+                        disabled={updatingOrderId === order._id}
+                        className="flex-1 flex-row items-center justify-center gap-2 rounded-xl border py-3"
+                        style={{
+                          borderColor: theme.danger,
+                          backgroundColor: theme.card,
+                        }}
+                      >
+                        {updatingOrderId === order._id &&
+                        updatingOrderAction === "reject" ? (
+                          <ActivityIndicator
+                            size="small"
+                            color={theme.danger}
+                          />
+                        ) : (
+                          <XCircle size={17} color={theme.danger} />
+                        )}
+                        <Text
+                          className="text-xs font-bold"
+                          style={{ color: theme.danger }}
                         >
                           {updatingOrderId === order._id &&
-                          updatingOrderAction === "reject" ? (
-                            <ActivityIndicator size="small" color={theme.danger} />
-                          ) : (
-                            <XCircle size={17} color={theme.danger} />
-                          )}
-                          <Text
-                            className="text-xs font-bold"
-                            style={{ color: theme.danger }}
-                          >
-                            {updatingOrderId === order._id &&
-                            updatingOrderAction === "reject"
-                              ? "Rejecting..."
-                              : "Reject"}
-                          </Text>
-                        </Pressable>
-                        <Pressable
-                          onPress={() =>
-                            Alert.alert(
-                              "Cancel this order?",
-                              `Cancel order ${order.orderNumber}?`,
-                              [
-                                { text: "Keep Order", style: "cancel" },
-                                {
-                                  text: "Cancel Order",
-                                  style: "destructive",
-                                  onPress: () =>
-                                    void updateOrder(
-                                      order,
-                                      "cancelled",
-                                      "Order cancelled by operations manager",
-                                      "cancel",
-                                    ),
-                                },
-                              ],
-                            )
-                          }
-                          disabled={updatingOrderId === order._id}
-                          className="flex-1 flex-row items-center justify-center gap-2 rounded-xl border py-3"
-                          style={{
-                            borderColor: theme.danger,
-                            backgroundColor: theme.card,
-                          }}
-                        >
-                          {updatingOrderId === order._id &&
-                          updatingOrderAction === "cancel" ? (
-                            <ActivityIndicator size="small" color={theme.danger} />
-                          ) : (
-                            <XCircle size={17} color={theme.danger} />
-                          )}
-                          <Text
-                            className="text-xs font-bold"
-                            style={{ color: theme.danger }}
-                          >
-                            Cancel
-                          </Text>
-                        </Pressable>
-                      </>
+                          updatingOrderAction === "reject"
+                            ? "Updating..."
+                            : "Reject"}
+                        </Text>
+                      </Pressable>
                     ) : null}
                   </View>
                 ) : null}
@@ -509,7 +553,9 @@ export default function OperationsOrdersScreen() {
             <View className="items-center py-16">
               <Package size={40} color={theme.muted} />
               <Text className="mt-3 text-center" style={{ color: theme.muted }}>
-                No {activeTab.replace(/_/g, " ")} orders found.
+                {activeTab === "all"
+                  ? "No orders found."
+                  : `No ${selectedTab?.label.toLowerCase() || "matching"} orders found.`}
               </Text>
             </View>
           ) : null}

@@ -18,7 +18,7 @@ import {
   Wifi,
   X,
 } from "lucide-react-native";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   Alert,
   FlatList,
@@ -55,6 +55,24 @@ const getNumericPrice = (price: any) => {
 const formatPrice = (price: number) => {
   return Number.isInteger(price) ? price : price.toFixed(2);
 };
+
+type SpeechRecognitionPackage = typeof import("expo-speech-recognition");
+type UseSpeechRecognitionEvent =
+  typeof import("expo-speech-recognition")["useSpeechRecognitionEvent"];
+
+let speechRecognitionLoadError: unknown;
+const speechRecognition: SpeechRecognitionPackage | null = (() => {
+  try {
+    // Keep this lazy so Expo Go can load the screen without the native module.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require("expo-speech-recognition") as SpeechRecognitionPackage;
+  } catch (error) {
+    speechRecognitionLoadError = error;
+    return null;
+  }
+})();
+const useSpeechRecognitionEvent: UseSpeechRecognitionEvent =
+  speechRecognition?.useSpeechRecognitionEvent ?? (() => {});
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -96,6 +114,8 @@ export default function HomeScreen() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [voiceResultIds, setVoiceResultIds] = useState<string[] | null>(null);
+  const voiceSearchInFlight = useRef(false);
+  const voiceSearchGeneration = useRef(0);
   const [offersViewportWidth, setOffersViewportWidth] = useState(0);
   const [activeOfferIndex, setActiveOfferIndex] = useState(0);
   const [showAddressModal, setShowAddressModal] = useState(false);
@@ -297,25 +317,94 @@ export default function HomeScreen() {
     setActiveServiceModal(serviceType);
   };
 
-  const handleVoiceSearch = () => {
-    setIsListening(true);
-    setSearchQuery("");
-    setVoiceResultIds(null);
-    setTimeout(() => {
-      void api
-        .voiceSearch("Biryani")
-        .then((results) => {
+  useSpeechRecognitionEvent("start", () => setIsListening(true));
+  useSpeechRecognitionEvent("end", () => setIsListening(false));
+  useSpeechRecognitionEvent("result", (event) => {
+    const transcript = event.results[0]?.transcript?.trim();
+    if (!event.isFinal || !transcript || voiceSearchInFlight.current) return;
+
+    voiceSearchInFlight.current = true;
+    const requestGeneration = voiceSearchGeneration.current;
+    setSearchQuery(transcript);
+    setIsListening(false);
+    void api
+      .voiceSearch(transcript)
+      .then((results) => {
+        if (requestGeneration === voiceSearchGeneration.current) {
           setVoiceResultIds(results.map((item) => item._id));
-          setSearchQuery("Biryani");
-        })
-        .catch((error: unknown) => {
-          Alert.alert(
-            "Voice Search Failed",
-            error instanceof Error ? error.message : "Please try again.",
-          );
-        })
-        .finally(() => setIsListening(false));
-    }, 2500);
+        }
+      })
+      .catch((error: unknown) => {
+        if (requestGeneration !== voiceSearchGeneration.current) return;
+        Alert.alert(
+          "Voice Search Failed",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      })
+      .finally(() => {
+        if (requestGeneration === voiceSearchGeneration.current) {
+          voiceSearchInFlight.current = false;
+        }
+      });
+  });
+  useSpeechRecognitionEvent("error", (event) => {
+    setIsListening(false);
+    if (event.error !== "aborted") {
+      Alert.alert(
+        "Voice Search Failed",
+        event.message || "Speech recognition could not start. Please try again.",
+      );
+    }
+  });
+
+  const handleVoiceSearch = async () => {
+    const speechRecognitionModule = speechRecognition?.ExpoSpeechRecognitionModule;
+    if (!speechRecognitionModule) {
+      Alert.alert(
+        "Voice Search Requires a Development Build",
+        `This app build does not include the speech-recognition native module. Run npx expo run:android to build and install the Android app, then start Metro with npx expo start --dev-client.${speechRecognitionLoadError instanceof Error ? `\n\nDetails: ${speechRecognitionLoadError.message}` : ""}`,
+      );
+      return;
+    }
+
+    if (isListening) {
+      speechRecognitionModule.stop();
+      return;
+    }
+    try {
+      const permission =
+        await speechRecognitionModule.requestPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert(
+          "Microphone Permission Required",
+          "Allow microphone and speech recognition access to search by voice.",
+        );
+        return;
+      }
+      voiceSearchGeneration.current += 1;
+      voiceSearchInFlight.current = false;
+      setSearchQuery("");
+      setVoiceResultIds(null);
+      setIsListening(true);
+      speechRecognitionModule.start({
+        lang: "en-US",
+        interimResults: true,
+        continuous: false,
+        maxAlternatives: 1,
+      });
+    } catch (error) {
+      setIsListening(false);
+      Alert.alert(
+        "Voice Search Failed",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    }
+  };
+
+  const handleSearchQueryChange = (query: string) => {
+    voiceSearchGeneration.current += 1;
+    setSearchQuery(query);
+    setVoiceResultIds(null);
   };
 
   const getFilteredData = () => {
@@ -336,7 +425,7 @@ export default function HomeScreen() {
     }
 
     const lowerQuery = searchQuery.toLowerCase().trim();
-    if (lowerQuery) {
+    if (lowerQuery && voiceResultIds === null) {
       filtered = filtered.filter((item: any) => {
         if (item.name.toLowerCase().includes(lowerQuery)) return true;
         const queryWords = lowerQuery.split(" ").filter((w) => w.length > 0);
@@ -704,7 +793,7 @@ export default function HomeScreen() {
               onRequestBill={() => handleServiceRequest("bill")}
               onOrderTakeaway={() => router.push("/(home)/orders" as any)}
               searchQuery={searchQuery}
-              setSearchQuery={setSearchQuery}
+              setSearchQuery={handleSearchQueryChange}
               isListening={isListening}
               handleVoiceSearch={handleVoiceSearch}
               isVegOnly={isVegOnly}
