@@ -10,7 +10,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
   ProfileError,
@@ -36,6 +36,7 @@ function formatAddress(address: CustomerAddress): string {
 export default function AddressesScreen() {
   const router = useRouter();
   const theme = useAppTheme();
+  const insets = useSafeAreaInsets();
   const [addresses, setAddresses] = useState<CustomerAddress[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -112,10 +113,15 @@ export default function AddressesScreen() {
         title="Manage Addresses"
         onBack={() => router.back()}
       />
-      <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 32 }}>
+      <ScrollView
+        className="flex-1"
+        contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 120 }}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator
+      >
         <ProfileError message={error} />
         <Pressable
-          onPress={() => router.push("/(home)/profile/address-form")}
+          onPress={() => router.push("/(home)/(tabs)/profile/address-form")}
           className="mb-5 flex-row items-center justify-center rounded-2xl border border-dashed p-4"
           style={{ borderColor: theme.primary }}
         >
@@ -179,7 +185,10 @@ export default function AddressesScreen() {
                     className="flex-row items-center gap-1"
                   >
                     <Star size={16} color={theme.primary} />
-                    <Text className="font-bold" style={{ color: theme.primary }}>
+                    <Text
+                      className="font-bold"
+                      style={{ color: theme.primary }}
+                    >
                       Set default
                     </Text>
                   </Pressable>
@@ -187,7 +196,7 @@ export default function AddressesScreen() {
                 <Pressable
                   onPress={() =>
                     router.push(
-                      `/(home)/profile/address-form?id=${encodeURIComponent(address._id)}`,
+                      `/(home)/(tabs)/profile/address-form?id=${encodeURIComponent(address._id)}`,
                     )
                   }
                   className="flex-row items-center gap-1"

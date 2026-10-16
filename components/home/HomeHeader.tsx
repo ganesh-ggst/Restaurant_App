@@ -94,6 +94,7 @@ export const HomeHeader = memo(
     searchQuery,
     setSearchQuery,
     isListening,
+    isVoiceSearching,
     handleVoiceSearch,
     isVegOnly,
     setIsVegOnly,
@@ -266,8 +267,7 @@ export const HomeHeader = memo(
             >
               <Search size={20} color={theme.muted} strokeWidth={2.5} />
               <View className="flex-1 justify-center ml-3 relative h-full">
-                {branchContentLoaded &&
-                  searchPlaceholders.length > 0 &&
+                {searchPlaceholders.length > 0 &&
                   searchQuery.length === 0 &&
                   !isListening && (
                     <Animated.View
@@ -286,7 +286,7 @@ export const HomeHeader = memo(
                       </Text>
                     </Animated.View>
                   )}
-                {isListening && (
+                {(isListening || isVoiceSearching) && (
                   <View
                     style={{ position: "absolute", left: 0 }}
                     pointerEvents="none"
@@ -298,7 +298,7 @@ export const HomeHeader = memo(
                         fontWeight: "bold",
                       }}
                     >
-                      Listening...
+                      {isVoiceSearching ? "Searching menu..." : "Listening..."}
                     </Text>
                   </View>
                 )}
@@ -318,7 +318,14 @@ export const HomeHeader = memo(
                   className="h-5 w-[1px] mr-3"
                   style={{ backgroundColor: theme.border }}
                 />
-                <Pressable onPress={handleVoiceSearch}>
+                <Pressable
+                  onPress={handleVoiceSearch}
+                  disabled={isVoiceSearching}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    isListening ? "Stop voice search" : "Start voice search"
+                  }
+                >
                   <Animated.View style={animatedMicStyle}>
                     <Mic
                       size={18}

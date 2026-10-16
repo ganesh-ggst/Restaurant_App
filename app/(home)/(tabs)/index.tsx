@@ -1,5 +1,5 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { useRouter } from "expo-router";
+import { useNavigation, useRouter } from "expo-router";
 import {
   ArrowLeft,
   BellRing,
@@ -18,7 +18,7 @@ import {
   Wifi,
   X,
 } from "lucide-react-native";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   FlatList,
@@ -57,13 +57,11 @@ const formatPrice = (price: number) => {
 };
 
 type SpeechRecognitionPackage = typeof import("expo-speech-recognition");
-type UseSpeechRecognitionEvent =
-  typeof import("expo-speech-recognition")["useSpeechRecognitionEvent"];
 
 let speechRecognitionLoadError: unknown;
 const speechRecognition: SpeechRecognitionPackage | null = (() => {
   try {
-    // Keep this lazy so Expo Go can load the screen without the native module.
+    // Expo Go does not include this native module.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     return require("expo-speech-recognition") as SpeechRecognitionPackage;
   } catch (error) {
@@ -71,11 +69,12 @@ const speechRecognition: SpeechRecognitionPackage | null = (() => {
     return null;
   }
 })();
-const useSpeechRecognitionEvent: UseSpeechRecognitionEvent =
+const useSpeechRecognitionEvent =
   speechRecognition?.useSpeechRecognitionEvent ?? (() => {});
 
 export default function HomeScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
 
@@ -113,9 +112,11 @@ export default function HomeScreen() {
   const [isVegOnly, setIsVegOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [isListening, setIsListening] = useState(false);
+  const [isVoiceSearching, setIsVoiceSearching] = useState(false);
   const [voiceResultIds, setVoiceResultIds] = useState<string[] | null>(null);
   const voiceSearchInFlight = useRef(false);
   const voiceSearchGeneration = useRef(0);
+  const voiceResultHandled = useRef(false);
   const [offersViewportWidth, setOffersViewportWidth] = useState(0);
   const [activeOfferIndex, setActiveOfferIndex] = useState(0);
   const [showAddressModal, setShowAddressModal] = useState(false);
@@ -256,13 +257,19 @@ export default function HomeScreen() {
     }, 300);
   };
 
-  const handleCancelAddressModal = () => {
+  const handleCancelAddressModal = useCallback(() => {
     setShowAddressModal(false);
     if (pendingModeSetup) {
       setGlobalOrderMode(lastMode || "Delivery");
       setPendingModeSetup(null);
     }
-  };
+  }, [lastMode, pendingModeSetup, setGlobalOrderMode]);
+
+  useEffect(() => {
+    return navigation.addListener("blur", () => {
+      if (showAddressModal) handleCancelAddressModal();
+    });
+  }, [navigation, showAddressModal, handleCancelAddressModal]);
 
   const cancelCheckInModal = () => {
     setShowDineInCheckInModal(false);
@@ -317,80 +324,128 @@ export default function HomeScreen() {
     setActiveServiceModal(serviceType);
   };
 
-  useSpeechRecognitionEvent("start", () => setIsListening(true));
-  useSpeechRecognitionEvent("end", () => setIsListening(false));
-  useSpeechRecognitionEvent("result", (event) => {
-    const transcript = event.results[0]?.transcript?.trim();
-    if (!event.isFinal || !transcript || voiceSearchInFlight.current) return;
+  const searchRecognizedSpeech = useCallback(async (transcript: string) => {
+    const query = transcript.trim();
+    if (!query) {
+      setIsListening(false);
+      Alert.alert("No Speech Detected", "Please try speaking again.");
+      return;
+    }
 
-    voiceSearchInFlight.current = true;
     const requestGeneration = voiceSearchGeneration.current;
-    setSearchQuery(transcript);
+    setSearchQuery(query);
     setIsListening(false);
-    void api
-      .voiceSearch(transcript)
-      .then((results) => {
-        if (requestGeneration === voiceSearchGeneration.current) {
-          setVoiceResultIds(results.map((item) => item._id));
-        }
-      })
-      .catch((error: unknown) => {
-        if (requestGeneration !== voiceSearchGeneration.current) return;
-        Alert.alert(
-          "Voice Search Failed",
-          error instanceof Error ? error.message : "Please try again.",
+    setIsVoiceSearching(true);
+
+    try {
+      const results = await api.voiceSearch(query);
+      if (requestGeneration === voiceSearchGeneration.current) {
+        setVoiceResultIds(
+          results.flatMap((item) =>
+            item._id
+              ? [item._id]
+              : "id" in item && typeof item.id === "string"
+                ? [item.id]
+                : [],
+          ),
         );
-      })
-      .finally(() => {
-        if (requestGeneration === voiceSearchGeneration.current) {
-          voiceSearchInFlight.current = false;
-        }
-      });
-  });
-  useSpeechRecognitionEvent("error", (event) => {
-    setIsListening(false);
-    if (event.error !== "aborted") {
+      }
+    } catch (error) {
       Alert.alert(
         "Voice Search Failed",
-        event.message || "Speech recognition could not start. Please try again.",
+        error instanceof Error ? error.message : "Please try again.",
       );
+    } finally {
+      if (requestGeneration === voiceSearchGeneration.current) {
+        setIsVoiceSearching(false);
+      }
     }
+  }, []);
+
+  useSpeechRecognitionEvent("result", (event) => {
+    if (!event.isFinal || voiceResultHandled.current) return;
+    voiceResultHandled.current = true;
+    void searchRecognizedSpeech(event.results[0]?.transcript ?? "");
+  });
+
+  useSpeechRecognitionEvent("error", (event) => {
+    setIsListening(false);
+    if (event.error === "aborted") return;
+    voiceResultHandled.current = true;
+    Alert.alert(
+      event.error === "no-speech"
+        ? "No Speech Detected"
+        : "Voice Search Failed",
+      event.error === "no-speech"
+        ? "Please try speaking again."
+        : event.message || "Please try again.",
+    );
+  });
+
+  useSpeechRecognitionEvent("nomatch", () => {
+    setIsListening(false);
+    voiceResultHandled.current = true;
+    Alert.alert("No Speech Detected", "Please try speaking again.");
+  });
+
+  useSpeechRecognitionEvent("end", () => {
+    setIsListening(false);
   });
 
   const handleVoiceSearch = async () => {
-    const speechRecognitionModule = speechRecognition?.ExpoSpeechRecognitionModule;
+    const speechRecognitionModule =
+      speechRecognition?.ExpoSpeechRecognitionModule;
     if (!speechRecognitionModule) {
       Alert.alert(
         "Voice Search Requires a Development Build",
-        `This app build does not include the speech-recognition native module. Run npx expo run:android to build and install the Android app, then start Metro with npx expo start --dev-client.${speechRecognitionLoadError instanceof Error ? `\n\nDetails: ${speechRecognitionLoadError.message}` : ""}`,
+        `Expo Go does not include the speech-recognition native module. Build and install the app with "npx expo run:android" or "npx expo run:ios", then start Metro with "npx expo start --dev-client".${speechRecognitionLoadError instanceof Error ? `\n\nDetails: ${speechRecognitionLoadError.message}` : ""}`,
       );
       return;
     }
-
+    if (voiceSearchInFlight.current) return;
     if (isListening) {
+      setIsListening(false);
       speechRecognitionModule.stop();
       return;
     }
+
+    voiceSearchInFlight.current = true;
     try {
+      if (Platform.OS === "web") {
+        throw new Error(
+          "Voice search on this platform cannot guarantee on-device speech recognition. Please use the mobile app.",
+        );
+      }
+      if (!speechRecognitionModule.isRecognitionAvailable()) {
+        throw new Error("Speech recognition is not available on this device.");
+      }
+      if (!speechRecognitionModule.supportsOnDeviceRecognition()) {
+        throw new Error(
+          "On-device speech recognition is not available. Enable an offline speech recognition language in your device settings and try again.",
+        );
+      }
+
       const permission =
         await speechRecognitionModule.requestPermissionsAsync();
       if (!permission.granted) {
         Alert.alert(
-          "Microphone Permission Required",
+          "Speech Recognition Permission Required",
           "Allow microphone and speech recognition access to search by voice.",
         );
         return;
       }
+
       voiceSearchGeneration.current += 1;
-      voiceSearchInFlight.current = false;
+      voiceResultHandled.current = false;
       setSearchQuery("");
       setVoiceResultIds(null);
       setIsListening(true);
       speechRecognitionModule.start({
-        lang: "en-US",
-        interimResults: true,
+        lang: "en-IN",
+        interimResults: false,
         continuous: false,
-        maxAlternatives: 1,
+        requiresOnDeviceRecognition: true,
+        iosTaskHint: "search",
       });
     } catch (error) {
       setIsListening(false);
@@ -398,6 +453,8 @@ export default function HomeScreen() {
         "Voice Search Failed",
         error instanceof Error ? error.message : "Please try again.",
       );
+    } finally {
+      voiceSearchInFlight.current = false;
     }
   };
 
@@ -405,6 +462,7 @@ export default function HomeScreen() {
     voiceSearchGeneration.current += 1;
     setSearchQuery(query);
     setVoiceResultIds(null);
+    setIsVoiceSearching(false);
   };
 
   const getFilteredData = () => {
@@ -795,6 +853,7 @@ export default function HomeScreen() {
               searchQuery={searchQuery}
               setSearchQuery={handleSearchQueryChange}
               isListening={isListening}
+              isVoiceSearching={isVoiceSearching}
               handleVoiceSearch={handleVoiceSearch}
               isVegOnly={isVegOnly}
               setIsVegOnly={setIsVegOnly}
@@ -828,79 +887,97 @@ export default function HomeScreen() {
         />
       </Animated.View>
 
-      <Modal visible={showAddressModal} transparent animationType="fade">
-        <Pressable
-          className="flex-1 justify-end bg-black/50"
-          onPress={handleCancelAddressModal}
+      <Modal
+        visible={showAddressModal}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        statusBarTranslucent={Platform.OS === "android"}
+        navigationBarTranslucent={Platform.OS === "android"}
+        onRequestClose={handleCancelAddressModal}
+      >
+        <View
+          className="flex-1"
+          style={{
+            backgroundColor: theme.bg,
+            paddingTop: insets.top,
+            paddingBottom: insets.bottom,
+          }}
         >
-          <Pressable
-            className="rounded-t-[32px] p-6 pb-12"
-            style={{ backgroundColor: theme.bg, maxHeight: "80%" }}
-            onPress={(e) => e.stopPropagation()}
-          >
-            <View className="flex-row items-center justify-between mb-6">
-              <Text
-                className="text-xl font-black tracking-tight"
-                style={{ color: theme.text }}
-              >
-                {orderMode === "Delivery" && addressModalSelection === "address"
-                  ? "Choose Delivery Address"
-                  : "Choose Branch"}
-              </Text>
-              <Pressable onPress={handleCancelAddressModal} className="p-2">
-                <X size={24} color={theme.text} />
-              </Pressable>
-            </View>
-            {orderMode === "Delivery" && (
-              <View
-                className="mb-4 flex-row rounded-xl border p-1"
-                style={{
-                  borderColor: theme.border,
-                  backgroundColor: theme.card,
-                }}
-              >
-                {(
-                  [
-                    { id: "address", label: "Delivery Address" },
-                    { id: "branch", label: "Restaurant Branch" },
-                  ] as const
-                ).map((option) => {
-                  const isSelected = addressModalSelection === option.id;
-                  return (
-                    <Pressable
-                      key={option.id}
-                      onPress={() => setAddressModalSelection(option.id)}
-                      className="flex-1 items-center rounded-lg px-2 py-2"
-                      style={{
-                        backgroundColor: isSelected
-                          ? theme.primary
-                          : "transparent",
-                      }}
+          <View className="flex-row items-center justify-between px-6 pt-6 pb-5">
+            <Text
+              className="text-xl font-black tracking-tight flex-1"
+              style={{ color: theme.text }}
+            >
+              {orderMode === "Delivery" && addressModalSelection === "address"
+                ? "Choose Delivery Address"
+                : "Choose Branch"}
+            </Text>
+            <Pressable
+              onPress={handleCancelAddressModal}
+              className="p-2 ml-3"
+              accessibilityRole="button"
+              accessibilityLabel="Close address selector"
+            >
+              <X size={24} color={theme.text} />
+            </Pressable>
+          </View>
+          {orderMode === "Delivery" && (
+            <View
+              className="mx-6 mb-4 flex-row rounded-xl border p-1"
+              style={{
+                borderColor: theme.border,
+                backgroundColor: theme.card,
+              }}
+            >
+              {(
+                [
+                  { id: "address", label: "Delivery Address" },
+                  { id: "branch", label: "Restaurant Branch" },
+                ] as const
+              ).map((option) => {
+                const isSelected = addressModalSelection === option.id;
+                return (
+                  <Pressable
+                    key={option.id}
+                    onPress={() => setAddressModalSelection(option.id)}
+                    className="flex-1 items-center rounded-lg px-2 py-2"
+                    style={{
+                      backgroundColor: isSelected
+                        ? theme.primary
+                        : "transparent",
+                    }}
+                  >
+                    <Text
+                      numberOfLines={1}
+                      className="text-xs font-bold"
+                      style={{ color: isSelected ? "#fff" : theme.muted }}
                     >
-                      <Text
-                        numberOfLines={1}
-                        className="text-xs font-bold"
-                        style={{ color: isSelected ? "#fff" : theme.muted }}
-                      >
-                        {option.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            )}
-            <FlatList
-              data={
-                orderMode === "Delivery" && addressModalSelection === "address"
-                  ? addresses
-                  : branches
-              }
-              keyExtractor={(item: any) => item.id.toString()}
-              renderItem={renderAddressModalItem}
-              showsVerticalScrollIndicator={false}
-            />
-          </Pressable>
-        </Pressable>
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
+          <FlatList
+            data={
+              orderMode === "Delivery" && addressModalSelection === "address"
+                ? addresses
+                : branches
+            }
+            keyExtractor={(item: any) => item.id.toString()}
+            renderItem={renderAddressModalItem}
+            style={{ flex: 1, minHeight: 0 }}
+            contentContainerStyle={{
+              paddingHorizontal: 24,
+              paddingBottom: insets.bottom + 16,
+              flexGrow: 1,
+            }}
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled
+            showsVerticalScrollIndicator={false}
+          />
+        </View>
       </Modal>
 
       <Modal

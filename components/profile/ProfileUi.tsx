@@ -48,6 +48,9 @@ export function ProfileTextField({
   placeholder,
   multiline = false,
   keyboardType,
+  required = false,
+  error,
+  size = "default",
 }: {
   label: string;
   value: string;
@@ -56,11 +59,18 @@ export function ProfileTextField({
   placeholder?: string;
   multiline?: boolean;
   keyboardType?: "default" | "number-pad";
+  required?: boolean;
+  error?: string;
+  size?: "default" | "large";
 }) {
   return (
     <View className="mb-5">
-      <Text className="mb-2 ml-1 text-sm font-bold" style={{ color: theme.muted }}>
+      <Text
+        className="mb-2 ml-1 text-sm font-bold"
+        style={{ color: error ? theme.danger : theme.muted }}
+      >
         {label}
+        {required ? " *" : ""}
       </Text>
       <TextInput
         value={value}
@@ -72,16 +82,21 @@ export function ProfileTextField({
         autoCapitalize={keyboardType === "number-pad" ? "none" : "words"}
         style={{
           backgroundColor: theme.card,
-          borderColor: theme.border,
+          borderColor: error ? theme.danger : theme.border,
           color: theme.text,
           textAlignVertical: multiline ? "top" : "center",
-          minHeight: multiline ? 88 : undefined,
+          minHeight: size === "large" ? 60 : multiline ? 88 : undefined,
           paddingVertical: 12,
-          fontSize: 16,
+          fontSize: size === "large" ? 18 : 16,
           fontWeight: "600",
         }}
         className="rounded-2xl border px-4"
       />
+      {error ? (
+        <Text className="mt-1 ml-1 text-xs" style={{ color: theme.danger }}>
+          {error}
+        </Text>
+      ) : null}
     </View>
   );
 }

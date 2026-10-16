@@ -1,8 +1,10 @@
 import {
   type Href,
+  useFocusEffect,
   useGlobalSearchParams,
   useRouter,
 } from "expo-router";
+import { Image } from "expo-image";
 import { StatusBar } from "expo-status-bar";
 import {
   Bell,
@@ -25,7 +27,7 @@ import {
   X,
 } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Alert,
   Modal,
@@ -34,7 +36,10 @@ import {
   Text,
   View,
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 
 import { useProfile } from "../../../../components/profile/ProfileContext";
 import { formatProfilePhone } from "../../../../components/profile/ProfileUi";
@@ -66,6 +71,7 @@ export default function ProfileScreen() {
   const { colorScheme, setColorScheme } = useColorScheme();
   const { user, error, reloadProfile, clearUser } = useProfile();
   const [showThemeModal, setShowThemeModal] = useState(false);
+  const [failedAvatarUrl, setFailedAvatarUrl] = useState("");
   const { mode, carts, dineInCartState } = useOrderMode();
   const cartItems = (carts?.[mode] || []).reduce(
     (total: number, item: { quantity: number }) => total + item.quantity,
@@ -85,18 +91,22 @@ export default function ProfileScreen() {
     [
       {
         title: "Personal Info",
-        route: "/(home)/profile/personal-info",
+        route: "/(home)/(tabs)/profile/personal-info",
         icon: UserRoundPen,
       },
       {
         title: "Manage Addresses",
-        route: "/(home)/profile/addresses",
+        route: "/(home)/(tabs)/profile/addresses",
         icon: MapPin,
       },
-      { title: "Security", route: "/(home)/profile/security", icon: ShieldCheck },
+      {
+        title: "Security",
+        route: "/(home)/(tabs)/profile/security",
+        icon: ShieldCheck,
+      },
       {
         title: "Notifications",
-        route: "/(home)/profile/notifications",
+        route: "/(home)/(tabs)/profile/notifications",
         icon: Bell,
       },
     ],
@@ -130,8 +140,10 @@ export default function ProfileScreen() {
       },
     ],
   ];
-  const visibleSettingsGroups =
-    isGuest === "true" ? settingsGroups.slice(1) : settingsGroups;
+  const isGuestUser = isGuest === "true" && !user;
+  const visibleSettingsGroups = isGuestUser
+    ? settingsGroups.slice(1)
+    : settingsGroups;
 
   const handleSignIn = async () => {
     try {
@@ -186,9 +198,7 @@ export default function ProfileScreen() {
       : "";
 
   useEffect(() => {
-    if (
-      !/invalid access token|authentication session has ended/i.test(error)
-    ) {
+    if (!/invalid access token|authentication session has ended/i.test(error)) {
       return;
     }
 
@@ -219,6 +229,13 @@ export default function ProfileScreen() {
     };
   }, [clearUser, error, router]);
 
+  useFocusEffect(
+    useCallback(() => {
+      setFailedAvatarUrl("");
+      void reloadProfile();
+    }, [reloadProfile]),
+  );
+
   return (
     <SafeAreaView className="flex-1" style={{ backgroundColor: theme.bg }}>
       <StatusBar style={theme.isDark ? "light" : "dark"} />
@@ -231,22 +248,32 @@ export default function ProfileScreen() {
       >
         <View className="items-center px-6 pt-8 pb-10">
           <View
-            className="w-24 h-24 rounded-full items-center justify-center mb-5 border-2"
+            className="w-24 h-24 rounded-full items-center justify-center mb-5 border-2 overflow-hidden"
             style={{ backgroundColor: theme.card, borderColor: theme.primary }}
           >
-            <UserRound size={40} color={theme.primary} strokeWidth={1.5} />
+            {user?.avatarUrl && failedAvatarUrl !== user.avatarUrl ? (
+              <Image
+                source={{ uri: user.avatarUrl }}
+                style={{ width: "100%", height: "100%" }}
+                contentFit="cover"
+                cachePolicy="none"
+                onError={() => setFailedAvatarUrl(user.avatarUrl)}
+              />
+            ) : (
+              <UserRound size={40} color={theme.primary} strokeWidth={1.5} />
+            )}
           </View>
           <Text
             className="text-2xl font-black mb-1"
             style={{ color: theme.text }}
           >
-            {user || isGuest === "true" ? displayName : " "}
+            {user || isGuestUser ? displayName : " "}
           </Text>
           <Text
             className="text-sm font-semibold tracking-wide"
             style={{ color: theme.muted }}
           >
-            {user || isGuest === "true" ? displayPhone : " "}
+            {user || isGuestUser ? displayPhone : " "}
           </Text>
         </View>
 
@@ -296,7 +323,7 @@ export default function ProfileScreen() {
           </View>
         ))}
 
-        {isGuest === "true" ? (
+        {isGuestUser ? (
           <Pressable
             onPress={() => void handleSignIn()}
             className="mx-5 mt-2 flex-row items-center justify-center gap-3 rounded-2xl border p-4"

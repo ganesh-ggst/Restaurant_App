@@ -451,6 +451,24 @@ export default function SearchScreen() {
             );
           })}
         </View>
+        {searchQuery.trim() && filteredItems.length === 0 ? (
+          <View className="items-center justify-center px-6 py-16">
+            <Search size={32} color={theme.muted} strokeWidth={2} />
+            <Text
+              className="mt-4 text-lg font-black text-center"
+              style={{ color: theme.text }}
+            >
+              No dishes found
+            </Text>
+            <Text
+              className="mt-2 text-sm font-semibold text-center leading-5"
+              style={{ color: theme.muted }}
+            >
+              We couldn&apos;t find any dishes matching &quot;
+              {searchQuery.trim()}&quot;. Try another search.
+            </Text>
+          </View>
+        ) : null}
       </ScrollView>
     </View>
   );

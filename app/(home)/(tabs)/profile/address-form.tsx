@@ -45,6 +45,10 @@ export default function AddressFormScreen() {
   const [loading, setLoading] = useState(Boolean(id));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  type RequiredAddressField = "label" | "line1" | "city" | "state" | "pincode";
+  const [fieldErrors, setFieldErrors] = useState<
+    Partial<Record<RequiredAddressField, string>>
+  >({});
 
   useEffect(() => {
     if (!id) return;
@@ -90,6 +94,23 @@ export default function AddressFormScreen() {
     value: AddressInput[K],
   ) => {
     setForm((current) => ({ ...current, [key]: value }));
+    setError("");
+    setFieldErrors((current) => {
+      switch (key) {
+        case "label":
+          return { ...current, label: undefined };
+        case "line1":
+          return { ...current, line1: undefined };
+        case "city":
+          return { ...current, city: undefined };
+        case "state":
+          return { ...current, state: undefined };
+        case "pincode":
+          return { ...current, pincode: undefined };
+        default:
+          return current;
+      }
+    });
   };
 
   const saveAddress = async () => {
@@ -105,14 +126,20 @@ export default function AddressFormScreen() {
       lng: form.lng,
       isDefault: form.isDefault,
     };
-    if (
-      !payload.label ||
-      !payload.line1 ||
-      !payload.city ||
-      !payload.state ||
-      !payload.pincode
-    ) {
-      setError("Please fill in the label, address, city, state, and pincode.");
+    const nextFieldErrors = {
+      ...(!payload.label ? { label: "Label is required." } : {}),
+      ...(!payload.line1 ? { line1: "Address line 1 is required." } : {}),
+      ...(!payload.city ? { city: "City is required." } : {}),
+      ...(!payload.state ? { state: "State is required." } : {}),
+      ...(!payload.pincode
+        ? { pincode: "Pincode is required." }
+        : !/^\d{6}$/.test(payload.pincode)
+          ? { pincode: "Pincode must be exactly 6 digits." }
+          : {}),
+    };
+    setFieldErrors(nextFieldErrors);
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setError("Please complete the highlighted required fields.");
       return;
     }
 
@@ -149,12 +176,15 @@ export default function AddressFormScreen() {
         </View>
       ) : (
         <KeyboardAwareScrollView
+          style={{ flex: 1 }}
           contentContainerStyle={{
             padding: 20,
-            paddingBottom: insets.bottom + 120,
+            paddingBottom: insets.bottom + 180,
           }}
           enableOnAndroid
-          extraScrollHeight={24}
+          enableAutomaticScroll
+          enableResetScrollToCoords={false}
+          extraScrollHeight={80}
           keyboardShouldPersistTaps="handled"
         >
           <ProfileError message={error} />
@@ -164,6 +194,8 @@ export default function AddressFormScreen() {
             onChangeText={(value) => setField("label", value)}
             theme={theme}
             placeholder="Home, Office"
+            required
+            error={fieldErrors.label}
           />
           <ProfileTextField
             label="Address Line 1"
@@ -171,6 +203,8 @@ export default function AddressFormScreen() {
             onChangeText={(value) => setField("line1", value)}
             theme={theme}
             placeholder="Street address"
+            required
+            error={fieldErrors.line1}
           />
           <ProfileTextField
             label="Address Line 2 (optional)"
@@ -185,6 +219,8 @@ export default function AddressFormScreen() {
             onChangeText={(value) => setField("city", value)}
             theme={theme}
             placeholder="City"
+            required
+            error={fieldErrors.city}
           />
           <ProfileTextField
             label="State"
@@ -192,6 +228,8 @@ export default function AddressFormScreen() {
             onChangeText={(value) => setField("state", value)}
             theme={theme}
             placeholder="State"
+            required
+            error={fieldErrors.state}
           />
           <ProfileTextField
             label="Pincode"
@@ -200,6 +238,13 @@ export default function AddressFormScreen() {
             theme={theme}
             placeholder="Pincode"
             keyboardType="number-pad"
+            required
+            error={
+              fieldErrors.pincode ||
+              (form.pincode && !/^\d{6}$/.test(form.pincode)
+                ? "Pincode must be exactly 6 digits."
+                : undefined)
+            }
           />
           <ProfileTextField
             label="Landmark (optional)"

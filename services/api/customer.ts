@@ -6,6 +6,27 @@ interface ApiEnvelope<T> {
   success: boolean;
   message: string;
   data?: T;
+  errors?: unknown;
+}
+
+function formatApiError(message: string, errors: unknown): string {
+  if (!errors) return message;
+  if (typeof errors === "string") return `${message}: ${errors}`;
+  if (!Array.isArray(errors)) return message;
+
+  const details = errors
+    .map((error) => {
+      if (typeof error === "string") return error;
+      if (error && typeof error === "object") {
+        const entry = error as Record<string, unknown>;
+        return [entry.field, entry.message].filter(Boolean).join(": ");
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+
+  return details ? `${message}\n${details}` : message;
 }
 
 export interface CustomerMenuItem {
@@ -105,12 +126,15 @@ export interface CustomerBranch {
     password: string;
     isActive: boolean;
   }[];
-  managerIds?: (string | {
-    _id: string;
-    firstName?: string;
-    lastName?: string;
-    managerType?: string;
-  })[];
+  managerIds?: (
+    | string
+    | {
+        _id: string;
+        firstName?: string;
+        lastName?: string;
+        managerType?: string;
+      }
+  )[];
   deliveryOptions?: {
     _id?: string;
     name: string;
@@ -180,6 +204,7 @@ export interface CustomerCart {
   _id?: string;
   fulfillmentType?: "delivery" | "takeaway" | "dine-in";
   branchId?: string;
+  deliveryOptionId?: string | null;
   items: CustomerCartItem[];
   pricing?: {
     subtotal?: number;
@@ -255,12 +280,26 @@ export interface CreateCustomerOrderInput {
   branchId: string;
   fulfillmentType: "delivery" | "takeaway" | "dine-in";
   addressId?: string;
+  subtotal?: number;
+  discount?: number;
+  packagingFee?: number;
+  platformFee?: number;
+  deliveryFee?: number;
+  taxableAmount?: number;
+  tax?: number;
+  taxPercentage?: number;
+  total?: number;
+  tipAmount: number;
+  specialInstructions: string;
   paymentMethod: "online";
   status: "pending" | "rejected";
-  paymentStatus: "paid" | "rejected";
+  paymentStatus: "pending" | "paid" | "rejected";
 }
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL?.trim().replace(/\/+$/, "");
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL?.trim().replace(
+  /\/+$/,
+  "",
+);
 const REQUEST_TIMEOUT_MS = 15_000;
 
 async function request<T>(
@@ -293,21 +332,33 @@ async function request<T>(
     });
 
     if (!response.data?.success) {
-      throw new Error(response.data?.message || "The API request failed.");
+      throw new Error(
+        formatApiError(
+          response.data?.message || "The API request failed.",
+          response.data?.errors,
+        ),
+      );
     }
     return response.data.data;
   } catch (error) {
     if (isAxiosError<ApiEnvelope<unknown>>(error)) {
-      const message = error.response?.data?.message;
-      if (message) throw new Error(message);
+      const responseData = error.response?.data;
+      const message = responseData?.message;
+      if (message) throw new Error(formatApiError(message, responseData.errors));
       if (error.response?.status === 401) {
-        throw new Error("Your login session has expired. Please sign in again.");
+        throw new Error(
+          "Your login session has expired. Please sign in again.",
+        );
       }
       if (error.response) {
-        throw new Error(`The server returned an error (${error.response.status}).`);
+        throw new Error(
+          `The server returned an error (${error.response.status}).`,
+        );
       }
       if (error.code === "ECONNABORTED") {
-        throw new Error("The server took too long to respond. Please try again.");
+        throw new Error(
+          "The server took too long to respond. Please try again.",
+        );
       }
       throw new Error(
         "Unable to reach the server. Check EXPO_PUBLIC_API_URL and try again.",
@@ -437,13 +488,35 @@ export const customerApi = {
   },
 
   async removeFavorite(menuItemId: string): Promise<void> {
-    await request("DELETE", `/favorites/${encode(menuItemId)}`, undefined, true);
+    await request(
+      "DELETE",
+      `/favorites/${encode(menuItemId)}`,
+      undefined,
+      true,
+    );
   },
 
-  async getCart(): Promise<CustomerCart> {
+  async getCart(branchId: string): Promise<CustomerCart> {
     return requireData(
-      await request<CustomerCart>("GET", "/cart", undefined, true),
+      await request<CustomerCart>(
+        "GET",
+        `/cart?branchId=${encode(branchId)}`,
+        undefined,
+        true,
+      ),
       "The server did not return your cart.",
+    );
+  },
+
+  async updateCartDeliveryOption(
+    deliveryOptionId: string,
+    branchId: string,
+  ): Promise<void> {
+    await request(
+      "PATCH",
+      "/cart/delivery-option",
+      { deliveryOptionId, branchId },
+      true,
     );
   },
 
@@ -451,37 +524,54 @@ export const customerApi = {
     await request("POST", "/cart/items", item, true);
   },
 
+  async addCrossSellCartItem(
+    item: Pick<CustomerCartItemInput, "menuItemId" | "quantity">,
+  ): Promise<void> {
+    await request("POST", "/cart/items", item, true);
+  },
+
   async updateCartItem(
     itemId: string,
     quantity: number,
+    branchId: string,
   ): Promise<void> {
     await request(
       "PATCH",
-      `/cart/items/${encode(itemId)}`,
+      `/cart/items/${encode(itemId)}?branchId=${encode(branchId)}`,
       { quantity },
       true,
     );
   },
 
-  async removeCartItem(itemId: string): Promise<void> {
+  async removeCartItem(itemId: string, branchId: string): Promise<void> {
     await request(
       "DELETE",
-      `/cart/items/${encode(itemId)}`,
+      `/cart/items/${encode(itemId)}?branchId=${encode(branchId)}`,
       undefined,
       true,
     );
   },
 
-  async applyCartCoupon(code: string): Promise<void> {
-    await request("POST", "/cart/coupon", { code }, true);
+  async applyCartCoupon(code: string, branchId: string): Promise<void> {
+    await request("POST", "/cart/coupon", { code, branchId }, true);
   },
 
-  async removeCartCoupon(): Promise<void> {
-    await request("DELETE", "/cart/coupon", undefined, true);
+  async removeCartCoupon(branchId: string): Promise<void> {
+    await request(
+      "DELETE",
+      `/cart/coupon?branchId=${encode(branchId)}`,
+      undefined,
+      true,
+    );
   },
 
-  async clearCart(): Promise<void> {
-    await request("DELETE", "/cart", undefined, true);
+  async clearCart(branchId: string): Promise<void> {
+    await request(
+      "DELETE",
+      `/cart?branchId=${encode(branchId)}`,
+      undefined,
+      true,
+    );
   },
 
   async previewCheckout(input: CheckoutPreviewInput): Promise<unknown> {
@@ -500,7 +590,12 @@ export const customerApi = {
 
   async getOrder(id: string): Promise<CustomerOrder> {
     return requireData(
-      await request<CustomerOrder>("GET", `/orders/${encode(id)}`, undefined, true),
+      await request<CustomerOrder>(
+        "GET",
+        `/orders/${encode(id)}`,
+        undefined,
+        true,
+      ),
       "The server did not return this order.",
     );
   },
@@ -523,9 +618,7 @@ export const customerApi = {
     );
   },
 
-  async createOrder(
-    input: CreateCustomerOrderInput,
-  ): Promise<CustomerOrder> {
+  async createOrder(input: CreateCustomerOrderInput): Promise<CustomerOrder> {
     return requireData(
       await request<CustomerOrder>("POST", "/orders", input, true),
       "The server did not return the created order.",
