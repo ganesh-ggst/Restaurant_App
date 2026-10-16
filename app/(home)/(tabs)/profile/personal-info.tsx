@@ -1,9 +1,13 @@
+import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect, useRouter } from "expo-router";
+import { Camera, UserRound } from "lucide-react-native";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useState } from "react";
+import { Image } from "expo-image";
 import {
   ActivityIndicator,
   Alert,
+  Pressable,
   Text,
   View,
 } from "react-native";
@@ -31,13 +35,16 @@ export default function PersonalInfoScreen() {
   const [lastName, setLastName] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [failedAvatarUrl, setFailedAvatarUrl] = useState("");
   const [error, setError] = useState("");
 
   const loadProfile = useCallback(async () => {
     setLoading(true);
     setError("");
+    setFailedAvatarUrl("");
     try {
-      const result = await api.getMyProfile();
+      const result = await api.getMyProfile(true);
       setProfile(result);
       setFirstName(result.firstName);
       setLastName(result.lastName);
@@ -88,6 +95,48 @@ export default function PersonalInfoScreen() {
     }
   };
 
+  const chooseAvatar = async () => {
+    if (uploadingAvatar || !profile) return;
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert(
+          "Photo Access Required",
+          "Allow photo library access to choose a profile picture.",
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.85,
+      });
+      const asset = result.assets?.[0];
+      if (result.canceled || !asset) return;
+
+      setUploadingAvatar(true);
+      const avatarUrl = await api.uploadMyAvatar(
+        asset.uri,
+        asset.fileName || "profile-avatar.jpg",
+        asset.mimeType || "image/jpeg",
+      );
+      const updatedProfile = { ...profile, avatarUrl };
+      setProfile(updatedProfile);
+      updateUser(updatedProfile);
+    } catch (uploadError) {
+      Alert.alert(
+        "Unable to Update Profile Picture",
+        uploadError instanceof Error
+          ? uploadError.message
+          : "Please try again.",
+      );
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
   return (
     <SafeAreaView className="flex-1" style={{ backgroundColor: theme.bg }}>
       <StatusBar style={theme.isDark ? "light" : "dark"} />
@@ -98,18 +147,81 @@ export default function PersonalInfoScreen() {
         </View>
       ) : (
         <KeyboardAwareScrollView
-          contentContainerStyle={{ padding: 20, paddingBottom: 120 }}
+          style={{ flex: 1 }}
+          contentContainerStyle={{
+            paddingHorizontal: 20,
+            paddingTop: 12,
+            paddingBottom: 72,
+          }}
           enableOnAndroid
-          extraScrollHeight={24}
+          enableAutomaticScroll
+          enableResetScrollToCoords={false}
+          extraScrollHeight={32}
           keyboardShouldPersistTaps="handled"
         >
           <ProfileError message={error} />
+          <Pressable
+            onPress={() => void chooseAvatar()}
+            disabled={uploadingAvatar}
+            accessibilityRole="button"
+            accessibilityLabel="Change profile picture"
+            className="mb-6 mt-3 self-center"
+          >
+            <View
+              className="h-[120px] w-[120px] items-center justify-center overflow-hidden rounded-full border-[3px]"
+              style={{
+                backgroundColor: theme.bg,
+                borderColor: theme.primary,
+              }}
+            >
+              {profile?.avatarUrl && failedAvatarUrl !== profile.avatarUrl ? (
+                <Image
+                  source={{ uri: profile.avatarUrl }}
+                  style={{ width: "100%", height: "100%" }}
+                  contentFit="cover"
+                  cachePolicy="none"
+                  onError={() => setFailedAvatarUrl(profile.avatarUrl)}
+                />
+              ) : (
+                <UserRound size={52} color={theme.primary} strokeWidth={1.7} />
+              )}
+            </View>
+            <View
+              className="absolute bottom-0 right-0 h-11 w-11 items-center justify-center rounded-full border-[3px]"
+              style={{
+                backgroundColor: theme.primary,
+                borderColor: theme.bg,
+              }}
+            >
+              {uploadingAvatar ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Camera size={20} color="#fff" strokeWidth={2} />
+              )}
+            </View>
+          </Pressable>
+          {!profile?.avatarUrl ? (
+            <Text
+              className="mb-4 -mt-4 text-center text-xs"
+              style={{ color: theme.muted }}
+            >
+              No profile picture found. Tap to add one.
+            </Text>
+          ) : failedAvatarUrl === profile.avatarUrl ? (
+            <Text
+              className="mb-4 -mt-4 text-center text-xs"
+              style={{ color: theme.muted }}
+            >
+              Profile picture could not be loaded. Tap to choose another.
+            </Text>
+          ) : null}
           <ProfileTextField
             label="First Name"
             value={firstName}
             onChangeText={setFirstName}
             theme={theme}
             placeholder="Enter first name"
+            size="large"
           />
           <ProfileTextField
             label="Last Name"
@@ -117,6 +229,7 @@ export default function PersonalInfoScreen() {
             onChangeText={setLastName}
             theme={theme}
             placeholder="Enter last name"
+            size="large"
           />
           <View className="mb-7">
             <Text
@@ -126,13 +239,15 @@ export default function PersonalInfoScreen() {
               Mobile Number (cannot be changed)
             </Text>
             <View
-              className="justify-center rounded-2xl border px-4 py-3.5"
+              className="min-h-[60px] justify-center rounded-2xl border px-4 py-3"
               style={{
                 backgroundColor: theme.secondaryBg,
                 borderColor: theme.border,
               }}
             >
-              <Text style={{ color: theme.text, fontSize: 16, fontWeight: "600" }}>
+              <Text
+                style={{ color: theme.text, fontSize: 18, fontWeight: "600" }}
+              >
                 {profile?.phone ? formatProfilePhone(profile.phone) : ""}
               </Text>
             </View>
@@ -142,6 +257,7 @@ export default function PersonalInfoScreen() {
             onPress={() => void saveChanges()}
             loading={saving}
             disabled={!firstName.trim() || !lastName.trim()}
+            className="rounded-2xl"
           />
         </KeyboardAwareScrollView>
       )}

@@ -23,6 +23,21 @@ export interface UserProfile {
   isActive: boolean;
 }
 
+type UserProfileResponse = Omit<
+  UserProfile,
+  "id" | "firstName" | "lastName" | "phone" | "avatarUrl"
+> & {
+  id?: unknown;
+  _id?: unknown;
+  firstName?: unknown;
+  lastName?: unknown;
+  phone?: unknown;
+  avatarUrl?: unknown;
+  avatar?: unknown;
+  profilePicture?: unknown;
+  profileImage?: unknown;
+};
+
 export interface CustomerAddress {
   _id: string;
   userId: string;
@@ -154,8 +169,60 @@ function requireData<T>(
   return data;
 }
 
+function getAvatarUrl(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (!value || typeof value !== "object") return "";
+
+  const avatar = value as Record<string, unknown>;
+  for (const key of ["url", "secure_url", "path", "src", "avatarUrl"]) {
+    const url = getAvatarUrl(avatar[key]);
+    if (url) return url;
+  }
+  return "";
+}
+
+function normalizeAvatarUrl(value: unknown): string {
+  const avatarUrl = getAvatarUrl(value);
+  if (!avatarUrl || /^(https?:|data:|blob:)/i.test(avatarUrl)) {
+    return avatarUrl;
+  }
+  if (!API_BASE_URL) return avatarUrl;
+
+  try {
+    return new URL(avatarUrl, `${API_BASE_URL}/`).toString();
+  } catch {
+    return avatarUrl;
+  }
+}
+
+function normalizeUserProfile(profile: UserProfileResponse): UserProfile {
+  const id = profile.id || profile._id;
+  if (
+    typeof id !== "string" ||
+    typeof profile.firstName !== "string" ||
+    typeof profile.lastName !== "string" ||
+    typeof profile.phone !== "string"
+  ) {
+    throw new Error("The server returned an invalid profile.");
+  }
+
+  return {
+    ...profile,
+    id,
+    firstName: profile.firstName,
+    lastName: profile.lastName,
+    phone: profile.phone,
+    avatarUrl: normalizeAvatarUrl(
+      profile.avatarUrl ||
+        profile.avatar ||
+        profile.profilePicture ||
+        profile.profileImage,
+    ),
+  };
+}
+
 export const profileApi = {
-  async getMyProfile(): Promise<UserProfile> {
+  async getMyProfile(forceRefresh = false): Promise<UserProfile> {
     const token = await authApi.getAccessToken();
     if (!token) {
       throw new Error("Your login session is missing. Please sign in again.");
@@ -165,21 +232,37 @@ export const profileApi = {
       userProfileRequest = null;
       cachedUserProfileToken = token;
     }
+    if (forceRefresh) {
+      cachedUserProfile = null;
+      userProfileRequest = null;
+    }
     if (cachedUserProfile) return cachedUserProfile;
     if (userProfileRequest) return userProfileRequest;
 
-    userProfileRequest = request<UserProfile>("GET", "/users/me")
-      .then((profile) =>
-        requireData(profile, "The server did not return your profile."),
-      )
+    const profileRequest = request<UserProfileResponse>("GET", "/users/me")
       .then((profile) => {
-        if (cachedUserProfileToken === token) cachedUserProfile = profile;
+        const response = requireData(
+          profile,
+          "The server did not return your profile.",
+        );
+        return normalizeUserProfile(response);
+      })
+      .then((profile) => {
+        if (
+          cachedUserProfileToken === token &&
+          userProfileRequest === profileRequest
+        ) {
+          cachedUserProfile = profile;
+        }
         return profile;
       })
       .finally(() => {
-        userProfileRequest = null;
+        if (userProfileRequest === profileRequest) {
+          userProfileRequest = null;
+        }
       });
-    return userProfileRequest;
+    userProfileRequest = profileRequest;
+    return profileRequest;
   },
 
   async updateMyProfile(
@@ -189,6 +272,81 @@ export const profileApi = {
     await request("PATCH", "/users/me", { firstName, lastName });
     cachedUserProfile = null;
     return profileApi.getMyProfile();
+  },
+
+  async uploadMyAvatar(
+    uri: string,
+    fileName: string,
+    mimeType: string,
+  ): Promise<string> {
+    if (!API_BASE_URL) {
+      throw new Error(
+        "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+      );
+    }
+
+    const accessToken = await authApi.getAccessToken();
+    if (!accessToken) {
+      throw new Error("Your login session is missing. Please sign in again.");
+    }
+
+    const formData = new FormData();
+    formData.append(
+      "avatar",
+      { uri, name: fileName, type: mimeType } as unknown as Blob,
+    );
+
+    try {
+      const response = await axios.patch<
+        ApiEnvelope<{
+          avatarUrl?: unknown;
+          avatar?: unknown;
+          user?: UserProfileResponse;
+        }>
+      >(`${API_BASE_URL}/api/users/me/avatar`, formData, {
+        timeout: 60_000,
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!response.data?.success) {
+        throw new Error(response.data?.message || "Avatar upload failed.");
+      }
+
+      const data = response.data.data;
+      const avatarUrl =
+        normalizeAvatarUrl(
+          data?.avatarUrl ||
+            data?.avatar ||
+            data?.user?.avatarUrl ||
+            data?.user?.avatar,
+        );
+      if (!avatarUrl) {
+        throw new Error("The server did not return the uploaded avatar URL.");
+      }
+      if (cachedUserProfile) {
+        cachedUserProfile = { ...cachedUserProfile, avatarUrl };
+      }
+      return avatarUrl;
+    } catch (error) {
+      if (isAxiosError<ApiEnvelope<unknown>>(error)) {
+        const message = error.response?.data?.message;
+        if (message) throw new Error(message);
+        if (error.response?.status === 401) {
+          throw new Error("Your login session has expired. Please sign in again.");
+        }
+        if (error.response) {
+          throw new Error(`The server returned an error (${error.response.status}).`);
+        }
+        if (error.code === "ECONNABORTED") {
+          throw new Error("The avatar upload timed out. Please try again.");
+        }
+        throw new Error(
+          "Unable to reach the server. Check EXPO_PUBLIC_API_URL and try again.",
+        );
+      }
+      throw error instanceof Error
+        ? error
+        : new Error("Avatar upload failed. Please try again.");
+    }
   },
 
   async getAddresses(): Promise<CustomerAddress[]> {

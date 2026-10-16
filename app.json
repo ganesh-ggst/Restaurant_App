@@ -60,18 +60,19 @@
           "enforceContrast": false
         }
       ],
-      [
-        "expo-speech-recognition",
-        {
-          "microphonePermission": "Allow $(PRODUCT_NAME) to use the microphone for voice search.",
-          "speechRecognitionPermission": "Allow $(PRODUCT_NAME) to convert voice searches into text."
-        }
-      ],
       "expo-font",
       "expo-image",
       "expo-status-bar",
       "expo-web-browser",
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow $(PRODUCT_NAME) to use the microphone for voice search.",
+          "speechRecognitionPermission": "Allow $(PRODUCT_NAME) to recognize speech for menu search.",
+          "androidSpeechServicePackages": ["com.google.android.googlequicksearchbox"]
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

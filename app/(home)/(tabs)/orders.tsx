@@ -1,4 +1,4 @@
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import {
   CheckCircle2,
   ChevronDown,
@@ -16,6 +16,7 @@ import {
   Alert,
   Dimensions,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -92,9 +93,8 @@ function formatFulfillmentType(fulfillmentType: unknown) {
 }
 
 function mapCustomerOrder(order: CustomerOrder) {
-  const isPaymentRejected = ["rejected", "failed", "declined"].includes(
-    String(order.paymentStatus || "").trim().toLowerCase(),
-  );
+  const isPaymentRejected =
+    String(order.paymentStatus || "").trim().toLowerCase() === "rejected";
   const status = isPaymentRejected
     ? "rejected"
     : normalizeOrderStatus(order.status);
@@ -657,10 +657,11 @@ const BillDetailsAccordion = ({ order, theme }: any) => {
 
 export default function OrdersScreen() {
   const router = useRouter();
+  const { tab } = useLocalSearchParams<{ tab?: string }>();
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
 
-  const [activeTab, setActiveTab] = useState("Active");
+  const activeTab = tab === "past" ? "Past Orders" : "Active";
   const [branchFilter, setBranchFilter] = useState("all");
   const [fulfillmentFilter, setFulfillmentFilter] = useState("all");
   const [orderSearch, setOrderSearch] = useState("");
@@ -785,21 +786,43 @@ export default function OrdersScreen() {
   const handleReorder = async (e: any, order: any) => {
     e.stopPropagation();
     try {
+      const sourceOrder = await api.getOrder(order.orderId);
+      const orderBranch =
+        sourceOrder.branchId || (sourceOrder as any).branch;
+      const branchId =
+        typeof orderBranch === "string"
+          ? orderBranch
+          : orderBranch?._id || orderBranch?.id;
+      if (!branchId) {
+        throw new Error(
+          "This order does not include its restaurant branch, so it cannot be reordered.",
+        );
+      }
+
+      const matchingBranch = branches.find(
+        (branch: any) =>
+          String(branch.id || branch._id).toLowerCase() ===
+          branchId.toLowerCase(),
+      );
+      if (!matchingBranch) {
+        throw new Error(
+          "This restaurant branch is unavailable. Refresh the app and try again.",
+        );
+      }
+
+      await setActiveBranch(matchingBranch);
+      const fulfillmentType = sourceOrder.fulfillmentType
+        .trim()
+        .toLowerCase()
+        .replace(/[_\s]+/g, "-");
+      if (fulfillmentType === "delivery") setMode("Delivery");
+      else if (fulfillmentType === "takeaway") setMode("Takeaway");
+      else if (fulfillmentType === "dine-in") setMode("Dine-in");
+
       if (
         order.isPaymentRejected ||
         normalizeOrderStatus(order.status) === "rejected"
       ) {
-        const sourceOrder = await api.getOrder(order.orderId);
-        const branchId =
-          typeof sourceOrder.branchId === "string"
-            ? sourceOrder.branchId
-            : sourceOrder.branchId?._id;
-        if (!branchId) {
-          throw new Error(
-            "This order does not include its restaurant branch, so it cannot be reordered.",
-          );
-        }
-
         const cartItems = sourceOrder.items.map((item) => {
           const menuItemId = item.menuItemId;
           if (!menuItemId || !Number.isFinite(item.quantity) || item.quantity < 1) {
@@ -839,33 +862,13 @@ export default function OrdersScreen() {
           };
         });
 
-        const matchingBranch = branches.find(
-          (branch: any) =>
-            String(branch.id || branch._id).toLowerCase() ===
-            branchId.toLowerCase(),
-        );
-        if (!matchingBranch) {
-          throw new Error(
-            "This restaurant branch is unavailable. Refresh the app and try again.",
-          );
-        }
-        await setActiveBranch(matchingBranch);
-        const fulfillmentType = sourceOrder.fulfillmentType
-          .trim()
-          .toLowerCase()
-          .replace(/[_\s]+/g, "-");
-        if (fulfillmentType === "delivery") setMode("Delivery");
-        else if (fulfillmentType === "takeaway") setMode("Takeaway");
-        else if (fulfillmentType === "dine-in") setMode("Dine-in");
-
         for (const item of cartItems) {
           await api.addCartItem(item);
         }
-        await reloadCart(branchId);
       } else {
         await api.reorder(order.orderId);
-        await reloadCart();
       }
+      await reloadCart(branchId);
       Alert.alert(
         "Order Added to Cart",
         "Items from your previous order are ready in your cart.",
@@ -955,7 +958,9 @@ export default function OrdersScreen() {
           {["Active", "Past Orders"].map((tab) => (
             <Pressable
               key={tab}
-              onPress={() => setActiveTab(tab)}
+              onPress={() =>
+                router.setParams({ tab: tab === "Past Orders" ? "past" : "active" })
+              }
               className="flex-1 items-center py-3 rounded-xl"
               style={{
                 backgroundColor:
@@ -1299,27 +1304,37 @@ export default function OrdersScreen() {
 
       <Modal
         visible={!!trackingOrder}
-        transparent={true}
-        animationType="fade"
+        transparent={Platform.OS !== "android"}
+        animationType={Platform.OS === "android" ? "slide" : "fade"}
         statusBarTranslucent
         navigationBarTranslucent
         onRequestClose={() => setTrackingOrder(null)}
       >
-        <View className="flex-1">
-          <Pressable
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              backgroundColor: "rgba(0, 0, 0, 0.6)",
-            }}
-            onPress={() => setTrackingOrder(null)}
-          />
+        <View
+          className="flex-1"
+          style={{
+            backgroundColor:
+              Platform.OS === "android" ? theme.bg : "transparent",
+          }}
+        >
+          {Platform.OS !== "android" && (
+            <Pressable
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: "rgba(0, 0, 0, 0.6)",
+              }}
+              onPress={() => setTrackingOrder(null)}
+            />
+          )}
           <Animated.View
             entering={SlideInDown.duration(300)}
-            className="rounded-t-[32px] p-6"
+            className={
+              Platform.OS === "android" ? "p-6" : "rounded-t-[32px] p-6"
+            }
             style={{
               position: "absolute",
               top: 0,
@@ -1328,7 +1343,8 @@ export default function OrdersScreen() {
               bottom: 0,
               backgroundColor: theme.bg,
               paddingTop: insets.top + 24,
-              paddingBottom: 0,
+              paddingBottom:
+                Platform.OS === "android" ? insets.bottom + 12 : 0,
             }}
           >
             <View className="flex-row items-center justify-between mb-6">
@@ -1499,16 +1515,38 @@ export default function OrdersScreen() {
 
       <Modal
         visible={!!detailsOrder}
-        transparent={true}
-        animationType="fade"
+        transparent={Platform.OS !== "android"}
+        animationType={Platform.OS === "android" ? "slide" : "fade"}
+        statusBarTranslucent
+        navigationBarTranslucent
         onRequestClose={() => setDetailsOrder(null)}
       >
-        <View className="flex-1 justify-end bg-black/60">
-          <Pressable className="flex-1" onPress={() => setDetailsOrder(null)} />
+        <View
+          className={Platform.OS === "android" ? "flex-1" : "flex-1 justify-end"}
+          style={{
+            backgroundColor:
+              Platform.OS === "android" ? theme.bg : "rgba(0, 0, 0, 0.6)",
+            paddingTop: Platform.OS === "android" ? insets.top : 0,
+            paddingBottom: Platform.OS === "android" ? insets.bottom : 0,
+          }}
+        >
+          {Platform.OS !== "android" && (
+            <Pressable
+              className="flex-1"
+              onPress={() => setDetailsOrder(null)}
+            />
+          )}
           <Animated.View
             entering={SlideInDown.duration(300)}
-            className="rounded-t-[32px] p-6 pb-12"
-            style={{ backgroundColor: theme.bg, maxHeight: "90%" }}
+            className={
+              Platform.OS === "android"
+                ? "flex-1 p-6"
+                : "rounded-t-[32px] p-6 pb-12"
+            }
+            style={{
+              backgroundColor: theme.bg,
+              ...(Platform.OS === "android" ? {} : { maxHeight: "90%" }),
+            }}
           >
             <View className="flex-row items-center justify-between mb-6">
               <View>
@@ -1567,7 +1605,16 @@ export default function OrdersScreen() {
               </Pressable>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} className="mb-4">
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              className="mb-4"
+              style={Platform.OS === "android" ? { flex: 1 } : undefined}
+              contentContainerStyle={
+                Platform.OS === "android"
+                  ? { paddingBottom: insets.bottom + 12 }
+                  : undefined
+              }
+            >
               <Text
                 className="text-xs font-black uppercase tracking-wider mb-3 ml-1"
                 style={{ color: theme.muted }}

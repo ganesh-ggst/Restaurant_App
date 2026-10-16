@@ -1,3 +1,4 @@
+import { LinearGradient } from "expo-linear-gradient";
 import {
   CheckCircle2,
   Drumstick,
@@ -19,7 +20,6 @@ import {
   Text,
   View,
 } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
 import Animated, {
   Extrapolation,
   interpolate,
@@ -103,24 +103,16 @@ export default function FoodCard({
 
   const [customQty, setCustomQty] = useState(1);
   const [selectedAddons, setSelectedAddons] = useState<string[]>([]);
-  const isItemAvailable = item.isAvailable === true;
-
-  const getGroupSelectionMode = (group: any) => {
-    const selectionType = String(group?.selectionType ?? "single")
-      .trim()
-      .toLowerCase();
-
-    if (
-      selectionType === "multiple" ||
-      selectionType === "multi" ||
-      selectionType === "multiselect" ||
-      selectionType === "checkbox"
-    ) {
-      return "multiple";
-    }
-
-    return "single";
-  };
+  const availableQuantity = Number(item.availableQuantity);
+  const hasInventoryCount =
+    item.availableQuantity !== null &&
+    item.availableQuantity !== undefined &&
+    Number.isFinite(availableQuantity);
+  const maxAddableQuantity = hasInventoryCount
+    ? Math.max(0, Math.floor(availableQuantity) - cartQuantity)
+    : Number.POSITIVE_INFINITY;
+  const isItemAvailable =
+    item.isAvailable === true && (!hasInventoryCount || availableQuantity > 0);
 
   const customizationGroups = item.customizationGroups || [];
   const customizationOptions = customizationGroups.flatMap(
@@ -211,48 +203,28 @@ export default function FoodCard({
   };
 
   const openCustomization = () => {
+    if (!isItemAvailable || maxAddableQuantity <= 0) {
+      Alert.alert("Out of stock", "There is no remaining stock for this item.");
+      return;
+    }
     setCustomQty(1);
     setSelectedAddons([]);
     setShowCustomization(true);
   };
 
-  const toggleAddon = (addon: any) => {
-    const groupOptions = customizationOptions.filter(
-      (option: any) => option.group === addon.group,
-    );
-    const isSelected = selectedAddons.includes(addon.key);
-    const selectionMode = getGroupSelectionMode(addon.group);
-
-    if (selectionMode === "single") {
-      setSelectedAddons((previous) =>
-        isSelected
-          ? previous.filter((id) => id !== addon.key)
-          : [
-              ...previous.filter(
-                (id) => !groupOptions.some((option: any) => option.key === id),
-              ),
-              addon.key,
-            ],
-      );
-      return;
-    }
-
-    const maxSelections = Number(addon.group.maxSelections);
-    const effectiveMaxSelections =
-      Number.isFinite(maxSelections) && maxSelections > 0
-        ? Math.min(maxSelections, groupOptions.length)
-        : groupOptions.length;
-    const selectedInGroup = groupOptions.filter((option: any) =>
-      selectedAddons.includes(option.key),
-    ).length;
-
-    if (!isSelected && selectedInGroup >= effectiveMaxSelections) {
+  const increaseCustomQty = () => {
+    if (customQty >= maxAddableQuantity) {
       Alert.alert(
-        "Selection limit reached",
-        `Choose up to ${effectiveMaxSelections} option${effectiveMaxSelections === 1 ? "" : "s"} for ${addon.group.name}.`,
+        "Stock limit reached",
+        `You can add up to ${maxAddableQuantity} item${maxAddableQuantity === 1 ? "" : "s"}.`,
       );
       return;
     }
+    setCustomQty((quantity) => quantity + 1);
+  };
+
+  const toggleAddon = (addon: any) => {
+    const isSelected = selectedAddons.includes(addon.key);
 
     setSelectedAddons((previous) =>
       isSelected
@@ -293,6 +265,16 @@ export default function FoodCard({
     });
 
   const handleAddCustomizedItem = () => {
+    if (customQty > maxAddableQuantity) {
+      Alert.alert(
+        "Stock limit reached",
+        maxAddableQuantity > 0
+          ? `You can add up to ${maxAddableQuantity} item${maxAddableQuantity === 1 ? "" : "s"}.`
+          : "There is no remaining stock for this item.",
+      );
+      return;
+    }
+
     const missingRequiredGroup = customizationGroups.find((group: any) => {
       const selectedCount = customizationOptions.filter(
         (option: any) =>
@@ -331,10 +313,7 @@ export default function FoodCard({
   };
 
   return (
-    <View
-      style={{ width: widthOverride ?? "100%" }}
-      className="relative mb-4"
-    >
+    <View style={{ width: widthOverride ?? "100%" }} className="relative mb-4">
       {[0, 45, 90, 135, 180, 225, 270, 315].map((angle, i) => (
         <StarParticle
           key={i}
@@ -365,7 +344,11 @@ export default function FoodCard({
               />
             ) : null}
             <LinearGradient
-              colors={["transparent", "rgba(0, 0, 0, 0.12)", "rgba(0, 0, 0, 0.88)"]}
+              colors={[
+                "transparent",
+                "rgba(0, 0, 0, 0.12)",
+                "rgba(0, 0, 0, 0.88)",
+              ]}
               locations={[0, 0.48, 1]}
               start={{ x: 0.5, y: 0 }}
               end={{ x: 0.5, y: 1 }}
@@ -760,20 +743,24 @@ export default function FoodCard({
                     >
                       {customQty}
                     </Text>
-                    <Pressable
-                      onPress={() => setCustomQty((q) => Math.min(3, q + 1))}
-                      className="p-3"
-                    >
+                    <Pressable onPress={increaseCustomQty} className="p-3">
                       <Plus
                         size={20}
-                        color={customQty < 3 ? theme.primary : theme.muted}
+                        color={
+                          customQty < maxAddableQuantity
+                            ? theme.primary
+                            : theme.muted
+                        }
                         strokeWidth={3}
                       />
                     </Pressable>
                   </View>
-                  {customQty === 3 && (
-                    <Text className="ml-4 text-xs font-bold text-red-500">
-                      Max 3 allowed
+                  {Number.isFinite(maxAddableQuantity) && (
+                    <Text
+                      className="ml-4 text-xs font-bold"
+                      style={{ color: theme.muted }}
+                    >
+                      {maxAddableQuantity} available
                     </Text>
                   )}
                 </View>
@@ -805,16 +792,6 @@ export default function FoodCard({
                       (option: any) => option.group === group,
                     );
                     if (options.length === 0) return null;
-                    const selectionMode = getGroupSelectionMode(group);
-                    const maxSelections =
-                      selectionMode === "single"
-                        ? 1
-                        : (() => {
-                            const configuredMax = Number(group.maxSelections);
-                            return Number.isFinite(configuredMax) && configuredMax > 0
-                              ? Math.min(configuredMax, options.length)
-                              : options.length;
-                          })();
                     return (
                       <View key={group._id || `${group.name}-${groupIndex}`}>
                         <Text
@@ -827,9 +804,9 @@ export default function FoodCard({
                           className="px-4 pb-1 text-xs font-semibold"
                           style={{ color: theme.muted }}
                         >
-                          {selectionMode === "single"
-                            ? "Choose one"
-                            : `Choose up to ${maxSelections}`}
+                          {options.length > 1
+                            ? "Select multiple options"
+                            : "Select an option"}
                         </Text>
                         {options.map((addon: any, index: number) => {
                           const isSelected = selectedAddons.includes(addon.key);

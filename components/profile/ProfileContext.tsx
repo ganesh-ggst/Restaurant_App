@@ -4,7 +4,6 @@ import {
   type ReactNode,
   useCallback,
   useContext,
-  useEffect,
   useState,
 } from "react";
 
@@ -29,7 +28,12 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   const reloadProfile = useCallback(async () => {
     setError("");
     try {
-      setUser(await api.getMyProfile());
+      const accessToken = await api.getAccessToken();
+      if (!accessToken && isGuest === "true") {
+        setUser(null);
+        return;
+      }
+      setUser(await api.getMyProfile(true));
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -37,33 +41,6 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
           : "Unable to load your profile.",
       );
     }
-  }, []);
-
-  useEffect(() => {
-    if (isGuest === "true") {
-      return;
-    }
-
-    let isActive = true;
-
-    void api
-      .getMyProfile()
-      .then((profile) => {
-        if (isActive) setUser(profile);
-      })
-      .catch((loadError: unknown) => {
-        if (isActive) {
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : "Unable to load your profile.",
-          );
-        }
-      });
-
-    return () => {
-      isActive = false;
-    };
   }, [isGuest]);
 
   const updateUser = useCallback((updatedUser: UserProfile) => {

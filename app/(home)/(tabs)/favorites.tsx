@@ -61,7 +61,7 @@ export default function FavoritesScreen() {
         </View>
         <View className="flex-row items-center">
           <Pressable
-            onPress={() => router.push("/(home)/profile")}
+            onPress={() => router.push("/(home)/(tabs)/profile")}
             className="h-11 w-11 items-center justify-center rounded-full border"
             style={{ backgroundColor: theme.card, borderColor: theme.border }}
           >
