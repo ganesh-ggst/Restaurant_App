@@ -16,11 +16,11 @@
     },
     "android": {
       "softwareKeyboardLayoutMode": "resize",
+      "icon": "./assets/images/android-apk-icon.png",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#FCF5E9",
+        "foregroundImage": "./assets/images/android-apk-icon.png",
+        "monochromeImage": "./assets/images/android-apk-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.siva.ggstinnovations.restaurantapp"

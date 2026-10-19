@@ -1,5 +1,8 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { useNavigation, useRouter } from "expo-router";
+import {
+  useNavigation,
+  useRouter,
+} from "expo-router";
 import {
   ArrowLeft,
   BellRing,
@@ -14,7 +17,6 @@ import {
   ScanLine,
   ShoppingBag,
   Store,
-  UserRound,
   Wifi,
   X,
 } from "lucide-react-native";
@@ -40,6 +42,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import FoodCard from "../../../components/home/FoodCard";
 import { HomeHeader } from "../../../components/home/HomeHeader";
+import { ProfileAvatarButton } from "../../../components/profile/ProfileAvatarButton";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { api } from "../../../services/api";
 import { useOrderMode } from "../_layout";
@@ -787,13 +790,7 @@ export default function HomeScreen() {
             <Heart size={20} color={theme.text} strokeWidth={2.5} />
           </Pressable>
 
-          <Pressable
-            onPress={() => router.push("/(home)/(tabs)/profile")}
-            className="h-11 w-11 items-center justify-center rounded-full shadow-sm border"
-            style={{ backgroundColor: theme.card, borderColor: theme.border }}
-          >
-            <UserRound size={22} color={theme.text} strokeWidth={2} />
-          </Pressable>
+          <ProfileAvatarButton className="h-11 w-11 items-center justify-center rounded-full shadow-sm border" />
         </View>
       </View>
 

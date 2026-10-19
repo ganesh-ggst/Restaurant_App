@@ -8,7 +8,6 @@ import {
   Receipt,
   Search,
   ScrollText,
-  UserRound,
   X,
 } from "lucide-react-native";
 import { useCallback, useState } from "react";
@@ -33,6 +32,7 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { TAX_DETAILS } from "../../../constants/mockData";
+import { ProfileAvatarButton } from "../../../components/profile/ProfileAvatarButton";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { api } from "../../../services/api";
 import { authApi } from "../../../services/api/auth";
@@ -940,13 +940,7 @@ export default function OrdersScreen() {
             <Heart size={20} color={theme.text} strokeWidth={2.5} />
           </Pressable>
 
-          <Pressable
-            onPress={() => router.push("/(home)/(tabs)/profile")}
-            className="h-11 w-11 items-center justify-center rounded-full border"
-            style={{ backgroundColor: theme.card, borderColor: theme.border }}
-          >
-            <UserRound size={22} color={theme.text} strokeWidth={2} />
-          </Pressable>
+          <ProfileAvatarButton />
         </View>
       </View>
 
