@@ -1,9 +1,10 @@
 import { useRouter } from "expo-router";
-import { ArrowLeft, Heart, UserRound } from "lucide-react-native";
+import { ArrowLeft, Heart } from "lucide-react-native";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import FoodCard from "../../../components/home/FoodCard";
+import { ProfileAvatarButton } from "../../../components/profile/ProfileAvatarButton";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { useFavorites, useOrderMode } from "../_layout";
 
@@ -60,13 +61,7 @@ export default function FavoritesScreen() {
           </Text>
         </View>
         <View className="flex-row items-center">
-          <Pressable
-            onPress={() => router.push("/(home)/(tabs)/profile")}
-            className="h-11 w-11 items-center justify-center rounded-full border"
-            style={{ backgroundColor: theme.card, borderColor: theme.border }}
-          >
-            <UserRound size={22} color={theme.text} strokeWidth={2} />
-          </Pressable>
+          <ProfileAvatarButton />
         </View>
       </View>
 

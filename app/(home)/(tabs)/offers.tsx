@@ -5,7 +5,6 @@ import {
   Copy,
   Heart,
   Tag,
-  UserRound,
   X,
 } from "lucide-react-native";
 import { useState } from "react";
@@ -21,6 +20,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import FoodCard from "../../../components/home/FoodCard";
+import { ProfileAvatarButton } from "../../../components/profile/ProfileAvatarButton";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { useOrderMode } from "../_layout";
 
@@ -109,13 +109,7 @@ export default function OffersScreen() {
             <Heart size={20} color={theme.text} strokeWidth={2.5} />
           </Pressable>
 
-          <Pressable
-            onPress={() => router.push("/(home)/(tabs)/profile")}
-            className="h-11 w-11 items-center justify-center rounded-full border"
-            style={{ backgroundColor: theme.card, borderColor: theme.border }}
-          >
-            <UserRound size={22} color={theme.text} strokeWidth={2} />
-          </Pressable>
+          <ProfileAvatarButton />
         </View>
       </View>
 
