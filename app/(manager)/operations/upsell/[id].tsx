@@ -1,9 +1,12 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { Feather } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Pressable,
   Text,
   TextInput,
@@ -37,6 +40,8 @@ export default function EditCrossSellScreen() {
   const [price, setPrice] = useState("");
   const [quantity, setQuantity] = useState("");
   const [imageUrl, setImageUrl] = useState("");
+  const [imagePreviewFailed, setImagePreviewFailed] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [foodType, setFoodType] = useState<"veg" | "non_veg">("veg");
   const hasLoadedItem = useRef(false);
 
@@ -73,6 +78,7 @@ export default function EditCrossSellScreen() {
             : String(found.availableQuantity),
         );
         setImageUrl(found.imageUrl || "");
+        setImagePreviewFailed(false);
         setFoodType(found.foodType === "non_veg" ? "non_veg" : "veg");
       })()
         .catch((error: unknown) => {
@@ -91,6 +97,69 @@ export default function EditCrossSellScreen() {
       };
     }, [id, isNewItem, triggerCategoryId]),
   );
+
+  const pickImage = async (source: "camera" | "gallery") => {
+    if (uploadingImage) return;
+    try {
+      if (source === "camera") {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert(
+            "Camera access required",
+            "Allow camera access to take a cross-sell photo.",
+          );
+          return;
+        }
+      } else {
+        const permission =
+          await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert(
+            "Photo access required",
+            "Allow photo library access to attach a cross-sell image.",
+          );
+          return;
+        }
+      }
+
+      const options: ImagePicker.ImagePickerOptions = {
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.85,
+      };
+      const result =
+        source === "camera"
+          ? await ImagePicker.launchCameraAsync(options)
+          : await ImagePicker.launchImageLibraryAsync(options);
+      const asset = result.assets?.[0];
+      if (result.canceled || !asset) return;
+
+      setUploadingImage(true);
+      const mimeType = asset.mimeType || "image/jpeg";
+      const extension = mimeType.split("/")[1] || "jpg";
+      const uploadedUrls = await operationsApi.uploadMenuImages(
+        [
+          {
+            uri: asset.uri,
+            fileName:
+              asset.fileName || `cross-sell-${Date.now()}.${extension}`,
+            mimeType,
+          },
+        ],
+        "cross-sells",
+      );
+      setImageUrl(uploadedUrls[0]);
+      setImagePreviewFailed(false);
+    } catch (error) {
+      Alert.alert(
+        "Unable to attach image",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setUploadingImage(false);
+    }
+  };
 
   const handleSave = async () => {
     const numericPrice = Number(price);
@@ -111,10 +180,10 @@ export default function EditCrossSellScreen() {
       Alert.alert("Invalid quantity", "Enter a non-negative whole number for available quantity.");
       return;
     }
-    if (!/^https?:\/\/\S+$/i.test(imageUrl.trim())) {
+    if (!imageUrl.trim()) {
       Alert.alert(
-        "Valid image required",
-        "Enter an image URL starting with http:// or https://.",
+        "Image required",
+        "Attach an image from your gallery or camera.",
       );
       return;
     }
@@ -225,10 +294,86 @@ export default function EditCrossSellScreen() {
           showsVerticalScrollIndicator={false}
         >
           <Text className="mb-2 text-xs font-black uppercase" style={{ color: theme.muted }}>
-            Media *
+            Image *
           </Text>
           <Card variant="default" className="mb-5 rounded-3xl border p-5">
-            {field("Image URL", imageUrl, setImageUrl, "https://...", "default", false, true)}
+            {imageUrl ? (
+              <View className="mb-4 self-start">
+                {imagePreviewFailed ? (
+                  <View
+                    className="items-center justify-center rounded-xl"
+                    style={{
+                      width: 128,
+                      height: 96,
+                      backgroundColor: theme.secondaryBg,
+                    }}
+                  >
+                    <Feather name="image" size={24} color={theme.muted} />
+                    <Text className="mt-1 text-xs" style={{ color: theme.muted }}>
+                      Preview unavailable
+                    </Text>
+                  </View>
+                ) : (
+                  <Image
+                    source={{ uri: imageUrl }}
+                    resizeMode="cover"
+                    style={{
+                      width: 128,
+                      height: 96,
+                      borderRadius: 12,
+                      backgroundColor: theme.secondaryBg,
+                    }}
+                    onError={() => setImagePreviewFailed(true)}
+                    accessibilityLabel="Cross-sell image preview"
+                  />
+                )}
+                <Pressable
+                  onPress={() => {
+                    setImageUrl("");
+                    setImagePreviewFailed(false);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Remove cross-sell image"
+                  hitSlop={8}
+                  className="absolute right-1 top-1 rounded-full p-1"
+                  style={{ backgroundColor: theme.card }}
+                >
+                  <Feather name="x-circle" size={20} color={theme.danger} />
+                </Pressable>
+              </View>
+            ) : null}
+            <View className="flex-row gap-2">
+              <Pressable
+                onPress={() => void pickImage("gallery")}
+                disabled={uploadingImage}
+                className="flex-1 flex-row items-center justify-center rounded-xl border px-3 py-3"
+                style={{ borderColor: theme.border }}
+              >
+                <Feather name="image" size={16} color={theme.primary} />
+                <Text className="ml-2 text-sm font-bold" style={{ color: theme.primary }}>
+                  Gallery
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => void pickImage("camera")}
+                disabled={uploadingImage}
+                className="flex-1 flex-row items-center justify-center rounded-xl border px-3 py-3"
+                style={{ borderColor: theme.border }}
+              >
+                <Feather name="camera" size={16} color={theme.primary} />
+                <Text className="ml-2 text-sm font-bold" style={{ color: theme.primary }}>
+                  Camera
+                </Text>
+              </Pressable>
+            </View>
+            {uploadingImage ? (
+              <View className="mt-4 flex-row items-center justify-center">
+                <ActivityIndicator size="small" color={theme.primary} />
+                <Text className="ml-2 text-sm" style={{ color: theme.muted }}>
+                  Uploading image...
+                </Text>
+              </View>
+            ) : null}
           </Card>
 
           <Text className="mb-2 text-xs font-black uppercase" style={{ color: theme.muted }}>

@@ -25,6 +25,21 @@ import { operationsCache } from "../../../../services/api/operations-cache";
 
 type ListTab = "items" | "cross-sells";
 
+function matchesItemSearch(name: string, search: string): boolean {
+  const query = search.trim().toLowerCase().replace(/\s+/g, "");
+  if (!query) return true;
+
+  const normalizedName = name.toLowerCase();
+  if (normalizedName.includes(query)) return true;
+
+  let queryIndex = 0;
+  for (const character of normalizedName) {
+    if (character === query[queryIndex]) queryIndex += 1;
+    if (queryIndex === query.length) return true;
+  }
+  return false;
+}
+
 export default function CategoryDetailScreen() {
   const theme = useAppTheme();
   const router = useRouter();
@@ -87,7 +102,7 @@ export default function CategoryDetailScreen() {
   const visibleItems = useMemo(
     () =>
       currentItems.filter((item) => {
-        const matchesSearch = item.name.toLowerCase().includes(search.trim().toLowerCase());
+        const matchesSearch = matchesItemSearch(item.name, search);
         const matchesStock =
           stockFilter === "all" ||
           (stockFilter === "inStock" ? item.isAvailable : !item.isAvailable);
@@ -244,13 +259,16 @@ export default function CategoryDetailScreen() {
             <Pressable
               key={filter}
               onPress={() => setStockFilter(filter)}
-              className="rounded-xl px-3 py-3"
+              className="flex-1 items-center justify-center rounded-xl px-2 py-3"
               style={{
                 backgroundColor: stockFilter === filter ? theme.primary : theme.card,
               }}
             >
               <Text
-                className="text-xs font-bold"
+                className="text-center text-xs font-bold"
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.8}
                 style={{ color: stockFilter === filter ? "#fff" : theme.text }}
               >
                 {filter === "all"
@@ -267,13 +285,16 @@ export default function CategoryDetailScreen() {
             <Pressable
               key={filter}
               onPress={() => setFoodFilter(filter)}
-              className="rounded-xl px-3 py-3"
+              className="flex-1 items-center justify-center rounded-xl px-2 py-3"
               style={{
                 backgroundColor: foodFilter === filter ? theme.primary : theme.card,
               }}
             >
               <Text
-                className="text-xs font-bold capitalize"
+                className="text-center text-xs font-bold capitalize"
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.8}
                 style={{ color: foodFilter === filter ? "#fff" : theme.text }}
               >
                 {filter === "all"

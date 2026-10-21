@@ -15,7 +15,6 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { Button } from "../../../components/ui/Button";
 import { Card } from "../../../components/ui/Card";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import {
@@ -234,10 +233,21 @@ export default function CategoriesScreen() {
     );
   };
 
+  const matchesCategorySearch = (name: string, query: string) => {
+    const normalizedName = name.toLowerCase();
+    const normalizedQuery = query.trim().toLowerCase().replace(/\s+/g, "");
+    if (!normalizedQuery || normalizedName.includes(normalizedQuery)) return true;
+
+    let queryIndex = 0;
+    for (const character of normalizedName) {
+      if (character === normalizedQuery[queryIndex]) queryIndex += 1;
+      if (queryIndex === normalizedQuery.length) return true;
+    }
+    return false;
+  };
+
   const filteredCategories = categories.filter((category) => {
-    const matchesSearch = category.name
-      .toLowerCase()
-      .includes(searchQuery.trim().toLowerCase());
+    const matchesSearch = matchesCategorySearch(category.name, searchQuery);
     const matchesStatus =
       statusFilter === "all" ||
       (statusFilter === "active" ? category.isActive : !category.isActive);
@@ -512,8 +522,9 @@ export default function CategoriesScreen() {
                 className="rounded-3xl border-0 shadow-lg p-0 overflow-hidden max-h-[80vh]"
               >
                 <ScrollView
+                  className="shrink"
                   showsVerticalScrollIndicator={false}
-                  contentContainerStyle={{ padding: 24 }}
+                  contentContainerStyle={{ padding: 24, paddingBottom: 8 }}
                 >
                   <Text
                     className="text-xl font-bold mb-5"
@@ -571,22 +582,51 @@ export default function CategoriesScreen() {
                     }}
                   />
 
-                  <View className="flex-row justify-end mt-2">
-                    <Button
-                      title="Cancel"
-                      variant="outline"
-                      onPress={closeModal}
-                      className="mr-3 h-14 w-32 px-0 py-0"
-                    />
-                    <Button
-                      title={modalMode === "add" ? "Create" : "Save"}
-                      onPress={handleSaveCategory}
-                      loading={saving}
-                      disabled={saving}
-                      className="h-14 w-32 px-0 py-0"
-                    />
-                  </View>
                 </ScrollView>
+                <View className="flex-row gap-3 px-6 pb-6 pt-2">
+                  <Pressable
+                    onPress={closeModal}
+                    disabled={saving}
+                    className="h-14 flex-1 items-center justify-center rounded-xl border-2 px-2"
+                    style={{ borderColor: theme.primary }}
+                  >
+                    <Text
+                      className="text-center text-lg font-bold"
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      style={{ color: theme.primary }}
+                    >
+                      Cancel
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => void handleSaveCategory()}
+                    disabled={saving}
+                    className="h-14 flex-1 items-center justify-center rounded-xl border-2 px-2"
+                    style={{
+                      backgroundColor: theme.primary,
+                      borderColor: theme.primary,
+                    }}
+                  >
+                    {saving ? (
+                      <Text
+                        className="text-center text-lg font-bold"
+                        style={{ color: theme.primaryForeground }}
+                      >
+                        Saving...
+                      </Text>
+                    ) : (
+                      <Text
+                        className="text-center text-lg font-bold"
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        style={{ color: theme.primaryForeground }}
+                      >
+                        {modalMode === "add" ? "Create" : "Save"}
+                      </Text>
+                    )}
+                  </Pressable>
+                </View>
               </Card>
             </Pressable>
           </KeyboardAvoidingView>
