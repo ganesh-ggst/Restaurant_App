@@ -40,6 +40,14 @@
       ],
       "expo-router",
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Restaurant_App to attach menu item photos.",
+          "cameraPermission": "Allow Restaurant_App to take menu item photos.",
+          "microphonePermission": false
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",

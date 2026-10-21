@@ -1,10 +1,12 @@
-import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -33,18 +35,61 @@ type CustomizationEditor =
 const marketingTagOptions = [
   ["none", "None"],
   ["auto_discount", "Auto Discount"],
-  ["⭐ Bestseller", "⭐ Bestseller"],
-  ["🔥 Hot", "🔥 Hot"],
+  ["bestseller", "⭐ Bestseller"],
+  ["hot", "🔥 Hot"],
 ] as const;
 
-const normalizeMarketingTag = (tag: string | undefined): string => {
+function getMarketingTagLabel(tag: string): string {
   switch (tag) {
     case "bestseller":
-      return "⭐ Bestseller";
+      return "⭐ BESTSELLER";
     case "hot":
-      return "🔥 Hot";
+      return "🔥 HOT";
     default:
-      return tag || "auto_discount";
+      return marketingTagOptions.find(([value]) => value === tag)?.[1] ?? tag;
+  }
+}
+
+function getMarketingTagPayload(
+  tag: string,
+  autoDiscountLabel?: string,
+): string | null {
+  switch (tag) {
+    case "none":
+    case "":
+      return null;
+    case "auto_discount":
+      return autoDiscountLabel ?? null;
+    case "bestseller":
+      return "⭐ BESTSELLER";
+    case "hot":
+      return "🔥 HOT";
+    default:
+      return tag;
+  }
+}
+
+const normalizeMarketingTag = (
+  tag: string | null | undefined,
+  discountLabel: string | null | undefined,
+  price: number,
+  compareAtPrice: number | undefined,
+): string => {
+  switch (tag?.trim().toUpperCase()) {
+    case "BESTSELLER":
+    case "⭐ BESTSELLER":
+      return "bestseller";
+    case "HOT":
+    case "🔥 HOT":
+      return "hot";
+    default:
+      if (tag?.trim().toLowerCase() === "auto_discount") {
+        return "auto_discount";
+      }
+      return discountLabel?.trim() ||
+        (compareAtPrice !== undefined && compareAtPrice > price)
+        ? "auto_discount"
+        : "none";
   }
 };
 
@@ -66,6 +111,9 @@ export default function EditMenuItemScreen() {
   const [quantity, setQuantity] = useState("");
   const [prepTime, setPrepTime] = useState("");
   const [imageUrl, setImageUrl] = useState("");
+  const [imageUrls, setImageUrls] = useState<string[]>([]);
+  const [failedImageUrls, setFailedImageUrls] = useState<string[]>([]);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [foodType, setFoodType] = useState<"veg" | "non_veg">("veg");
   const [marketingTag, setMarketingTag] = useState("auto_discount");
   const [customTag, setCustomTag] = useState("");
@@ -76,8 +124,9 @@ export default function EditMenuItemScreen() {
   const [customizationEditor, setCustomizationEditor] =
     useState<CustomizationEditor | null>(null);
   const [customizationName, setCustomizationName] = useState("");
-  const [customizationSelectionType, setCustomizationSelectionType] =
-    useState<"single" | "multiple">("single");
+  const [customizationSelectionType, setCustomizationSelectionType] = useState<
+    "single" | "multiple"
+  >("single");
   const [customizationMinSelections, setCustomizationMinSelections] =
     useState("0");
   const [customizationMaxSelections, setCustomizationMaxSelections] =
@@ -126,13 +175,25 @@ export default function EditMenuItemScreen() {
             : String(found.prepTimeMinutes),
         );
         setImageUrl(found.imageUrl || "");
+        setImageUrls(found.imageUrls || []);
+        setFailedImageUrls([]);
         setFoodType(found.foodType === "non_veg" ? "non_veg" : "veg");
-        setMarketingTag(normalizeMarketingTag(found.marketingTag));
-        setCustomTag(found.customTag || "");
         const hasCustomTag =
-          found.customTagEnabled ?? Boolean(found.customTag?.trim());
+          found.customTagEnabled === true ||
+          (found.customTagEnabled === undefined &&
+            Boolean(found.customTag?.trim()));
+        setMarketingTag(
+          hasCustomTag
+            ? "none"
+            : normalizeMarketingTag(
+                found.marketingTag,
+                found.discountLabel,
+                found.price,
+                found.compareAtPrice,
+              ),
+        );
+        setCustomTag(hasCustomTag ? found.customTag || "" : "");
         setCustomTagEnabled(hasCustomTag);
-        if (hasCustomTag) setMarketingTag("none");
         setCustomizationGroups(found.customizationGroups || []);
       })()
         .catch((error: unknown) => {
@@ -158,11 +219,84 @@ export default function EditMenuItemScreen() {
       ? item.categoryId
       : item?.categoryId?._id);
 
+  const pickMenuImages = async (
+    kind: "cover" | "gallery",
+    source: "camera" | "gallery",
+  ) => {
+    if (uploadingImage) return;
+    try {
+      if (source === "camera") {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert(
+            "Camera access required",
+            "Allow camera access to take menu item photos.",
+          );
+          return;
+        }
+      } else {
+        const permission =
+          await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert(
+            "Photo access required",
+            "Allow photo library access to attach menu item images.",
+          );
+          return;
+        }
+      }
+
+      const pickerOptions: ImagePicker.ImagePickerOptions = {
+        mediaTypes: ["images"],
+        allowsEditing: source === "camera" || kind === "cover",
+        ...(source === "camera" || kind === "cover"
+          ? { aspect: [4, 3] as [number, number] }
+          : {}),
+        allowsMultipleSelection: source === "gallery" && kind === "gallery",
+        selectionLimit: source === "gallery" && kind === "gallery" ? 10 : 1,
+        quality: 0.85,
+      };
+      const result =
+        source === "camera"
+          ? await ImagePicker.launchCameraAsync(pickerOptions)
+          : await ImagePicker.launchImageLibraryAsync(pickerOptions);
+      if (result.canceled || result.assets.length === 0) return;
+
+      setUploadingImage(true);
+      const uploadedUrls = await operationsApi.uploadMenuImages(
+        result.assets.map((asset, index) => {
+          const mimeType = asset.mimeType || "image/jpeg";
+          const extension = mimeType.split("/")[1] || "jpg";
+          return {
+            uri: asset.uri,
+            fileName:
+              asset.fileName ||
+              `menu-item-${Date.now()}-${index + 1}.${extension}`,
+            mimeType,
+          };
+        }),
+        "menu item",
+      );
+
+      if (kind === "cover") {
+        setImageUrl(uploadedUrls[0]);
+      } else {
+        setImageUrls((current) => [...current, ...uploadedUrls]);
+      }
+      setFailedImageUrls([]);
+    } catch (error) {
+      Alert.alert(
+        "Unable to attach image",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
   const handleSave = async () => {
     const parsedRegularPrice = Number(regularPrice);
-    const parsedOfferPrice = offerPrice.trim()
-      ? Number(offerPrice)
-      : undefined;
+    const parsedOfferPrice = offerPrice.trim() ? Number(offerPrice) : undefined;
     const parsedQuantity = Number(quantity);
     const parsedPrepTime = Number(prepTime);
     if (!itemName.trim()) {
@@ -170,7 +304,10 @@ export default function EditMenuItemScreen() {
       return;
     }
     if (!Number.isFinite(parsedRegularPrice) || parsedRegularPrice <= 0) {
-      Alert.alert("Invalid regular price", "Regular price must be greater than ₹0.");
+      Alert.alert(
+        "Invalid regular price",
+        "Regular price must be greater than ₹0.",
+      );
       return;
     }
     if (offerPrice.trim() && isOfferPriceInvalid) {
@@ -180,30 +317,46 @@ export default function EditMenuItemScreen() {
       );
       return;
     }
-    if (!quantity.trim() || !Number.isInteger(parsedQuantity) || parsedQuantity < 0) {
-      Alert.alert("Invalid quantity", "Enter a non-negative whole number for available quantity.");
+    if (
+      !quantity.trim() ||
+      !Number.isInteger(parsedQuantity) ||
+      parsedQuantity < 0
+    ) {
+      Alert.alert(
+        "Invalid quantity",
+        "Enter a non-negative whole number for available quantity.",
+      );
       return;
     }
     if (
       prepTime.trim() &&
       (!Number.isInteger(parsedPrepTime) || parsedPrepTime < 0)
     ) {
-      Alert.alert("Invalid preparation time", "Enter a valid preparation time in minutes.");
+      Alert.alert(
+        "Invalid preparation time",
+        "Enter a valid preparation time in minutes.",
+      );
       return;
     }
     if (isNewItem && !resolvedCategoryId) {
-      Alert.alert("Category required", "Choose a category before creating a menu item.");
+      Alert.alert(
+        "Category required",
+        "Choose a category before creating a menu item.",
+      );
       return;
     }
-    if (!/^https?:\/\/\S+$/i.test(imageUrl.trim())) {
+    if (!imageUrl.trim()) {
       Alert.alert(
-        "Valid image required",
-        "Enter an image URL starting with http:// or https://.",
+        "Cover image required",
+        "Attach a cover image from your gallery or camera.",
       );
       return;
     }
     if (customTagEnabled && !customTag.trim()) {
-      Alert.alert("Custom tag required", "Enter a custom tag or turn off Add Custom Tag.");
+      Alert.alert(
+        "Custom tag required",
+        "Enter a custom tag or turn off Add Custom Tag.",
+      );
       return;
     }
     for (const group of customizationGroups) {
@@ -250,20 +403,21 @@ export default function EditMenuItemScreen() {
       availableQuantity: parsedQuantity,
       ...(prepTime.trim() ? { prepTimeMinutes: parsedPrepTime } : {}),
       imageUrl: imageUrl.trim(),
-      marketingTag: customTagEnabled ? "none" : marketingTag,
-      customTag: customTag.trim(),
+      imageUrls: imageUrls.map((url) => url.trim()).filter(Boolean),
+      marketingTag:
+        customTagEnabled || marketingTag === "auto_discount"
+          ? null
+          : getMarketingTagPayload(marketingTag),
+      customTag: customTagEnabled ? customTag.trim() : null,
       customTagEnabled: customTagEnabled && Boolean(customTag.trim()),
       customizationGroups,
       ...(item?.tags !== undefined ? { tags: item.tags } : {}),
-      ...(!customTagEnabled && marketingTag === "auto_discount"
-        ? autoDiscountLabel
-          ? { discountLabel: autoDiscountLabel }
-          : item?.discountLabel !== undefined
-            ? { discountLabel: item.discountLabel }
-            : {}
-        : item?.discountLabel !== undefined
-          ? { discountLabel: item.discountLabel }
-          : {}),
+      discountLabel:
+        !customTagEnabled && marketingTag === "auto_discount"
+          ? (getMarketingTagPayload(marketingTag, autoDiscountLabel) ??
+            item?.discountLabel ??
+            null)
+          : null,
     };
 
     setSaving(true);
@@ -274,7 +428,7 @@ export default function EditMenuItemScreen() {
         if (!resolvedCategoryId) {
           throw new Error("The item's category could not be determined.");
         }
-        await operationsApi.updateCategoryItem(resolvedCategoryId, id, body);
+        await operationsApi.updateItem(id, body);
       }
       operationsCache.invalidateCategory(resolvedCategoryId);
       operationsCache.invalidateCategories();
@@ -322,7 +476,10 @@ export default function EditMenuItemScreen() {
     required = false,
   ) => (
     <View className="mb-4">
-      <Text className="mb-2 text-xs font-bold uppercase" style={{ color: theme.muted }}>
+      <Text
+        className="mb-2 text-xs font-bold uppercase"
+        style={{ color: theme.muted }}
+      >
         {label}
         {required ? (
           <Text style={{ color: theme.danger }}> *</Text>
@@ -356,7 +513,10 @@ export default function EditMenuItemScreen() {
     setCustomizationEditor({ type: "group", groupIndex: null });
   };
 
-  const openEditGroupEditor = (group: OperationsCustomizationGroup, index: number) => {
+  const openEditGroupEditor = (
+    group: OperationsCustomizationGroup,
+    index: number,
+  ) => {
     setCustomizationName(group.name);
     setCustomizationSelectionType(group.selectionType);
     setCustomizationMinSelections(String(group.minSelections));
@@ -372,7 +532,10 @@ export default function EditMenuItemScreen() {
           ? null
           : customizationGroups[customizationEditor.groupIndex];
       if (!name) {
-        Alert.alert("Add-on name required", "Enter a name for this add-on section.");
+        Alert.alert(
+          "Add-on name required",
+          "Enter a name for this add-on section.",
+        );
         return;
       }
       const minSelections = Number(customizationMinSelections);
@@ -443,7 +606,10 @@ export default function EditMenuItemScreen() {
     }
   };
 
-  const toggleCustomizationGroup = (groupIndex: number, isAvailable: boolean) => {
+  const toggleCustomizationGroup = (
+    groupIndex: number,
+    isAvailable: boolean,
+  ) => {
     setCustomizationGroups((current) =>
       current.map((group, index) =>
         index === groupIndex
@@ -486,7 +652,10 @@ export default function EditMenuItemScreen() {
     );
   };
 
-  const removeCustomizationOption = (groupIndex: number, optionIndex: number) => {
+  const removeCustomizationOption = (
+    groupIndex: number,
+    optionIndex: number,
+  ) => {
     setCustomizationGroups((current) =>
       current.map((group, index) =>
         index === groupIndex
@@ -515,7 +684,9 @@ export default function EditMenuItemScreen() {
         style={{ borderBottomColor: theme.border }}
       >
         <Pressable onPress={() => router.back()} className="mr-3 p-1">
-          <Text className="text-2xl" style={{ color: theme.text }}>←</Text>
+          <Text className="text-2xl" style={{ color: theme.text }}>
+            ←
+          </Text>
         </Pressable>
         <Text className="text-xl font-bold" style={{ color: theme.text }}>
           {isNewItem ? "Add Menu Item" : "Edit Menu Item"}
@@ -538,30 +709,247 @@ export default function EditMenuItemScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <Text className="mb-2 text-xs font-black uppercase" style={{ color: theme.muted }}>
-            Media carousel *
+          <Text
+            className="mb-2 text-xs font-black uppercase"
+            style={{ color: theme.muted }}
+          >
+            Images
           </Text>
           <Card variant="default" className="mb-5 rounded-3xl border p-5">
-            <TextInput
-              value={imageUrl}
-              onChangeText={setImageUrl}
-              placeholder="Image URL"
-              placeholderTextColor={theme.muted}
-              autoCapitalize="none"
-              keyboardType="url"
-              className="rounded-xl border px-4 py-4"
-              style={inputStyle}
-              accessibilityLabel="Required image URL"
-            />
+            <Text
+              className="mb-3 text-xs font-bold uppercase"
+              style={{ color: theme.muted }}
+            >
+              Cover image *
+            </Text>
+            {imageUrl ? (
+              <View className="mb-4 self-start">
+                {failedImageUrls.includes(imageUrl) ? (
+                  <View
+                    className="items-center justify-center rounded-xl"
+                    style={{
+                      width: 128,
+                      height: 96,
+                      backgroundColor: theme.secondaryBg,
+                    }}
+                  >
+                    <Feather name="image" size={24} color={theme.muted} />
+                    <Text
+                      className="mt-1 text-xs"
+                      style={{ color: theme.muted }}
+                    >
+                      Preview unavailable
+                    </Text>
+                  </View>
+                ) : (
+                  <Image
+                    source={{ uri: imageUrl }}
+                    resizeMode="cover"
+                    style={{
+                      width: 128,
+                      height: 96,
+                      borderRadius: 12,
+                      backgroundColor: theme.secondaryBg,
+                    }}
+                    onError={() =>
+                      setFailedImageUrls((current) =>
+                        current.includes(imageUrl)
+                          ? current
+                          : [...current, imageUrl],
+                      )
+                    }
+                    accessibilityLabel="Cover image preview"
+                  />
+                )}
+                <Pressable
+                  onPress={() => {
+                    setImageUrl("");
+                    setFailedImageUrls((current) =>
+                      current.filter((url) => url !== imageUrl),
+                    );
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Remove cover image"
+                  hitSlop={8}
+                  className="absolute right-1 top-1 rounded-full p-1"
+                  style={{ backgroundColor: theme.card }}
+                >
+                  <Feather name="x-circle" size={20} color={theme.danger} />
+                </Pressable>
+              </View>
+            ) : null}
+            <View className="mb-5 flex-row gap-2">
+              <Pressable
+                onPress={() => void pickMenuImages("cover", "gallery")}
+                disabled={uploadingImage}
+                className="flex-1 flex-row items-center justify-center rounded-xl border px-3 py-3"
+                style={{ borderColor: theme.border }}
+              >
+                <Feather name="image" size={16} color={theme.primary} />
+                <Text
+                  className="ml-2 text-sm font-bold"
+                  style={{ color: theme.primary }}
+                >
+                  Gallery
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => void pickMenuImages("cover", "camera")}
+                disabled={uploadingImage}
+                className="flex-1 flex-row items-center justify-center rounded-xl border px-3 py-3"
+                style={{ borderColor: theme.border }}
+              >
+                <Feather name="camera" size={16} color={theme.primary} />
+                <Text
+                  className="ml-2 text-sm font-bold"
+                  style={{ color: theme.primary }}
+                >
+                  Camera
+                </Text>
+              </Pressable>
+            </View>
+            <View className="mb-3 flex-row items-center justify-between">
+              <Text
+                className="text-xs font-bold uppercase"
+                style={{ color: theme.muted }}
+              >
+                Additional images
+              </Text>
+              <Text className="text-xs" style={{ color: theme.muted }}>
+                Optional
+              </Text>
+            </View>
+            {imageUrls.length ? (
+              <View className="mb-4 flex-row flex-wrap gap-3">
+                {imageUrls.map((url, index) => (
+                  <View
+                    key={`${url}-${index}`}
+                    style={{ width: 88, height: 88, position: "relative" }}
+                  >
+                    {failedImageUrls.includes(url) ? (
+                      <View
+                        className="items-center justify-center rounded-xl"
+                        style={{
+                          width: 88,
+                          height: 88,
+                          backgroundColor: theme.secondaryBg,
+                        }}
+                      >
+                        <Feather name="image" size={20} color={theme.muted} />
+                      </View>
+                    ) : (
+                      <Image
+                        source={{ uri: url }}
+                        resizeMode="cover"
+                        style={{
+                          width: 88,
+                          height: 88,
+                          borderRadius: 12,
+                          backgroundColor: theme.secondaryBg,
+                        }}
+                        onError={() =>
+                          setFailedImageUrls((current) =>
+                            current.includes(url) ? current : [...current, url],
+                          )
+                        }
+                        accessibilityLabel={`Additional image ${index + 1}`}
+                      />
+                    )}
+                    <Pressable
+                      onPress={() => {
+                        setImageUrls((current) =>
+                          current.filter(
+                            (_, entryIndex) => entryIndex !== index,
+                          ),
+                        );
+                        setFailedImageUrls((current) =>
+                          current.filter((failedUrl) => failedUrl !== url),
+                        );
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Remove additional image ${index + 1}`}
+                      hitSlop={8}
+                      className="absolute right-1 top-1 rounded-full p-1"
+                      style={{ backgroundColor: theme.card }}
+                    >
+                      <Feather name="x-circle" size={20} color={theme.danger} />
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <Text className="mb-4 text-sm" style={{ color: theme.muted }}>
+                No additional images attached.
+              </Text>
+            )}
+            <View className="flex-row gap-2">
+              <Pressable
+                onPress={() => void pickMenuImages("gallery", "gallery")}
+                disabled={uploadingImage}
+                className="flex-1 flex-row items-center justify-center rounded-xl border px-3 py-3"
+                style={{ borderColor: theme.border }}
+              >
+                <Feather name="image" size={16} color={theme.primary} />
+                <Text
+                  className="ml-2 text-sm font-bold"
+                  style={{ color: theme.primary }}
+                >
+                  Add from gallery
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => void pickMenuImages("gallery", "camera")}
+                disabled={uploadingImage}
+                className="flex-1 flex-row items-center justify-center rounded-xl border px-3 py-3"
+                style={{ borderColor: theme.border }}
+              >
+                <Feather name="camera" size={16} color={theme.primary} />
+                <Text
+                  className="ml-2 text-sm font-bold"
+                  style={{ color: theme.primary }}
+                >
+                  Take photo
+                </Text>
+              </Pressable>
+            </View>
+            {uploadingImage ? (
+              <View className="mt-4 flex-row items-center justify-center">
+                <ActivityIndicator size="small" color={theme.primary} />
+                <Text className="ml-2 text-sm" style={{ color: theme.muted }}>
+                  Uploading image...
+                </Text>
+              </View>
+            ) : null}
           </Card>
 
-          <Text className="mb-2 text-xs font-black uppercase" style={{ color: theme.muted }}>
+          <Text
+            className="mb-2 text-xs font-black uppercase"
+            style={{ color: theme.muted }}
+          >
             Core Details
           </Text>
           <Card variant="default" className="mb-5 rounded-3xl border p-5">
-            {field("Item name", itemName, setItemName, "e.g. Paneer Butter Masala", "default", false, true)}
-            {field("Description", description, setDescription, "Describe this item", "default", true)}
-            <Text className="mb-2 text-xs font-bold uppercase" style={{ color: theme.muted }}>
+            {field(
+              "Item name",
+              itemName,
+              setItemName,
+              "e.g. Paneer Butter Masala",
+              "default",
+              false,
+              true,
+            )}
+            {field(
+              "Description",
+              description,
+              setDescription,
+              "Describe this item",
+              "default",
+              true,
+            )}
+            <Text
+              className="mb-2 text-xs font-bold uppercase"
+              style={{ color: theme.muted }}
+            >
               Dietary preference <Text style={{ color: theme.danger }}>*</Text>
             </Text>
             <View className="mb-4 flex-row gap-2">
@@ -571,8 +959,10 @@ export default function EditMenuItemScreen() {
                   onPress={() => setFoodType(type)}
                   className="flex-1 items-center rounded-xl border py-4"
                   style={{
-                    backgroundColor: foodType === type ? theme.primary : theme.card,
-                    borderColor: foodType === type ? theme.primary : theme.border,
+                    backgroundColor:
+                      foodType === type ? theme.primary : theme.card,
+                    borderColor:
+                      foodType === type ? theme.primary : theme.border,
                   }}
                 >
                   <Text
@@ -584,10 +974,19 @@ export default function EditMenuItemScreen() {
                 </Pressable>
               ))}
             </View>
-            {field("Preparation time", prepTime, setPrepTime, "20 mins", "numeric")}
+            {field(
+              "Preparation time",
+              prepTime,
+              setPrepTime,
+              "20 mins",
+              "numeric",
+            )}
           </Card>
 
-          <Text className="mb-2 text-xs font-black uppercase" style={{ color: theme.muted }}>
+          <Text
+            className="mb-2 text-xs font-black uppercase"
+            style={{ color: theme.muted }}
+          >
             Pricing &amp; Marketing
           </Text>
           <Card variant="default" className="mb-5 rounded-3xl border p-5">
@@ -655,8 +1054,19 @@ export default function EditMenuItemScreen() {
                 ) : null}
               </View>
             ) : null}
-            {field("Available quantity", quantity, setQuantity, "e.g. 50", "numeric", false, true)}
-            <Text className="mb-2 text-xs font-bold uppercase" style={{ color: theme.muted }}>
+            {field(
+              "Available quantity",
+              quantity,
+              setQuantity,
+              "e.g. 50",
+              "numeric",
+              false,
+              true,
+            )}
+            <Text
+              className="mb-2 text-xs font-bold uppercase"
+              style={{ color: theme.muted }}
+            >
               Image badge / marketing tag (Optional)
             </Text>
             <ScrollView
@@ -669,12 +1079,13 @@ export default function EditMenuItemScreen() {
                 const selected = marketingTag === value;
                 return (
                   <Pressable
-                      key={value}
-                      onPress={() => {
-                        if (!customTagEnabled) setMarketingTag(value);
-                      }}
-                      disabled={customTagEnabled}
-                      className="mr-2 rounded-xl border px-4 py-3"
+                    key={value}
+                    onPress={() => {
+                      setCustomTagEnabled(false);
+                      setCustomTag("");
+                      setMarketingTag(value);
+                    }}
+                    className="mr-2 rounded-xl border px-4 py-3"
                     style={{
                       backgroundColor: selected ? theme.primary : "transparent",
                       borderColor: selected ? theme.primary : theme.border,
@@ -705,7 +1116,7 @@ export default function EditMenuItemScreen() {
                 }}
               >
                 <Text
-                  className="text-[10px] font-black uppercase"
+                  className="text-[10px] font-black"
                   style={{
                     color:
                       customTagEnabled || marketingTag === "none"
@@ -719,24 +1130,30 @@ export default function EditMenuItemScreen() {
                       ? autoDiscountAmount !== null
                         ? `₹${autoDiscountAmount} OFF`
                         : item?.discountLabel || "Auto Discount"
-                      : marketingTag}
+                      : getMarketingTagLabel(marketingTag)}
                 </Text>
               </View>
               <Text className="ml-2 text-[10px]" style={{ color: theme.muted }}>
-                Saved as marketingTag
+                {marketingTag === "auto_discount" && !customTagEnabled
+                  ? "Saved as discountLabel"
+                  : "Saved as marketingTag"}
               </Text>
             </View>
             <View
               className="mb-4 flex-row items-center rounded-xl border-2 border-dashed px-4 py-3"
               style={{ borderColor: theme.border }}
             >
-              <Text className="flex-1 text-sm font-bold" style={{ color: theme.text }}>
+              <Text
+                className="flex-1 text-sm font-bold"
+                style={{ color: theme.text }}
+              >
                 ✏️ Add Custom Tag
               </Text>
               <Switch
                 value={customTagEnabled}
                 onValueChange={(enabled) => {
                   setCustomTagEnabled(enabled);
+                  setCustomTag("");
                   setMarketingTag(enabled ? "none" : "auto_discount");
                 }}
                 trackColor={{ false: theme.border, true: theme.primary }}
@@ -744,49 +1161,52 @@ export default function EditMenuItemScreen() {
                 accessibilityLabel="Enable custom tag"
               />
             </View>
-            {customTagEnabled
-              ? (
-                  <>
-                    {field(
-                      "Custom tag",
-                      customTag,
-                      setCustomTag,
-                      "e.g. ✨ Chef's Special",
-                      "default",
-                      false,
-                      true,
-                    )}
-                    {customTag.trim() ? (
-                      <View className="mb-2 flex-row items-center">
-                        <View
-                          className="rounded-full px-3 py-1"
-                          style={{ backgroundColor: theme.primary }}
-                        >
-                          <Text
-                            className="text-[10px] font-black"
-                            style={{ color: theme.primaryForeground }}
-                          >
-                            {customTag.trim()}
-                          </Text>
-                        </View>
-                        <Text
-                          className="ml-2 text-[10px]"
-                          style={{ color: theme.muted }}
-                        >
-                          Saved as customTag
-                        </Text>
-                      </View>
-                    ) : null}
-                  </>
-                )
-              : null}
+            {customTagEnabled ? (
+              <>
+                {field(
+                  "Custom tag",
+                  customTag,
+                  setCustomTag,
+                  "e.g. ✨ Chef's Special",
+                  "default",
+                  false,
+                  true,
+                )}
+                {customTag.trim() ? (
+                  <View className="mb-2 flex-row items-center">
+                    <View
+                      className="rounded-full px-3 py-1"
+                      style={{ backgroundColor: theme.primary }}
+                    >
+                      <Text
+                        className="text-[10px] font-black"
+                        style={{ color: theme.primaryForeground }}
+                      >
+                        {customTag.trim()}
+                      </Text>
+                    </View>
+                    <Text
+                      className="ml-2 text-[10px]"
+                      style={{ color: theme.muted }}
+                    >
+                      Saved as customTag
+                    </Text>
+                  </View>
+                ) : null}
+              </>
+            ) : null}
           </Card>
 
-          <Text className="mb-2 text-xs font-black uppercase" style={{ color: theme.muted }}>
+          <Text
+            className="mb-2 text-xs font-black uppercase"
+            style={{ color: theme.muted }}
+          >
             Add-ons (Optional)
           </Text>
           {customizationGroups.map((group, groupIndex) => {
-            const groupAvailable = group.options.some((option) => option.isAvailable);
+            const groupAvailable = group.options.some(
+              (option) => option.isAvailable,
+            );
             return (
               <Card
                 key={`${group.name}-${groupIndex}`}
@@ -815,14 +1235,19 @@ export default function EditMenuItemScreen() {
                     </Pressable>
                     <Pressable
                       onPress={() =>
-                        Alert.alert("Delete add-on section?", `Remove "${group.name}" and its options?`, [
-                          { text: "Cancel", style: "cancel" },
-                          {
-                            text: "Delete",
-                            style: "destructive",
-                            onPress: () => removeCustomizationGroup(groupIndex),
-                          },
-                        ])
+                        Alert.alert(
+                          "Delete add-on section?",
+                          `Remove "${group.name}" and its options?`,
+                          [
+                            { text: "Cancel", style: "cancel" },
+                            {
+                              text: "Delete",
+                              style: "destructive",
+                              onPress: () =>
+                                removeCustomizationGroup(groupIndex),
+                            },
+                          ],
+                        )
                       }
                       className="h-10 w-10 items-center justify-center rounded-xl"
                       style={{ backgroundColor: theme.bg }}
@@ -847,8 +1272,10 @@ export default function EditMenuItemScreen() {
                   style={{ borderColor: theme.border }}
                 />
                 <Text className="mb-2 text-xs" style={{ color: theme.muted }}>
-                  {group.selectionType === "single" ? "Choose one" : "Choose multiple"} ·
-                  {" "}{group.minSelections}–{group.maxSelections} selections
+                  {group.selectionType === "single"
+                    ? "Choose one"
+                    : "Choose multiple"}{" "}
+                  · {group.minSelections}–{group.maxSelections} selections
                 </Text>
                 {group.options.map((option, optionIndex) => (
                   <View
@@ -863,14 +1290,21 @@ export default function EditMenuItemScreen() {
                       >
                         {option.name}
                       </Text>
-                      <Text className="mt-1 text-xs" style={{ color: theme.muted }}>
+                      <Text
+                        className="mt-1 text-xs"
+                        style={{ color: theme.muted }}
+                      >
                         +₹{option.price}
                       </Text>
                     </View>
                     <Switch
                       value={option.isAvailable}
                       onValueChange={(value) =>
-                        toggleCustomizationOption(groupIndex, optionIndex, value)
+                        toggleCustomizationOption(
+                          groupIndex,
+                          optionIndex,
+                          value,
+                        )
                       }
                       trackColor={{ false: theme.border, true: theme.primary }}
                       thumbColor="#ffffff"
@@ -893,7 +1327,10 @@ export default function EditMenuItemScreen() {
                   className="mt-2 items-center rounded-xl border-2 border-dashed px-3 py-3"
                   style={{ borderColor: theme.border }}
                 >
-                  <Text className="text-center text-sm font-bold" style={{ color: theme.text }}>
+                  <Text
+                    className="text-center text-sm font-bold"
+                    style={{ color: theme.text }}
+                  >
                     + Add option
                   </Text>
                 </Pressable>
@@ -951,7 +1388,10 @@ export default function EditMenuItemScreen() {
                 borderColor: theme.border,
               }}
             >
-              <Text className="mb-5 text-xl font-black" style={{ color: theme.text }}>
+              <Text
+                className="mb-5 text-xl font-black"
+                style={{ color: theme.text }}
+              >
                 {customizationEditor?.type === "option"
                   ? "Add New Add-On"
                   : customizationEditor?.groupIndex === null
@@ -1048,8 +1488,24 @@ export default function EditMenuItemScreen() {
                 </>
               ) : (
                 <>
-                  {field("Option name", optionName, setOptionName, "e.g. Extra spicy", "default", false, true)}
-                  {field("Additional price (₹)", optionPrice, setOptionPrice, "0", "numeric", false, true)}
+                  {field(
+                    "Option name",
+                    optionName,
+                    setOptionName,
+                    "e.g. Extra spicy",
+                    "default",
+                    false,
+                    true,
+                  )}
+                  {field(
+                    "Additional price (₹)",
+                    optionPrice,
+                    setOptionPrice,
+                    "0",
+                    "numeric",
+                    false,
+                    true,
+                  )}
                 </>
               )}
               <View className="mt-2 flex-row gap-3">

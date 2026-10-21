@@ -150,7 +150,10 @@ export interface OperationsManagerAssignment {
   };
 }
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL?.trim().replace(/\/+$/, "");
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL?.trim().replace(
+  /\/+$/,
+  "",
+);
 const REQUEST_TIMEOUT_MS = 15_000;
 
 async function request<T>(
@@ -196,13 +199,19 @@ async function request<T>(
       const message = error.response?.data?.message;
       if (message) throw new Error(message);
       if (error.response?.status === 401) {
-        throw new Error("Your login session has expired. Please sign in again.");
+        throw new Error(
+          "Your login session has expired. Please sign in again.",
+        );
       }
       if (error.response) {
-        throw new Error(`The server returned an error (${error.response.status}).`);
+        throw new Error(
+          `The server returned an error (${error.response.status}).`,
+        );
       }
       if (error.code === "ECONNABORTED") {
-        throw new Error("The server took too long to respond. Please try again.");
+        throw new Error(
+          "The server took too long to respond. Please try again.",
+        );
       }
       throw new Error(
         "Unable to reach the server. Check EXPO_PUBLIC_API_URL and try again.",
@@ -244,7 +253,7 @@ export const operationsApi = {
 
   async getCategories(): Promise<OperationsCategory[]> {
     return requireArray(
-      await request<OperationsCategory[]>("GET", "/categories"),
+      await request<OperationsCategory[]>("GET", "/categories?status=all"),
       "The server did not return categories.",
     );
   },
@@ -268,10 +277,7 @@ export const operationsApi = {
       undefined,
       "offers",
     );
-    return requireArray(
-      response?.offers,
-      "The server did not return offers.",
-    );
+    return requireArray(response?.offers, "The server did not return offers.");
   },
 
   async createOffer(body: {
@@ -298,12 +304,7 @@ export const operationsApi = {
   },
 
   async setOfferActive(id: string, isActive: boolean): Promise<void> {
-    await request(
-      "PATCH",
-      `/${encode(id)}/status`,
-      { isActive },
-      "offers",
-    );
+    await request("PATCH", `/${encode(id)}/status`, { isActive }, "offers");
   },
 
   async deleteOffer(id: string): Promise<void> {
@@ -367,23 +368,15 @@ export const operationsApi = {
     await request("POST", `/categories/${encode(categoryId)}/items`, body);
   },
 
-  async updateCategoryItem(
-    categoryId: string,
-    itemId: string,
-    body: Record<string, unknown>,
-  ): Promise<void> {
-    await request(
-      "PATCH",
-      `/categories/${encode(categoryId)}/items/${encode(itemId)}`,
-      body,
-    );
-  },
-
   async createCrossSell(
     categoryId: string,
     body: Record<string, unknown>,
   ): Promise<void> {
-    await request("POST", `/categories/${encode(categoryId)}/cross-sells`, body);
+    await request(
+      "POST",
+      `/categories/${encode(categoryId)}/cross-sells`,
+      body,
+    );
   },
 
   async getCrossSells(id: string): Promise<OperationsMenuItem[]> {
@@ -402,6 +395,109 @@ export const operationsApi = {
 
   async deleteItem(id: string): Promise<void> {
     await request("DELETE", `/items/${encode(id)}`);
+  },
+
+  async uploadMenuImages(
+    files: { uri: string; fileName: string; mimeType: string }[],
+    folder: "menu item" | "cross-sells",
+  ): Promise<string[]> {
+    if (files.length === 0) return [];
+    if (!API_BASE_URL) {
+      throw new Error(
+        "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+      );
+    }
+    const accessToken = await authApi.getAccessToken();
+    if (!accessToken) {
+      throw new Error("Your login session is missing. Please sign in again.");
+    }
+
+    const formData = new FormData();
+    for (const file of files) {
+      formData.append("images", {
+        uri: file.uri,
+        name: file.fileName,
+        type: file.mimeType,
+      } as unknown as Blob);
+    }
+    formData.append("folder", folder);
+
+    try {
+      const response = await axios.post<ApiEnvelope<unknown>>(
+        `${API_BASE_URL}/api/operations/upload-images`,
+        formData,
+        {
+          timeout: 60_000,
+          headers: { Authorization: `Bearer ${accessToken}` },
+        },
+      );
+      if (!response.data?.success) {
+        throw new Error(response.data?.message || "Image upload failed.");
+      }
+
+      const data = response.data.data;
+      const objectData =
+        typeof data === "object" && data !== null
+          ? (data as Record<string, unknown>)
+          : null;
+      const possibleUrls =
+        typeof data === "string"
+          ? [data]
+          : Array.isArray(data)
+            ? data
+            : (objectData?.images ??
+              objectData?.imageUrls ??
+              objectData?.urls ??
+              objectData?.url ??
+              objectData?.imageUrl);
+      const urls = (
+        Array.isArray(possibleUrls)
+          ? possibleUrls
+          : possibleUrls === undefined
+            ? []
+            : [possibleUrls]
+      )
+        .map((value) => {
+          if (typeof value === "string") return value;
+          if (typeof value !== "object" || value === null) return "";
+          const image = value as Record<string, unknown>;
+          return image.url ?? image.imageUrl ?? image.secure_url ?? "";
+        })
+        .filter(
+          (url): url is string =>
+            typeof url === "string" && /^https?:\/\/\S+$/i.test(url),
+        );
+      if (urls.length !== files.length) {
+        throw new Error(
+          "The server did not return a valid URL for every uploaded image.",
+        );
+      }
+      return urls;
+    } catch (error) {
+      if (isAxiosError<ApiEnvelope<unknown>>(error)) {
+        const message = error.response?.data?.message;
+        if (message) throw new Error(message);
+        if (error.response?.status === 401) {
+          throw new Error(
+            "Your login session has expired. Please sign in again.",
+          );
+        }
+        if (error.response) {
+          throw new Error(
+            `The server returned an error (${error.response.status}).`,
+          );
+        }
+        if (error.code === "ECONNABORTED") {
+          throw new Error("The image upload timed out. Please try again.");
+        }
+        throw new Error(
+          "Unable to reach the server. Check EXPO_PUBLIC_API_URL and try again.",
+        );
+      }
+      throw error instanceof Error
+        ? error
+        : new Error("Image upload failed. Please try again.");
+    }
   },
 
   async setItemAvailability(id: string, isAvailable: boolean): Promise<void> {

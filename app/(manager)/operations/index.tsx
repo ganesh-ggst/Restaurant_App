@@ -38,6 +38,7 @@ import {
   OperationsCategory,
   OperationsDashboard,
   OperationsMenuItem,
+  OperationsOrder,
   OperationsOffer,
   operationsApi,
 } from "../../../services/api/operations";
@@ -45,15 +46,35 @@ import { operationsCache } from "../../../services/api/operations-cache";
 import { managerProfileApi } from "../../../services/api/manager-profile";
 import { getManagerDestination } from "../../../services/authRouting";
 
-const TERMINAL_ORDER_STATUSES = new Set([
-  "cancelled",
-  "canceled",
-  "completed",
-  "delivered",
-  "failed",
-  "rejected",
-  "refunded",
+const LIVE_ORDER_STATUSES = new Set([
+  "pending",
+  "accepted",
+  "preparing",
+  "ready",
+  "out_for_delivery",
 ]);
+
+function getOrderBranchId(order: OperationsOrder): string | null {
+  const branch = order.branchId || order.branch;
+  if (typeof branch === "string") return branch;
+  return branch?._id || branch?.id || null;
+}
+
+function getLiveBranchOrders(
+  orders: OperationsOrder[],
+  branchId: string | null | undefined,
+): OperationsOrder[] {
+  const normalizedBranchId = branchId?.trim().toLowerCase();
+  if (!normalizedBranchId) return [];
+
+  return orders.filter((order) => {
+    const orderBranchId = getOrderBranchId(order)?.trim().toLowerCase();
+    const status = order.status.trim().toLowerCase().replace(/[-\s]+/g, "_");
+    return (
+      orderBranchId === normalizedBranchId && LIVE_ORDER_STATUSES.has(status)
+    );
+  });
+}
 
 function isOperationsMenuItem(value: unknown): value is OperationsMenuItem {
   return (
@@ -64,6 +85,47 @@ function isOperationsMenuItem(value: unknown): value is OperationsMenuItem {
     value._id.length > 0 &&
     "name" in value &&
     typeof value.name === "string"
+  );
+}
+
+function matchesInventorySearch(item: OperationsMenuItem, search: string): boolean {
+  const query = search.trim().toLowerCase();
+  if (!query) return true;
+
+  const categoryName =
+    typeof item.categoryId === "string" ? "" : item.categoryId.name || "";
+  const searchableText = [
+    item.name,
+    item.description,
+    item.foodType,
+    item.customTag,
+    ...(item.tags || []),
+    categoryName,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  if (searchableText.includes(query)) return true;
+
+  const searchTerms = query.split(/\s+/).filter(Boolean);
+  const words = searchableText.split(/[^a-z0-9]+/).filter(Boolean);
+  const matchesInOrder = (term: string, word: string) => {
+    let termIndex = 0;
+    for (const character of word) {
+      if (character === term[termIndex]) termIndex += 1;
+      if (termIndex === term.length) return true;
+    }
+    return false;
+  };
+  const initials = words.map((word) => word[0]).join("");
+
+  return (
+    initials.includes(searchTerms.join("")) ||
+    searchTerms.every((term) =>
+      words.some(
+        (word) => word.includes(term) || matchesInOrder(term, word),
+      ),
+    )
   );
 }
 
@@ -225,6 +287,7 @@ export default function OperationsDashboardScreen() {
   const { currentManager, loading: managerLoading, error: managerError } =
     useCurrentManager();
   const [dashboard, setDashboard] = useState<OperationsDashboard | null>(null);
+  const [liveOrderCount, setLiveOrderCount] = useState(0);
   const [categories, setCategories] = useState<OperationsCategory[]>([]);
   const [offers, setOffers] = useState<OperationsOffer[]>([]);
   const [activeOffers, setActiveOffers] = useState<OperationsOffer[]>([]);
@@ -340,14 +403,33 @@ export default function OperationsDashboardScreen() {
       );
       setOfferError("");
 
-      const [inventoryResult, candidateResult, notificationsResult, managerOffersResult] =
+      const [
+        inventoryResult,
+        candidateResult,
+        notificationsResult,
+        managerOffersResult,
+        ordersResult,
+      ] =
         await Promise.allSettled([
           operationsApi.getInventory(),
           operationsApi.getInventoryCandidates(),
           managerProfileApi.getNotifications(),
           operationsApi.getManagerOffers(),
+          operationsApi.getAllOrders(),
         ]);
       const supportingErrors: string[] = [];
+
+      if (ordersResult.status === "fulfilled") {
+        const branchId = currentManager?.branchId || dashboardData.branch._id;
+        setLiveOrderCount(
+          getLiveBranchOrders(ordersResult.value, branchId).length,
+        );
+      } else {
+        setLiveOrderCount(0);
+        supportingErrors.push(
+          `Live orders: ${ordersResult.reason instanceof Error ? ordersResult.reason.message : "Unable to load."}`,
+        );
+      }
 
       if (inventoryResult.status === "fulfilled") {
         setInventory(inventoryResult.value.filter(isOperationsMenuItem));
@@ -409,7 +491,7 @@ export default function OperationsDashboardScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [currentManager]);
 
   useFocusEffect(
     useCallback(() => {
@@ -445,11 +527,11 @@ export default function OperationsDashboardScreen() {
     const pinnedIds = new Set(
       inventory.filter(isOperationsMenuItem).map((item) => item._id),
     );
-    const query = candidateSearch.trim().toLowerCase();
     return candidates.filter(
       (item) =>
         isOperationsMenuItem(item) &&
-        !pinnedIds.has(item._id) && item.name.toLowerCase().includes(query),
+        !pinnedIds.has(item._id) &&
+        matchesInventorySearch(item, candidateSearch),
     );
   }, [candidateSearch, candidates, inventory]);
   const inventoryFoodType = (
@@ -462,14 +544,13 @@ export default function OperationsDashboardScreen() {
   };
 
   const filteredOfferItems = useMemo(() => {
-    const query = offerItemSearch.trim().toLowerCase();
-    if (!query) return offerItems;
-    return offerItems.filter((item) => item.name.toLowerCase().includes(query));
+    return offerItems.filter((item) =>
+      matchesInventorySearch(item, offerItemSearch),
+    );
   }, [offerItemSearch, offerItems]);
   const filteredInventory = useMemo(() => {
-    const query = quickInventorySearch.trim().toLowerCase();
     return inventory.filter((item) => {
-      if (query && !item.name.toLowerCase().includes(query)) return false;
+      if (!matchesInventorySearch(item, quickInventorySearch)) return false;
       if (inventoryStockFilter === "inStock" && !item.isAvailable) return false;
       if (inventoryStockFilter === "outOfStock" && item.isAvailable) return false;
       if (inventoryTypeFilter !== "all") {
@@ -484,6 +565,13 @@ export default function OperationsDashboardScreen() {
   }, [inventory, inventoryStockFilter, inventoryTypeFilter, quickInventorySearch]);
   const activeCategories = useMemo(
     () => categories.filter((category) => category.isActive),
+    [categories],
+  );
+  const categoryManagerCategories = useMemo(
+    () =>
+      [...categories].sort(
+        (first, second) => Number(second.isActive) - Number(first.isActive),
+      ),
     [categories],
   );
 
@@ -781,7 +869,7 @@ export default function OperationsDashboardScreen() {
       return;
     }
 
-    const branchId = currentManager?.branchId;
+    const branchId = currentManager?.branchId || dashboard?.branch._id;
     if (!branchId) {
       Alert.alert(
         "Unable to check out",
@@ -802,17 +890,7 @@ export default function OperationsDashboardScreen() {
             void operationsApi
               .getAllOrders()
               .then((orders) => {
-                const activeOrders = orders.filter((order) => {
-                  const orderBranchId =
-                    typeof order.branchId === "string"
-                      ? order.branchId
-                      : order.branchId?._id || order.branchId?.id;
-                  const isSameBranch = !orderBranchId || orderBranchId === branchId;
-                  return (
-                    isSameBranch &&
-                    !TERMINAL_ORDER_STATUSES.has(order.status.toLowerCase())
-                  );
-                });
+                const activeOrders = getLiveBranchOrders(orders, branchId);
                 if (activeOrders.length > 0) {
                   Alert.alert(
                     "Cannot Check Out",
@@ -1150,7 +1228,7 @@ export default function OperationsDashboardScreen() {
             <View>
               <Text className="text-base font-black text-white">Live Orders</Text>
               <Text className="text-xs text-white">
-                {dashboard?.stats.liveOrders ?? 0} currently active
+                {liveOrderCount} currently active
               </Text>
             </View>
             <Feather name="arrow-right" size={20} color="#ffffff" />
@@ -1165,6 +1243,14 @@ export default function OperationsDashboardScreen() {
                 onPress={() => {
                   setCategoryManagerView("list");
                   setIsCategoryManagerOpen(true);
+                  void refreshCategories().catch((categoryError: unknown) => {
+                    Alert.alert(
+                      "Unable to load categories",
+                      categoryError instanceof Error
+                        ? categoryError.message
+                        : "Please try again.",
+                    );
+                  });
                 }}
                 accessibilityRole="button"
                 accessibilityLabel="Modify categories"
@@ -1308,7 +1394,7 @@ export default function OperationsDashboardScreen() {
                 </Pressable>
               ) : null}
             </View>
-            <View className="mb-2 flex-row flex-wrap justify-start gap-2">
+            <View className="mb-2 flex-row gap-2">
               {([
                 ["all", "All"],
                 ["inStock", "In Stock"],
@@ -1321,14 +1407,21 @@ export default function OperationsDashboardScreen() {
                     onPress={() => setInventoryStockFilter(filter)}
                     accessibilityRole="button"
                     accessibilityState={{ selected }}
-                    className="rounded-xl px-4 py-3"
+                    className="flex-1 items-center justify-center rounded-xl px-2 py-3"
                     style={{
                       backgroundColor: selected ? theme.primary : theme.card,
+                      borderColor: selected ? theme.primary : theme.border,
+                      borderWidth: 1,
                     }}
                   >
                     <Text
-                      className="text-sm font-bold"
-                      style={{ color: selected ? "#ffffff" : theme.text }}
+                      className="text-center text-sm font-bold"
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.85}
+                      style={{
+                        color: selected ? theme.primaryForeground : theme.text,
+                      }}
                     >
                       {label}
                     </Text>
@@ -1336,7 +1429,7 @@ export default function OperationsDashboardScreen() {
                 );
               })}
             </View>
-            <View className="mb-4 flex-row flex-wrap justify-start gap-2">
+            <View className="mb-4 flex-row gap-2">
               {([
                 ["all", "All Types"],
                 ["veg", "🟢 Veg"],
@@ -1349,14 +1442,18 @@ export default function OperationsDashboardScreen() {
                     onPress={() => setInventoryTypeFilter(filter)}
                     accessibilityRole="button"
                     accessibilityState={{ selected }}
-                    className="rounded-xl px-4 py-3"
+                    className="flex-1 items-center justify-center rounded-xl px-2 py-3"
                     style={{
                       backgroundColor: selected ? theme.primary : theme.card,
+                      borderColor: selected ? theme.primary : theme.border,
+                      borderWidth: 1,
                     }}
                   >
                     <Text
-                      className="text-sm font-bold"
-                      style={{ color: selected ? "#ffffff" : theme.text }}
+                      className="text-center text-sm font-bold"
+                      style={{
+                        color: selected ? theme.primaryForeground : theme.text,
+                      }}
                     >
                       {label}
                     </Text>
@@ -1371,7 +1468,7 @@ export default function OperationsDashboardScreen() {
               <Card
                 key={item._id}
                 variant="default"
-                className="mb-3 flex-row items-center justify-start rounded-2xl border-0 p-4"
+                className="mb-3 flex-row items-center justify-start rounded-2xl p-4"
               >
                 <Pressable
                   className="mr-10 flex-1 items-start"
@@ -1463,7 +1560,7 @@ export default function OperationsDashboardScreen() {
                 height:
                   categoryManagerView === "list"
                     ? categoryManagerModalHeight
-                    : undefined,
+                    : Math.min(440, categoryManagerModalHeight),
                 maxHeight: categoryManagerModalHeight,
                 backgroundColor: theme.card,
                 borderColor: theme.border,
@@ -1517,7 +1614,7 @@ export default function OperationsDashboardScreen() {
                     contentContainerStyle={{ paddingBottom: 8 }}
                     showsVerticalScrollIndicator={false}
                   >
-                    {categories.map((category) => (
+                    {categoryManagerCategories.map((category) => (
                       <View
                         key={category.id}
                         className="mb-3 flex-row items-center rounded-2xl p-4"
@@ -1564,60 +1661,65 @@ export default function OperationsDashboardScreen() {
                   </ScrollView>
                 </>
               ) : (
-                <ScrollView
-                  keyboardShouldPersistTaps="handled"
-                  showsVerticalScrollIndicator={false}
-                  contentContainerStyle={{ paddingBottom: 4 }}
-                >
-                  <Text
-                    className="mb-2 text-sm font-bold uppercase"
-                    style={{ color: theme.muted }}
+                <>
+                  <ScrollView
+                    className="flex-1"
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator={false}
+                    contentContainerStyle={{ paddingBottom: 4 }}
                   >
-                    Category Name
-                  </Text>
-                  <TextInput
-                    value={categoryName}
-                    onChangeText={setCategoryName}
-                    placeholder="e.g. Biryani"
-                    placeholderTextColor={theme.muted}
-                    className="mb-4 rounded-xl px-4"
-                    style={{
-                      height: 56,
-                      backgroundColor: theme.bg,
-                      color: theme.text,
-                      fontSize: 17,
-                    }}
-                    autoFocus
-                    returnKeyType="next"
-                  />
-                  <Text
-                    className="mb-2 text-sm font-bold uppercase"
-                    style={{ color: theme.muted }}
-                  >
-                    Emoji Icon (Optional)
-                  </Text>
-                  <TextInput
-                    value={categoryIcon}
-                    onChangeText={setCategoryIcon}
-                    placeholder="e.g. 🍲"
-                    placeholderTextColor={theme.muted}
-                    className="mb-6 rounded-xl px-4"
-                    style={{
-                      height: 56,
-                      backgroundColor: theme.bg,
-                      color: theme.text,
-                      fontSize: 17,
-                    }}
-                  />
-                  <View className="flex-row justify-end gap-3">
+                    <Text
+                      className="mb-2 text-sm font-bold uppercase"
+                      style={{ color: theme.muted }}
+                    >
+                      Category Name
+                    </Text>
+                    <TextInput
+                      value={categoryName}
+                      onChangeText={setCategoryName}
+                      placeholder="e.g. Biryani"
+                      placeholderTextColor={theme.muted}
+                      className="mb-4 rounded-xl px-4"
+                      style={{
+                        height: 56,
+                        backgroundColor: theme.bg,
+                        color: theme.text,
+                        fontSize: 17,
+                      }}
+                      autoFocus
+                      returnKeyType="next"
+                    />
+                    <Text
+                      className="mb-2 text-sm font-bold uppercase"
+                      style={{ color: theme.muted }}
+                    >
+                      Emoji Icon (Optional)
+                    </Text>
+                    <TextInput
+                      value={categoryIcon}
+                      onChangeText={setCategoryIcon}
+                      placeholder="e.g. 🍲"
+                      placeholderTextColor={theme.muted}
+                      className="mb-6 rounded-xl px-4"
+                      style={{
+                        height: 56,
+                        backgroundColor: theme.bg,
+                        color: theme.text,
+                        fontSize: 17,
+                      }}
+                    />
+                  </ScrollView>
+                  <View className="mt-4 flex-row gap-3">
                     <Pressable
                       onPress={() => setCategoryManagerView("list")}
                       disabled={savingCategory}
-                      className="rounded-xl border px-5 py-3"
+                      className="min-h-12 flex-1 items-center justify-center rounded-xl border px-3 py-3"
                       style={{ borderColor: theme.border }}
                     >
                       <Text
-                        className="font-bold"
+                        className="text-center font-bold"
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
                         style={{ color: theme.text }}
                       >
                         Cancel
@@ -1626,17 +1728,27 @@ export default function OperationsDashboardScreen() {
                     <Pressable
                       onPress={() => void handleCreateCategory()}
                       disabled={savingCategory}
-                      className="min-w-24 items-center rounded-xl px-5 py-3"
+                      className="min-h-12 flex-1 items-center justify-center rounded-xl px-3 py-3"
                       style={{ backgroundColor: theme.primary }}
                     >
                       {savingCategory ? (
-                        <ActivityIndicator size="small" color="#ffffff" />
+                        <ActivityIndicator
+                          size="small"
+                          color={theme.primaryForeground}
+                        />
                       ) : (
-                        <Text className="font-bold text-white">Create</Text>
+                        <Text
+                          className="text-center font-bold"
+                          numberOfLines={1}
+                          adjustsFontSizeToFit
+                          style={{ color: theme.primaryForeground }}
+                        >
+                          Create
+                        </Text>
                       )}
                     </Pressable>
                   </View>
-                </ScrollView>
+                </>
               )}
             </View>
           </KeyboardAvoidingView>
