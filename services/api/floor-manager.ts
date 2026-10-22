@@ -80,6 +80,10 @@ export interface FloorManagerSessionDetails extends Record<string, unknown> {
     firstName?: string;
     lastName?: string;
   };
+  userId?: {
+    firstName?: string;
+    lastName?: string;
+  };
   customer?: {
     firstName?: string;
     lastName?: string;

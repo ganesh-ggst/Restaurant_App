@@ -145,13 +145,15 @@ export default function TableDetailScreen() {
           try {
             const sessionDetails =
               await floorManagerApi.getSessionDetails(sessionId);
+            const userId = asRecord(sessionDetails.userId);
             const user = asRecord(sessionDetails.user);
             const customer = asRecord(sessionDetails.customer);
             setCustomerFirstName(
               getText(
-                sessionDetails.firstName,
+                userId?.firstName,
                 user?.firstName,
                 customer?.firstName,
+                sessionDetails.firstName,
               ) || "",
             );
           } catch (error) {
@@ -440,26 +442,27 @@ export default function TableDetailScreen() {
         <Card variant="default" className="mb-6 rounded-3xl border-0 p-4">
           <View className="mb-2 flex-row items-center justify-between">
             <Text
-              className="text-xs font-bold uppercase"
+              className="flex-1 text-xs font-bold uppercase"
               style={{ color: theme.muted }}
+              numberOfLines={1}
             >
               Seating Capacity
             </Text>
-            {customerFirstName ? (
+            {customerFirstName || customerNameError ? (
               <Text
-                className="ml-3 text-base font-extrabold"
-                style={{ color: theme.text }}
+                className="ml-3 text-right text-base font-extrabold"
+                style={{
+                  color: customerFirstName ? theme.text : theme.danger,
+                  width: "45%",
+                  flexShrink: 1,
+                }}
                 numberOfLines={1}
+                ellipsizeMode="tail"
+                accessibilityLabel={
+                  customerFirstName || "Customer name unavailable"
+                }
               >
-                {customerFirstName}
-              </Text>
-            ) : customerNameError ? (
-              <Text
-                className="ml-3 text-xs font-semibold"
-                style={{ color: theme.danger }}
-                numberOfLines={1}
-              >
-                Name unavailable
+                {customerFirstName || "Name unavailable"}
               </Text>
             ) : null}
           </View>
