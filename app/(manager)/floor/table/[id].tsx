@@ -1,9 +1,10 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Pressable,
+  RefreshControl,
   ScrollView,
   Text,
   TextInput,
@@ -14,149 +15,242 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Button } from "../../../../components/ui/Button";
 import { Card } from "../../../../components/ui/Card";
 import {
-  FINANCIAL_MOCK_STATE,
-  FloorTable,
-  INITIAL_FLOOR_NOTIFICATIONS,
-  INITIAL_FLOOR_TABLES,
-  MANAGER_MOCK_DATA,
-} from "../../../../constants/managerMockData";
+  FloorManagerTableDetails,
+  floorManagerApi,
+} from "../../../../services/api/floor-manager";
 import { useAppTheme } from "../../../../hooks/useAppTheme";
-import { useCurrentManager } from "../../../../hooks/useCurrentManager";
+
+type TableStatus = "available" | "active" | "billed";
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function getNumber(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    const number = typeof value === "number" ? value : Number(value);
+    if (Number.isFinite(number)) return number;
+  }
+  return undefined;
+}
+
+function getText(...values: unknown[]): string | undefined {
+  return values.find(
+    (value): value is string => typeof value === "string" && value.length > 0,
+  );
+}
+
+function normalizeStatus(status: string): TableStatus {
+  const normalized = status.toLowerCase();
+  if (normalized === "billed") return "billed";
+  if (normalized === "occupied" || normalized === "active") return "active";
+  return "available";
+}
+
+function getSessionCustomerCount(
+  table: FloorManagerTableDetails["table"],
+  session: Record<string, unknown> | null,
+): number {
+  const count = getNumber(
+    session?.customersSeated,
+    session?.customerCount,
+    table.customersSeated,
+  );
+  return count ?? 0;
+}
+
+function getOrderItems(orders: Record<string, unknown>[]) {
+  return orders.flatMap((order) => {
+    const items = Array.isArray(order.items) ? order.items : [];
+    return items.flatMap((value) => {
+      const item = asRecord(value);
+      if (!item) return [];
+      const quantity = getNumber(item.quantity, item.qty) ?? 1;
+      const lineTotal =
+        getNumber(item.itemTotal, item.totalPrice, item.total, item.amount) ??
+        (getNumber(item.price, item.unitPrice) ?? 0) * quantity;
+      return [
+        {
+          name: getText(item.name, item.itemName, item.title) || "Order item",
+          quantity,
+          total: lineTotal,
+        },
+      ];
+    });
+  });
+}
+
+function formatElapsedTime(value?: string) {
+  if (!value) return "";
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return "";
+  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000));
+  if (minutes < 1) return "Just now";
+  return `${minutes} min${minutes === 1 ? "" : "s"} ago`;
+}
+
+function currency(value: number) {
+  return `₹${Number.isInteger(value) ? value : value.toFixed(2)}`;
+}
 
 export default function TableDetailScreen() {
   const theme = useAppTheme();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { currentManager } = useCurrentManager();
+  const tableId = Array.isArray(id) ? id[0] : id;
 
-  const tableIndex = INITIAL_FLOOR_TABLES.findIndex((t) => t.id === id);
-  const table = INITIAL_FLOOR_TABLES[tableIndex];
+  const [details, setDetails] = useState<FloorManagerTableDetails | null>(null);
+  const [customerFirstName, setCustomerFirstName] = useState("");
+  const [customerNameError, setCustomerNameError] = useState("");
+  const [bill, setBill] = useState<Record<string, unknown> | null>(null);
+  const [status, setStatus] = useState<TableStatus>("available");
+  const [capacity, setCapacity] = useState("");
+  const [customerCount, setCustomerCount] = useState("0");
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [billError, setBillError] = useState("");
 
-  if (!table) {
-    return (
-      <SafeAreaView
-        className="flex-1 justify-center items-center px-6"
-        style={{ backgroundColor: theme.bg }}
-      >
-        <Text style={{ color: theme.text }}>Table not found.</Text>
-      </SafeAreaView>
-    );
-  }
+  const loadTableDetails = useCallback(async (showLoading = false) => {
+    if (!tableId) {
+      setLoadError("A table ID was not provided.");
+      setIsLoading(false);
+      return;
+    }
+    setLoadError("");
+    setBillError("");
+    setCustomerNameError("");
+    if (showLoading) setIsLoading(true);
+    try {
+      const nextDetails = await floorManagerApi.getTableDetails(tableId);
+      setDetails(nextDetails);
+      setStatus(normalizeStatus(nextDetails.table.status));
+      setCapacity(String(nextDetails.table.capacity));
+      setCustomerCount(
+        String(getSessionCustomerCount(nextDetails.table, nextDetails.session)),
+      );
+      setBill(null);
+      setCustomerFirstName("");
 
-  const tNum = table.tableName.replace(/[^0-9]/g, "");
-  const tableKey = `T${tNum}`;
-  const tableManager =
-    MANAGER_MOCK_DATA.managers.find((m: any) =>
-      m.assignedTables.includes(tableKey),
-    ) || currentManager;
+      if (nextDetails.session) {
+        const sessionId = getText(
+          nextDetails.session._id,
+          nextDetails.session.id,
+          nextDetails.session.sessionId,
+        );
+        if (sessionId) {
+          try {
+            const sessionDetails =
+              await floorManagerApi.getSessionDetails(sessionId);
+            const user = asRecord(sessionDetails.user);
+            const customer = asRecord(sessionDetails.customer);
+            setCustomerFirstName(
+              getText(
+                sessionDetails.firstName,
+                user?.firstName,
+                customer?.firstName,
+              ) || "",
+            );
+          } catch (error) {
+            setCustomerNameError(
+              error instanceof Error
+                ? error.message
+                : "Unable to load the customer name.",
+            );
+          }
+        } else {
+          setCustomerNameError(
+            "The active session did not include a session ID.",
+          );
+        }
 
-  const assignedWaiterIds = tableManager?.assignedWaiters || [];
-
-  const busyWaiterIds = new Set(
-    INITIAL_FLOOR_TABLES.filter(
-      (t) =>
-        t.id !== table.id &&
-        (t.status === "occupied" || t.status === "billed") &&
-        t.currentOrder?.waiterId,
-    ).map((t) => t.currentOrder?.waiterId),
-  );
-
-  const availableWaiters = (MANAGER_MOCK_DATA.waiters || []).filter(
-    (w: any) => {
-      const belongsToManager =
-        w.managerId === tableManager?.id || assignedWaiterIds.includes(w.id);
-      const notBusyElsewhere = !busyWaiterIds.has(w.id);
-      const isAvailableStatus = w.status === "available";
-      return belongsToManager && notBusyElsewhere && isAvailableStatus;
-    },
-  );
-
-  const matchedWaiterId =
-    table.currentOrder?.waiterId || availableWaiters[0]?.id;
-  const [selectedWaiterId, setSelectedWaiterId] = useState<string | undefined>(
-    matchedWaiterId,
-  );
-
-  const [status, setStatus] = useState<FloorTable["status"]>(table.status);
-  const [guestCount, setGuestCount] = useState(table.capacity.toString());
-  const [customerCount, setCustomerCount] = useState<string>(
-    table.customerCount?.toString() || "",
-  );
-
-  const [showTaxPopup, setShowTaxPopup] = useState(false);
-
-  const [elapsedText, setElapsedText] = useState("");
+        try {
+          setBill(await floorManagerApi.getTableBill(tableId));
+        } catch (error) {
+          setBillError(
+            error instanceof Error ? error.message : "Unable to load the bill.",
+          );
+        }
+      }
+    } catch (error) {
+      setLoadError(
+        error instanceof Error
+          ? error.message
+          : "Unable to load table details.",
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }, [tableId]);
 
   useEffect(() => {
-    if (
-      table.status === "available" ||
-      table.status === "reserved" ||
-      !table.currentOrder?.startTime
-    )
-      return;
+    void Promise.resolve().then(() => loadTableDetails(true));
+  }, [loadTableDetails]);
 
-    const updateElapsedTime = () => {
-      const diffMs = Date.now() - (table.currentOrder?.startTime || Date.now());
-      const diffMins = Math.floor(diffMs / 60000);
-      if (diffMins < 1) {
-        setElapsedText("Just now");
-      } else if (diffMins === 1) {
-        setElapsedText("1 min ago");
-      } else {
-        setElapsedText(`${diffMins} mins ago`);
-      }
-    };
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    await loadTableDetails();
+    setIsRefreshing(false);
+  }, [loadTableDetails]);
 
-    updateElapsedTime();
-    const interval = setInterval(updateElapsedTime, 30000);
-    return () => clearInterval(interval);
-  }, [table]);
-
+  const table = details?.table;
+  const session = details?.session ?? null;
+  const tableStatus = table ? normalizeStatus(table.status) : "available";
   const isBlocked = status !== "available";
+  const assignedWaiter =
+    table && asRecord(table.assignedWaiterId)
+      ? getText(asRecord(table.assignedWaiterId)?.name)
+      : undefined;
 
-  const allowedStatuses =
-    table.status === "available"
-      ? [
-          { id: "available", label: "Free", color: "#22c55e" },
-          { id: "occupied", label: "Active", color: theme.primary },
-        ]
-      : table.status === "occupied"
-        ? [
-            { id: "occupied", label: "Active", color: theme.primary },
-            { id: "billed", label: "Billed", color: "#3b82f6" },
-          ]
-        : table.status === "billed"
-          ? [
-              { id: "billed", label: "Billed", color: "#3b82f6" },
-              { id: "available", label: "Free", color: "#22c55e" },
-            ]
-          : table.status === "reserved"
-            ? [
-                { id: "reserved", label: "Reserved", color: "#eab308" },
-                { id: "occupied", label: "Active", color: theme.primary },
-              ]
-            : [
-                { id: "available", label: "Free", color: "#22c55e" },
-                { id: "occupied", label: "Active", color: theme.primary },
-                { id: "reserved", label: "Reserved", color: "#eab308" },
-                { id: "billed", label: "Billed", color: "#3b82f6" },
-              ];
-
-  const handleStatusChange = (newStatus: FloorTable["status"]) => {
-    setStatus(newStatus);
-  };
-
-  const taxSection = MANAGER_MOCK_DATA.storeDetails?.find(
-    (s: any) => s.id === "sd_tax",
+  const orderItems = useMemo(
+    () => getOrderItems(details?.orders ?? []),
+    [details?.orders],
   );
-  const activeTaxOpt =
-    taxSection?.options?.find((o: any) => o.isActive) ||
-    taxSection?.options?.[0];
-  const taxStr = activeTaxOpt?.value || "5%";
-  const taxRate = parseFloat(taxStr.replace(/[^0-9.]/g, "")) / 100 || 0.05;
+  const billRecord = asRecord(bill?.bill) || bill;
+  const subtotal =
+    getNumber(billRecord?.subtotal, billRecord?.subTotal) ??
+    orderItems.reduce((sum, item) => sum + item.total, 0);
+  const taxAmount = getNumber(
+    billRecord?.gstAmount,
+    billRecord?.taxAmount,
+    billRecord?.gst,
+    billRecord?.tax,
+  );
+  const totalAmount = getNumber(
+    billRecord?.totalAmount,
+    billRecord?.grandTotal,
+    billRecord?.total,
+  );
+  const sessionStartedAt = getText(
+    session?.startedAt,
+    session?.startTime,
+    session?.createdAt,
+  );
+  const elapsedText = formatElapsedTime(sessionStartedAt);
 
-  const handleSaveTable = () => {
-    if (status === table.status) {
+  const handleSaveTable = async () => {
+    if (!table || !tableId || isSaving) return;
+    const parsedCapacity = Number(capacity);
+    const parsedCustomers = Number(customerCount);
+    if (!Number.isInteger(parsedCapacity) || parsedCapacity < 1) {
+      Alert.alert("Invalid capacity", "Enter a seating capacity of at least 1.");
+      return;
+    }
+    if (!Number.isInteger(parsedCustomers) || parsedCustomers < 0) {
+      Alert.alert("Invalid customer count", "Enter zero or a positive whole number.");
+      return;
+    }
+    if (parsedCustomers > parsedCapacity) {
+      Alert.alert(
+        "Invalid customer count",
+        "Customers seated cannot exceed the table capacity.",
+      );
+      return;
+    }
+    if (status === tableStatus) {
       Alert.alert(
         "Action Required",
         "You forgot to change option to related next option.",
@@ -164,211 +258,126 @@ export default function TableDetailScreen() {
       return;
     }
 
-    if ((status === "occupied" || status === "reserved") && !selectedWaiterId) {
-      Alert.alert("Error", "Please select an assigned waiter for this table!");
-      return;
-    }
-
-    const parsedCapacity = parseInt(guestCount) || table.capacity;
-    const parsedCustomers = parseInt(customerCount) || 0;
-
-    if (status === "occupied" && parsedCustomers <= 0) {
+    setIsSaving(true);
+    try {
+      const changes: {
+        capacity?: number;
+        status?: TableStatus;
+        customersSeated?: number;
+      } = {};
+      if (parsedCapacity !== table.capacity) changes.capacity = parsedCapacity;
+      if (status !== tableStatus) changes.status = status;
+      if (
+        parsedCustomers !==
+        getSessionCustomerCount(table, details?.session ?? null)
+      ) {
+        changes.customersSeated = parsedCustomers;
+      }
+      if (Object.keys(changes).length > 0) {
+        await floorManagerApi.updateTable(tableId, changes);
+      }
+      await loadTableDetails();
+      Alert.alert("Saved", "Table changes were saved successfully.", [
+        { text: "OK", onPress: () => router.back() },
+      ]);
+    } catch (error) {
+      await loadTableDetails();
       Alert.alert(
-        "Validation Error",
-        "An active table must have at least 1 customer seated.",
+        "Unable to save table changes",
+        error instanceof Error
+          ? error.message
+          : "Some changes may not have been saved. Refresh the table and try again.",
       );
-      setStatus(table.status);
-      return;
+    } finally {
+      setIsSaving(false);
     }
-
-    if (table.status === "billed" && parsedCustomers <= 0) {
-      Alert.alert(
-        "Validation Error",
-        "A billed table must have at least 1 customer seated.",
-      );
-      setStatus(table.status);
-      return;
-    }
-
-    let timeTakenText = "15 mins";
-    if (
-      table.status !== "available" &&
-      table.status !== "reserved" &&
-      status === "available"
-    ) {
-      const startTime =
-        table.currentOrder?.startTime || Date.now() - 15 * 60 * 1000;
-      const diffMs = Date.now() - startTime;
-      const diffMins = Math.max(1, Math.floor(diffMs / 60000));
-      timeTakenText = `${diffMins} min${diffMins > 1 ? "s" : ""}`;
-    }
-
-    const isMovingToActive =
-      table.status !== "occupied" && status === "occupied";
-    const startTime = isMovingToActive
-      ? Date.now()
-      : table.currentOrder?.startTime || Date.now();
-
-    // 🟢 DYNAMIC REVENUE CALCULATION: Capture bill amount when moving Billed -> Free
-    if (table.status === "billed" && status === "available") {
-      const billAmt = table.currentOrder?.totalAmount || 1207.5;
-      FINANCIAL_MOCK_STATE.completedTableBills += billAmt;
-
-      if (!(FINANCIAL_MOCK_STATE as any).completedTableTransactions) {
-        (FINANCIAL_MOCK_STATE as any).completedTableTransactions = [];
-      }
-      const alreadyExists = (
-        FINANCIAL_MOCK_STATE as any
-      ).completedTableTransactions.some(
-        (b: any) => b.tableName === table.tableName && b.amount === billAmt,
-      );
-      if (!alreadyExists) {
-        (FINANCIAL_MOCK_STATE as any).completedTableTransactions.push({
-          tableName: table.tableName,
-          amount: billAmt,
-        });
-      }
-
-      FINANCIAL_MOCK_STATE.salesDistribution.dineIn.amount += billAmt;
-
-      // Dynamically update today's weekly trend bar (Thu)
-      const daysMap = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-      const liveDayStr = daysMap[new Date().getDay()];
-      const todayEntry = FINANCIAL_MOCK_STATE.weeklyTrend.find(
-        (w) => w.day === liveDayStr,
-      );
-      const targetIndex = FINANCIAL_MOCK_STATE.weeklyTrend.findIndex(
-        (w) => w.day === liveDayStr,
-      );
-      if (todayEntry) {
-        todayEntry.amount += billAmt;
-        todayEntry.dineIn += billAmt;
-      } else if (targetIndex > -1) {
-        FINANCIAL_MOCK_STATE.weeklyTrend[targetIndex].amount += billAmt;
-        FINANCIAL_MOCK_STATE.weeklyTrend[targetIndex].dineIn += billAmt;
-      } else {
-        FINANCIAL_MOCK_STATE.weeklyTrend[4].amount += billAmt;
-        FINANCIAL_MOCK_STATE.weeklyTrend[4].dineIn += billAmt;
-      }
-    }
-
-    if (tableIndex > -1) {
-      const defaultOrderItems = [
-        { name: "House Special Dish", qty: 1, price: 450 },
-        { name: "Beverage", qty: 2, price: 300 },
-      ];
-      const activeItems = table.currentOrder?.items || defaultOrderItems;
-      const subtotalVal = activeItems.reduce(
-        (acc, item) => acc + item.price,
-        0,
-      );
-      const calculatedTotalWithGst =
-        Math.round((subtotalVal + subtotalVal * taxRate) * 100) / 100;
-
-      INITIAL_FLOOR_TABLES[tableIndex] = {
-        ...table,
-        status,
-        capacity: parsedCapacity,
-        customerCount: status === "available" ? 0 : parsedCustomers,
-        currentOrder:
-          status === "available"
-            ? undefined
-            : status === "reserved"
-              ? {
-                  orderId:
-                    table.currentOrder?.orderId ||
-                    `RES-${Math.floor(100 + Math.random() * 900)}`,
-                  itemsCount: table.currentOrder?.itemsCount || 0,
-                  totalAmount: table.currentOrder?.totalAmount || 0,
-                  waiterId: selectedWaiterId,
-                  timeSeated: table.currentOrder?.timeSeated || "Reserved",
-                  startTime: table.currentOrder?.startTime || Date.now(),
-                }
-              : {
-                  orderId:
-                    table.currentOrder?.orderId ||
-                    `ORD-${Math.floor(100 + Math.random() * 900)}`,
-                  itemsCount: table.currentOrder?.itemsCount || 2,
-                  totalAmount: calculatedTotalWithGst,
-                  waiterId: selectedWaiterId,
-                  timeSeated: isMovingToActive
-                    ? "Just now"
-                    : table.currentOrder?.timeSeated || "Just now",
-                  startTime,
-                  items: activeItems,
-                },
-      };
-    }
-
-    const statusLabelMap: Record<FloorTable["status"], string> = {
-      available: "Free",
-      occupied: "Active",
-      reserved: "Reserved",
-      billed: "Billed",
-    };
-
-    const targetOptionLabel = statusLabelMap[status] || status;
-
-    INITIAL_FLOOR_NOTIFICATIONS.unshift({
-      id: `fn_${Date.now()}`,
-      title: "Table Status Changed",
-      message: `${table.tableName} successfully moved to "${targetOptionLabel}".`,
-      timestamp: "Just now",
-      type: "status_change",
-      isRead: false,
-      tableId: table.id,
-    });
-
-    const successMessage =
-      status === "available"
-        ? `Successfully moved to "${targetOptionLabel}"!\n⏱️ Total Session Time: ${timeTakenText}`
-        : `Successfully moved to "${targetOptionLabel}"!`;
-
-    Alert.alert("Success", successMessage, [
-      { text: "OK", onPress: () => router.back() },
-    ]);
   };
 
-  const isLockedState =
-    table.status === "occupied" || table.status === "billed";
+  const statusOptions: { id: TableStatus; label: string; color: string }[] =
+    tableStatus === "available"
+      ? [
+          { id: "available", label: "Free", color: "#22c55e" },
+          { id: "active", label: "Active", color: theme.primary },
+        ]
+      : tableStatus === "billed"
+        ? [
+            { id: "active", label: "Active", color: theme.primary },
+            { id: "billed", label: "Billed", color: "#168f50" },
+            { id: "available", label: "Free", color: "#22c55e" },
+          ]
+        : [
+            { id: "active", label: "Active", color: theme.primary },
+            { id: "billed", label: "Billed", color: "#168f50" },
+          ];
 
-  const lockedWaiterObj = MANAGER_MOCK_DATA.waiters.find(
-    (w: any) => w.id === table.currentOrder?.waiterId,
-  );
-  const assignedWaiterName = lockedWaiterObj?.name || "Assigned Waiter";
+  if (isLoading) {
+    return (
+      <SafeAreaView
+        className="flex-1 items-center justify-center"
+        style={{ backgroundColor: theme.bg }}
+      >
+        <Text style={{ color: theme.muted }}>Loading table details...</Text>
+      </SafeAreaView>
+    );
+  }
 
-  const showCart = table.status === "occupied" || table.status === "billed";
-  const orderedItems = table.currentOrder?.items || [];
+  if (!table) {
+    return (
+      <SafeAreaView
+        className="flex-1 items-center justify-center px-6"
+        style={{ backgroundColor: theme.bg }}
+      >
+        <Text className="mb-4 text-center" style={{ color: theme.text }}>
+          {loadError || "Table details are unavailable."}
+        </Text>
+        <Button
+          title="Try Again"
+          onPress={() => void loadTableDetails(true)}
+        />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView className="flex-1" style={{ backgroundColor: theme.bg }}>
       <StatusBar style={theme.isDark ? "light" : "dark"} />
 
       <View
-        className="flex-row items-center px-6 pt-4 pb-4 border-b"
+        className="flex-row items-center border-b px-6 pb-4 pt-4"
         style={{ borderBottomColor: theme.border }}
       >
         <Pressable
           onPress={() => router.back()}
-          className="p-2 -ml-2 mr-2"
+          className="-ml-2 mr-2 p-2"
           hitSlop={20}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <Text className="text-2xl" style={{ color: theme.text }}>
             ←
           </Text>
         </Pressable>
         <Text className="text-2xl font-bold" style={{ color: theme.text }}>
-          Manage {table.tableName}
+          Manage Table {table.tableNumber}
         </Text>
       </View>
 
       <ScrollView
         className="flex-1 px-6 pt-6"
-        contentContainerStyle={{ paddingBottom: 100 }}
+        contentContainerStyle={{ paddingBottom: 36 }}
+        keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={() => void handleRefresh()}
+            tintColor={theme.primary}
+            colors={[theme.primary]}
+          />
+        }
       >
         <View
-          className="p-4 mb-6 rounded-2xl flex-row justify-between items-center border"
+          className="mb-6 flex-row items-center justify-between rounded-2xl border p-4"
           style={{
             backgroundColor: isBlocked
               ? "rgba(239, 68, 68, 0.1)"
@@ -376,12 +385,12 @@ export default function TableDetailScreen() {
             borderColor: isBlocked ? "#ef4444" : "#22c55e",
           }}
         >
-          <View className="flex-1 mr-2">
+          <View className="mr-2 flex-1">
             <Text className="text-sm font-bold" style={{ color: theme.text }}>
               📱 Table Block Status
             </Text>
             <Text
-              className="text-xs font-medium mt-0.5"
+              className="mt-0.5 text-xs font-medium"
               style={{ color: theme.muted }}
             >
               {isBlocked
@@ -390,7 +399,7 @@ export default function TableDetailScreen() {
             </Text>
           </View>
           <View
-            className="px-3 py-1.5 rounded-xl"
+            className="rounded-xl px-3 py-1.5"
             style={{ backgroundColor: isBlocked ? "#ef4444" : "#22c55e" }}
           >
             <Text className="text-xs font-bold text-white">
@@ -400,49 +409,71 @@ export default function TableDetailScreen() {
         </View>
 
         <Text
-          className="text-xs font-bold mb-3 uppercase tracking-wider"
+          className="mb-3 text-xs font-bold uppercase tracking-wider"
           style={{ color: theme.muted }}
         >
           Table Status *
         </Text>
-        <View className="flex-row gap-2 mb-6">
-          {allowedStatuses.map((s) => (
+        <View className="mb-6 flex-row gap-2">
+          {statusOptions.map((option) => (
             <Pressable
-              key={s.id}
-              onPress={() => handleStatusChange(s.id as any)}
-              className="py-3 rounded-xl border-2 flex-1 items-center justify-center px-1"
+              key={option.id}
+              onPress={() => setStatus(option.id)}
+              accessibilityRole="button"
+              className="flex-1 items-center justify-center rounded-xl border-2 px-1 py-3"
               style={{
-                borderColor: status === s.id ? s.color : theme.border,
-                backgroundColor: status === s.id ? s.color : "transparent",
+                borderColor: status === option.id ? option.color : theme.border,
+                backgroundColor:
+                  status === option.id ? option.color : "transparent",
               }}
             >
               <Text
-                className="text-[11px] font-extrabold uppercase text-center"
-                style={{
-                  color: status === s.id ? "#ffffff" : theme.text,
-                }}
-                numberOfLines={1}
+                className="text-[11px] font-extrabold uppercase"
+                style={{ color: status === option.id ? "#ffffff" : theme.text }}
               >
-                {s.label}
+                {option.label}
               </Text>
             </Pressable>
           ))}
         </View>
 
-        <Card variant="default" className="p-4 mb-6 rounded-3xl border-0">
-          <Text
-            className="text-xs font-bold mb-2 uppercase"
-            style={{ color: theme.muted }}
-          >
-            Seating Capacity
-          </Text>
+        <Card variant="default" className="mb-6 rounded-3xl border-0 p-4">
+          <View className="mb-2 flex-row items-center justify-between">
+            <Text
+              className="text-xs font-bold uppercase"
+              style={{ color: theme.muted }}
+            >
+              Seating Capacity
+            </Text>
+            {customerFirstName ? (
+              <Text
+                className="ml-3 text-base font-extrabold"
+                style={{ color: theme.text }}
+                numberOfLines={1}
+              >
+                {customerFirstName}
+              </Text>
+            ) : customerNameError ? (
+              <Text
+                className="ml-3 text-xs font-semibold"
+                style={{ color: theme.danger }}
+                numberOfLines={1}
+              >
+                Name unavailable
+              </Text>
+            ) : null}
+          </View>
+          {customerNameError ? (
+            <Text className="mb-2 text-xs" style={{ color: theme.danger }}>
+              {customerNameError}
+            </Text>
+          ) : null}
           <TextInput
-            placeholder="e.g. 4"
-            placeholderTextColor={theme.muted}
-            value={guestCount}
-            onChangeText={setGuestCount}
+            value={capacity}
+            onChangeText={setCapacity}
             keyboardType="number-pad"
-            className="px-4 rounded-xl mb-4 font-bold"
+            accessibilityLabel="Seating capacity"
+            className="mb-4 rounded-xl px-4 font-bold"
             style={{
               backgroundColor: theme.bg,
               color: theme.text,
@@ -452,18 +483,17 @@ export default function TableDetailScreen() {
           />
 
           <Text
-            className="text-xs font-bold mb-2 uppercase"
+            className="mb-2 text-xs font-bold uppercase"
             style={{ color: theme.muted }}
           >
             Number of Customers Seated
           </Text>
           <TextInput
-            placeholder="0"
-            placeholderTextColor={theme.muted}
             value={customerCount}
             onChangeText={setCustomerCount}
             keyboardType="number-pad"
-            className="px-4 rounded-xl mb-2 font-bold"
+            accessibilityLabel="Number of customers seated"
+            className="mb-2 rounded-xl px-4 font-bold"
             style={{
               backgroundColor: theme.bg,
               color: theme.text,
@@ -472,220 +502,112 @@ export default function TableDetailScreen() {
             }}
           />
 
-          {table.status !== "available" && table.status !== "reserved" && (
-            <Text
-              className="text-xs font-medium mb-4 italic"
-              style={{ color: theme.muted }}
-            >
-              ⏱️ Session Time:{" "}
-              {elapsedText || table.currentOrder?.timeSeated || "Just now"}
+          {elapsedText ? (
+            <Text className="mb-4 text-xs italic" style={{ color: theme.muted }}>
+              ⏱️ Session Time: {elapsedText}
             </Text>
-          )}
+          ) : null}
 
-          {showCart && orderedItems.length > 0 && (
+          {details.orders.length > 0 ? (
             <View
-              className="mb-4 p-3 rounded-2xl"
+              className="mb-4 rounded-2xl p-3"
               style={{ backgroundColor: theme.bg }}
             >
               <Text
-                className="text-xs font-bold mb-2 uppercase"
+                className="mb-2 text-xs font-bold uppercase"
                 style={{ color: theme.muted }}
               >
                 🛒 Ordered Items & Charges Breakdown
               </Text>
-              {orderedItems.map((item, idx) => (
+              {orderItems.map((item, index) => (
                 <View
-                  key={idx}
-                  className="flex-row justify-between items-center py-1"
+                  key={`${item.name}-${index}`}
+                  className="flex-row items-center justify-between py-1"
                 >
                   <Text
-                    className="text-xs font-medium"
+                    className="flex-1 text-xs font-medium"
                     style={{ color: theme.text }}
                   >
-                    {item.name} (x{item.qty})
+                    {item.name} (x{item.quantity})
                   </Text>
-                  <Text
-                    className="text-xs font-bold"
-                    style={{ color: theme.text }}
-                  >
-                    ₹{item.price}
+                  <Text className="text-xs font-bold" style={{ color: theme.text }}>
+                    {currency(item.total)}
                   </Text>
                 </View>
               ))}
-
-              {(() => {
-                const subtotal =
-                  orderedItems.reduce((acc, item) => acc + item.price, 0) ||
-                  950;
-                const gstAmount = Math.round(subtotal * taxRate * 100) / 100;
-                const totalWithGst = subtotal + gstAmount;
-                const halfRatePct = (taxRate * 100) / 2;
-
-                return (
-                  <>
-                    <View
-                      className="flex-row justify-between items-center pt-2 mt-2 border-t"
-                      style={{ borderTopColor: theme.border }}
-                    >
-                      <Text
-                        className="text-xs font-medium"
-                        style={{ color: theme.muted }}
-                      >
+              {subtotal > 0 || totalAmount !== undefined ? (
+                <View
+                  className="mt-2 border-t pt-2"
+                  style={{ borderTopColor: theme.border }}
+                >
+                  {subtotal > 0 ? (
+                    <View className="flex-row justify-between py-1">
+                      <Text className="text-xs" style={{ color: theme.muted }}>
                         Subtotal
                       </Text>
-                      <Text
-                        className="text-xs font-bold"
-                        style={{ color: theme.text }}
-                      >
-                        ₹{subtotal}
+                      <Text className="text-xs font-bold" style={{ color: theme.text }}>
+                        {currency(subtotal)}
                       </Text>
                     </View>
-
-                    <Pressable
-                      onPress={() => setShowTaxPopup(!showTaxPopup)}
-                      className="flex-row justify-between items-center py-1"
-                    >
-                      <Text
-                        className="text-xs font-bold"
-                        style={{ color: theme.primary }}
-                      >
-                        GST ({taxStr})
+                  ) : null}
+                  {taxAmount !== undefined ? (
+                    <View className="flex-row justify-between py-1">
+                      <Text className="text-xs font-bold" style={{ color: theme.primary }}>
+                        GST
                       </Text>
-                      <Text
-                        className="text-xs font-bold"
-                        style={{ color: theme.text }}
-                      >
-                        ₹{gstAmount}
+                      <Text className="text-xs font-bold" style={{ color: theme.text }}>
+                        {currency(taxAmount)}
                       </Text>
-                    </Pressable>
-
-                    {showTaxPopup && (
-                      <View
-                        className="p-2.5 my-1.5 rounded-xl border"
-                        style={{
-                          backgroundColor: theme.card,
-                          borderColor: theme.border,
-                        }}
-                      >
-                        <Text
-                          className="text-[11px] font-black uppercase mb-1"
-                          style={{ color: theme.primary }}
-                        >
-                          Tax Breakdown ({taxStr}):
-                        </Text>
-                        <View className="flex-row justify-between items-center py-0.5">
-                          <Text
-                            className="text-[11px]"
-                            style={{ color: theme.muted }}
-                          >
-                            • CGST ({halfRatePct}%)
-                          </Text>
-                          <Text
-                            className="text-[11px] font-bold"
-                            style={{ color: theme.text }}
-                          >
-                            ₹{(gstAmount / 2).toFixed(2)}
-                          </Text>
-                        </View>
-                        <View className="flex-row justify-between items-center py-0.5">
-                          <Text
-                            className="text-[11px]"
-                            style={{ color: theme.muted }}
-                          >
-                            • SGST ({halfRatePct}%)
-                          </Text>
-                          <Text
-                            className="text-[11px] font-bold"
-                            style={{ color: theme.text }}
-                          >
-                            ₹{(gstAmount / 2).toFixed(2)}
-                          </Text>
-                        </View>
-                      </View>
-                    )}
-
-                    <View
-                      className="flex-row justify-between items-center pt-2 mt-2 border-t"
-                      style={{ borderTopColor: theme.border }}
-                    >
-                      <Text
-                        className="text-xs font-black uppercase"
-                        style={{ color: theme.primary }}
-                      >
+                    </View>
+                  ) : null}
+                  {totalAmount !== undefined ? (
+                    <View className="flex-row justify-between py-1">
+                      <Text className="text-xs font-black uppercase" style={{ color: theme.primary }}>
                         Total Bill Amount
                       </Text>
-                      <Text
-                        className="text-sm font-black"
-                        style={{ color: theme.primary }}
-                      >
-                        ₹{totalWithGst}
+                      <Text className="text-sm font-black" style={{ color: theme.primary }}>
+                        {currency(totalAmount)}
                       </Text>
                     </View>
-                  </>
-                );
-              })()}
+                  ) : null}
+                </View>
+              ) : null}
             </View>
-          )}
+          ) : null}
+
+          {billError ? (
+            <Text className="mb-3 text-xs" style={{ color: theme.danger }}>
+              Bill unavailable: {billError}
+            </Text>
+          ) : null}
 
           <Text
-            className="text-xs font-bold mb-2 uppercase"
+            className="mb-2 text-xs font-bold uppercase"
             style={{ color: theme.muted }}
           >
-            {isLockedState
-              ? "Assigned Waiter (Locked)"
-              : "Assigned Waiter (Available Staff Only) *"}
+            Assigned Waiter{tableStatus !== "available" ? " (Locked)" : ""}
           </Text>
-
-          {isLockedState ? (
-            <View
-              className="px-4 py-3 rounded-xl border flex-row items-center mb-2"
-              style={{
-                backgroundColor: theme.primary,
-                borderColor: theme.primary,
-              }}
-            >
-              <Text className="text-xs font-bold text-white">
-                👤 {assignedWaiterName} (Assigned Waiter)
-              </Text>
-            </View>
-          ) : (
-            <View className="flex-row flex-wrap gap-2 mb-2">
-              {availableWaiters.length > 0 ? (
-                availableWaiters.map((waiter) => {
-                  const isSelected = selectedWaiterId === waiter.id;
-                  return (
-                    <Pressable
-                      key={waiter.id}
-                      onPress={() => setSelectedWaiterId(waiter.id)}
-                      className="px-4 py-2.5 rounded-xl border"
-                      style={{
-                        backgroundColor: isSelected ? theme.primary : theme.bg,
-                        borderColor: isSelected ? theme.primary : theme.border,
-                      }}
-                    >
-                      <Text
-                        className="text-xs font-bold"
-                        style={{ color: isSelected ? "#ffffff" : theme.text }}
-                      >
-                        👤 {waiter.name} (Available)
-                      </Text>
-                    </Pressable>
-                  );
-                })
-              ) : (
-                <Text className="text-xs italic" style={{ color: theme.muted }}>
-                  No available waiters on duty. All assigned waiters are
-                  currently busy.
-                </Text>
-              )}
-            </View>
-          )}
+          <View
+            className="mb-2 flex-row items-center rounded-xl border px-4 py-3"
+            style={{
+              backgroundColor: theme.primary,
+              borderColor: theme.primary,
+            }}
+          >
+            <Text className="text-xs font-bold text-white">
+              👤 {assignedWaiter || "No waiter assigned"}
+              {assignedWaiter && tableStatus !== "available"
+                ? " (Assigned Waiter)"
+                : ""}
+            </Text>
+          </View>
         </Card>
 
         <Button
           title="Save Table Changes"
-          onPress={handleSaveTable}
-          className="py-4 w-full"
+          onPress={() => void handleSaveTable()}
+          loading={isSaving}
+          className="w-full py-4"
         />
       </ScrollView>
     </SafeAreaView>

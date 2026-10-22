@@ -6,6 +6,7 @@ import {
   Alert,
   Animated,
   Pressable,
+  RefreshControl,
   ScrollView,
   Switch,
   Text,
@@ -18,72 +19,71 @@ import { Card } from "../../../components/ui/Card";
 import {
   FloorTable,
   INITIAL_FLOOR_NOTIFICATIONS,
-  INITIAL_FLOOR_TABLES,
-  MANAGER_MOCK_DATA,
 } from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { useCurrentManager } from "../../../hooks/useCurrentManager";
 import { getManagerDestination } from "../../../services/authRouting";
+import {
+  FloorManagerDashboard,
+  FloorManagerLiveState,
+  FloorManagerTable,
+  floorManagerApi,
+  hasRunningOrders,
+} from "../../../services/api/floor-manager";
+
+interface FloorDisplayTable extends FloorTable {
+  waiterName?: string;
+  isBlocked?: boolean;
+}
+
+function getTableNumber(value: string) {
+  const match = String(value).match(/\d+/);
+  return match ? match[0] : String(value).toUpperCase().trim();
+}
+
+function getFloorTables(liveState: FloorManagerLiveState): FloorDisplayTable[] {
+  return liveState.tables
+    .filter((table) => table.isActive !== false)
+    .map((table: FloorManagerTable) => {
+      if (
+        table.status !== "available" &&
+        table.status !== "occupied" &&
+        table.status !== "active" &&
+        table.status !== "reserved" &&
+        table.status !== "billed"
+      ) {
+        throw new Error(
+          `The server returned an unsupported status for Table ${table.tableNumber}.`,
+        );
+      }
+
+      const assignedWaiter =
+        table.assignedWaiterId &&
+        typeof table.assignedWaiterId === "object"
+          ? table.assignedWaiterId
+          : liveState.waiters.find(
+              (waiter) => waiter._id === table.assignedWaiterId,
+            );
+
+      return {
+        id: table._id,
+        tableName: `Table ${table.tableNumber}`,
+        capacity: table.capacity,
+        status: table.status === "active" ? "occupied" : table.status,
+        isBlocked: table.isBlocked ?? table.status !== "available",
+        waiterName: assignedWaiter?.name,
+      };
+    });
+}
 
 export default function FloorDashboard() {
   const theme = useAppTheme();
   const router = useRouter();
   const { currentManager, normalizedPhone } = useCurrentManager();
-
-  // Helper to ensure table total always includes GST correctly
-  const calculateTableTotal = (table: FloorTable) => {
-    if (!table.currentOrder) return 0;
-    const storedTotal = table.currentOrder.totalAmount || 0;
-    const items = table.currentOrder.items || [];
-
-    const itemSum =
-      items.length > 0
-        ? items.reduce((acc, item) => acc + (item.price || 0), 0)
-        : storedTotal;
-
-    const taxSection = MANAGER_MOCK_DATA.storeDetails?.find(
-      (s: any) => s.id === "sd_tax",
-    );
-    const activeTaxOpt =
-      taxSection?.options?.find((o: any) => o.isActive) ||
-      taxSection?.options?.[0];
-    const taxStr = activeTaxOpt?.value || "5%";
-    const taxRate = parseFloat(taxStr.replace(/[^0-9.]/g, "")) / 100 || 0.05;
-
-    // If itemSum is valid, compute total with GST
-    if (itemSum > 0) {
-      const calculatedWithGst =
-        Math.round((itemSum + itemSum * taxRate) * 100) / 100;
-      if (
-        storedTotal > itemSum &&
-        Math.abs(storedTotal - calculatedWithGst) < 2
-      ) {
-        return storedTotal;
-      }
-      return calculatedWithGst;
-    }
-
-    return storedTotal;
-  };
-
-  const getTableNumber = (str: string) => {
-    const match = String(str).match(/\d+/);
-    return match ? match[0] : String(str).toUpperCase().trim();
-  };
-
-  const assignedTableValues = currentManager?.assignedTables || [];
-  const assignedTableNums = new Set(
-    assignedTableValues.map((val: string) => getTableNumber(val)),
-  );
-
-  const managerAssignedTables = INITIAL_FLOOR_TABLES.filter((t) => {
-    const tNum = getTableNumber(t.tableName || t.id || "");
-    return assignedTableNums.has(tNum);
-  });
-
-  const [tables, setTables] = useState<FloorTable[]>([
-    ...managerAssignedTables,
-  ]);
+  const [dashboard, setDashboard] = useState<FloorManagerDashboard | null>(null);
+  const [liveState, setLiveState] = useState<FloorManagerLiveState | null>(null);
+  const [sessions, setSessions] = useState<Record<string, unknown>[]>([]);
+  const [tables, setTables] = useState<FloorDisplayTable[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<
     "all" | "available" | "occupied" | "reserved" | "billed"
@@ -91,9 +91,64 @@ export default function FloorDashboard() {
 
   const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const [isCheckedIn, setIsCheckedIn] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isUpdatingCheckIn, setIsUpdatingCheckIn] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
-  // Check In / Check Out toggle state
-  const [isCheckedIn, setIsCheckedIn] = useState(true);
+  const fetchFloorData = useCallback(async () => {
+    const [nextDashboard, nextLiveState] = await Promise.all([
+      floorManagerApi.getDashboard(),
+      floorManagerApi.getLiveState(),
+    ]);
+    let nextSessions: Record<string, unknown>[] = [];
+    let sessionsError = "";
+    try {
+      nextSessions = await floorManagerApi.getSessions();
+    } catch (error) {
+      sessionsError =
+        error instanceof Error
+          ? `Sessions could not be loaded: ${error.message}`
+          : "Sessions could not be loaded.";
+    }
+    return {
+      dashboard: nextDashboard,
+      liveState: nextLiveState,
+      sessions: nextSessions,
+      tables: getFloorTables(nextLiveState),
+      sessionsError,
+    };
+  }, []);
+
+  const applyFloorData = useCallback(
+    (data: Awaited<ReturnType<typeof fetchFloorData>>) => {
+      setDashboard(data.dashboard);
+      setLiveState(data.liveState);
+      setSessions(data.sessions);
+      setTables(data.tables);
+      setIsCheckedIn(data.dashboard.checkIn.isCheckedIn);
+      setLoadError(data.sessionsError);
+      setIsLoading(false);
+    },
+    [],
+  );
+
+  const refreshFloorData = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      applyFloorData(await fetchFloorData());
+    } catch (error) {
+      setLoadError(
+        error instanceof Error
+          ? error.message
+          : "Unable to load floor manager data.",
+      );
+      setIsLoading(false);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [applyFloorData, fetchFloorData]);
 
   useEffect(() => {
     if (hasUnreadNotifications) {
@@ -120,11 +175,6 @@ export default function FloorDashboard() {
       const refreshedNums = new Set(
         refreshedAssignedTables.map((val: string) => getTableNumber(val)),
       );
-      const filtered = INITIAL_FLOOR_TABLES.filter((t) => {
-        const tNum = getTableNumber(t.tableName || t.id || "");
-        return refreshedNums.has(tNum);
-      });
-      setTables([...filtered]);
 
       const managerUnread = INITIAL_FLOOR_NOTIFICATIONS.some((n) => {
         if (n.isRead) return false;
@@ -144,97 +194,97 @@ export default function FloorDashboard() {
     }, [currentManager]),
   );
 
-  const handleToggleCheckIn = (newValue: boolean) => {
-    if (!newValue) {
-      // 🔒 SECURITY CHECK: Ensure all assigned tables are free (available) before checking out
-      const busyTables = tables.filter((t) => t.status !== "available");
-      if (busyTables.length > 0) {
-        const tableDetailsList = busyTables
-          .map((t) => `• ${t.tableName} (${t.status.toUpperCase()})`)
-          .join("\n");
-        Alert.alert(
-          "⚠️ Cannot Check Out",
-          `All assigned tables must be cleared and marked as 'Free' before you can check out.\n\nActive/Billed Tables:\n${tableDetailsList}`,
-          [{ text: "OK", style: "default" }],
-        );
+  useFocusEffect(
+    useCallback(() => {
+      if (
+        !currentManager ||
+        getManagerDestination(currentManager.managerType) !==
+          "/(manager)/floor"
+      ) {
         return;
       }
-    }
 
+      let isFocused = true;
+      const refresh = async () => {
+        try {
+          const data = await fetchFloorData();
+          if (isFocused) applyFloorData(data);
+        } catch (error) {
+          if (isFocused) {
+            setLoadError(
+              error instanceof Error
+                ? error.message
+                : "Unable to load floor manager data.",
+            );
+            setIsLoading(false);
+          }
+        }
+      };
+
+      void refresh();
+      const interval = setInterval(() => void refresh(), 30_000);
+      return () => {
+        isFocused = false;
+        clearInterval(interval);
+      };
+    }, [applyFloorData, currentManager, fetchFloorData]),
+  );
+
+  const handleToggleCheckIn = (newValue: boolean) => {
     Alert.alert(
       newValue ? "Check In" : "Check Out",
-      `Are you sure you want to check ${newValue ? "IN" : "OUT"}?`,
+      newValue
+        ? "Are you sure you want to check IN?"
+        : "All running orders must be completed before checking out. Continue?",
       [
-        {
-          text: "Cancel",
-          style: "cancel",
-          onPress: () => {},
-        },
+        { text: "Cancel", style: "cancel" },
         {
           text: "Confirm",
           onPress: () => {
-            setIsCheckedIn(newValue);
-            // Update manager active/inactive status and unassign tables/waiters on check out
-            if (currentManager) {
-              const matchMgr = MANAGER_MOCK_DATA.managers?.find(
-                (m: any) =>
-                  m.id === currentManager.id ||
-                  m.phone === currentManager.phone,
-              );
-              if (matchMgr) {
-                matchMgr.isActive = newValue;
+            void (async () => {
+              setIsUpdatingCheckIn(true);
+              try {
                 if (!newValue) {
-                  // Unassign tables and waiters when checked out so other managers can handle them
-                  matchMgr.assignedTables = [];
-                  matchMgr.assignedWaiters = [];
+                  const [latestDashboard, latestLiveState] = await Promise.all([
+                    floorManagerApi.getDashboard(),
+                    floorManagerApi.getLiveState(),
+                  ]);
+                  const latestTables = getFloorTables(latestLiveState);
+                  setDashboard(latestDashboard);
+                  setLiveState(latestLiveState);
+                  setTables(latestTables);
+                  setIsCheckedIn(latestDashboard.checkIn.isCheckedIn);
+                  if (
+                    hasRunningOrders(
+                      latestDashboard,
+                      latestLiveState.orders,
+                    )
+                  ) {
+                    Alert.alert(
+                      "Cannot Check Out",
+                      "Complete all running orders before checking out.",
+                    );
+                    return;
+                  }
                 }
+
+                await floorManagerApi.setCheckInStatus(newValue);
+                setIsCheckedIn(newValue);
+                void refreshFloorData();
+              } catch (error) {
+                Alert.alert(
+                  "Unable to update check-in status",
+                  error instanceof Error
+                    ? error.message
+                    : "Please try again.",
+                );
+              } finally {
+                setIsUpdatingCheckIn(false);
               }
-            }
+            })();
           },
         },
       ],
-    );
-  };
-
-  const handleTestFreeTable = () => {
-    const freeTableIndex = INITIAL_FLOOR_TABLES.findIndex(
-      (t) =>
-        t.status === "available" &&
-        assignedTableNums.has(getTableNumber(t.tableName || t.id || "")),
-    );
-    if (freeTableIndex === -1) {
-      Alert.alert(
-        "No Free Tables",
-        "All your assigned tables are currently occupied, reserved, or billed!",
-      );
-      return;
-    }
-
-    const assignedWaiterIds = currentManager?.assignedWaiters || [];
-    const defaultWaiterId = assignedWaiterIds[0] || "w1";
-
-    INITIAL_FLOOR_TABLES[freeTableIndex] = {
-      ...INITIAL_FLOOR_TABLES[freeTableIndex],
-      status: "occupied",
-      customerCount: INITIAL_FLOOR_TABLES[freeTableIndex].capacity,
-      currentOrder: {
-        orderId: `ORD-${Math.floor(100 + Math.random() * 900)}`,
-        itemsCount: 2,
-        totalAmount: 950,
-        waiterId: defaultWaiterId,
-        timeSeated: "Just ordered via QR",
-      },
-    };
-
-    const filtered = INITIAL_FLOOR_TABLES.filter((t) => {
-      const tNum = getTableNumber(t.tableName || t.id || "");
-      return assignedTableNums.has(tNum);
-    });
-    setTables([...filtered]);
-
-    Alert.alert(
-      "Table Updated",
-      `${INITIAL_FLOOR_TABLES[freeTableIndex].tableName} moved to Active (Blocked).`,
     );
   };
 
@@ -254,15 +304,33 @@ export default function FloorDashboard() {
     return <Redirect href="/(manager)/operations" />;
   }
 
-  const totalTables = tables.length;
-  const availableCount = tables.filter((t) => t.status === "available").length;
-  const occupiedCount = tables.filter((t) => t.status === "occupied").length;
+  const totalTables = dashboard?.tables.total ?? tables.length;
+  const availableCount =
+    dashboard?.tables.available ??
+    tables.filter((t) => t.status === "available").length;
+  const occupiedCount =
+    dashboard?.tables.occupied ??
+    tables.filter((t) => t.status === "occupied").length;
   const reservedCount = tables.filter((t) => t.status === "reserved").length;
+  const runningOrderCount = dashboard
+    ? dashboard.orders.pending +
+      dashboard.orders.accepted +
+      dashboard.orders.preparing +
+      dashboard.orders.ready
+    : 0;
 
   const filteredTables = tables.filter((table) => {
-    const matchesSearch = table.tableName
-      .toLowerCase()
-      .includes(searchQuery.toLowerCase());
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+    const tableNumber = getTableNumber(table.tableName);
+    const normalizedTableQuery = normalizedQuery.replace(/^table\s*/, "");
+    const matchesSearch =
+      !normalizedQuery ||
+      table.tableName.toLowerCase().includes(normalizedQuery) ||
+      `t${tableNumber}`.includes(normalizedQuery.replace(/\s+/g, "")) ||
+      tableNumber.includes(normalizedTableQuery) ||
+      table.status.toLowerCase().includes(normalizedQuery) ||
+      String(table.capacity).includes(normalizedQuery) ||
+      (table.waiterName?.toLowerCase().includes(normalizedQuery) ?? false);
     let matchesStatus = true;
     if (statusFilter !== "all") {
       matchesStatus = table.status === statusFilter;
@@ -285,15 +353,14 @@ export default function FloorDashboard() {
     }
   };
 
-  const handleTablePress = (table: FloorTable) => {
-    router.push(`/(manager)/floor/table/${table.id}` as any);
+  const handleTablePress = (table: FloorDisplayTable) => {
+    router.push(`/(manager)/floor/table/${table.id}` as never);
   };
 
   return (
     <SafeAreaView className="flex-1" style={{ backgroundColor: theme.bg }}>
       <StatusBar style={theme.isDark ? "light" : "dark"} />
 
-      {/* --- TOP HEADER --- */}
       <View className="px-6 mb-4 mt-2">
         <View className="flex-row justify-between items-center mb-4">
           <View className="flex-1 mr-3">
@@ -309,7 +376,7 @@ export default function FloorDashboard() {
               style={{ color: theme.muted }}
               numberOfLines={1}
             >
-              Live seating • {currentManager.name}
+              {dashboard?.branch.name || "Restaurant"} • {currentManager.name}
             </Text>
           </View>
 
@@ -355,8 +422,9 @@ export default function FloorDashboard() {
             </Pressable>
           </View>
         </View>
+      </View>
 
-        {/* --- CHECK IN / CHECK OUT TOGGLE BAR --- */}
+      <View className="px-6" style={{ backgroundColor: theme.bg }}>
         <Card
           variant="default"
           className="p-3.5 mb-4 rounded-2xl border-0 flex-row items-center justify-between"
@@ -372,10 +440,18 @@ export default function FloorDashboard() {
                 className="text-xs font-black uppercase"
                 style={{ color: theme.text }}
               >
-                {isCheckedIn ? "CHECKED IN" : "CHECKED OUT"}
+                {!dashboard
+                  ? "STATUS UNAVAILABLE"
+                  : isCheckedIn
+                    ? "CHECKED IN"
+                    : "CHECKED OUT"}
               </Text>
               <Text className="text-[10px]" style={{ color: theme.muted }}>
-                {isCheckedIn ? "On duty & managing floor" : "Off duty"}
+                {!dashboard
+                  ? "Waiting for floor status"
+                  : isCheckedIn
+                    ? "On duty & managing floor"
+                    : "Off duty"}
               </Text>
             </View>
           </View>
@@ -383,25 +459,189 @@ export default function FloorDashboard() {
           <Switch
             value={isCheckedIn}
             onValueChange={handleToggleCheckIn}
+            disabled={!dashboard || isUpdatingCheckIn}
             trackColor={{ false: theme.border, true: "#22c55e" }}
             thumbColor={"#ffffff"}
             style={{ transform: [{ scale: 0.8 }] }}
           />
         </Card>
+      </View>
 
-        {/* --- TEST FREE TABLE BUTTON --- */}
-        <Pressable
-          onPress={handleTestFreeTable}
-          className="p-3 mb-4 rounded-2xl items-center flex-row justify-center border border-dashed"
-          style={{ borderColor: theme.primary }}
-        >
-          <Text
-            className="text-xs font-bold uppercase text-center"
-            style={{ color: theme.primary }}
-          >
-            ▶️ Test Free Table (Move to Active & Block)
+      {isLoading && !dashboard ? (
+        <View className="flex-1 px-6 justify-center items-center">
+          <Text className="text-sm" style={{ color: theme.muted }}>
+            Loading live floor data...
           </Text>
-        </Pressable>
+        </View>
+      ) : !dashboard ? (
+        <View className="flex-1 px-6 justify-center items-center">
+          <Card
+            variant="default"
+            className="p-8 rounded-3xl border-0 items-center w-full shadow-lg"
+            style={{ backgroundColor: theme.card }}
+          >
+            <Text className="text-lg font-black mb-1 text-center" style={{ color: theme.text }}>
+              Floor data unavailable
+            </Text>
+            <Text className="text-xs font-medium text-center mb-4" style={{ color: theme.muted }}>
+              {loadError || "Refresh to try loading the manager dashboard again."}
+            </Text>
+            <Pressable
+              onPress={() => void refreshFloorData()}
+              disabled={isRefreshing}
+              accessibilityRole="button"
+              className="rounded-xl px-5 py-3"
+              style={{ backgroundColor: theme.primary }}
+            >
+              <Text className="font-bold text-white">
+                {isRefreshing ? "Refreshing..." : "Refresh dashboard"}
+              </Text>
+            </Pressable>
+          </Card>
+        </View>
+      ) : (
+      <ScrollView
+        className="flex-1"
+        contentContainerStyle={{ paddingBottom: 60 }}
+        showsVerticalScrollIndicator={false}
+        stickyHeaderIndices={isCheckedIn ? [0] : []}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={() => void refreshFloorData()}
+            tintColor={theme.primary}
+            colors={[theme.primary]}
+          />
+        }
+      >
+        {isCheckedIn ? (
+          <View
+            className="px-6 pb-2"
+            style={{ backgroundColor: theme.bg }}
+          >
+            <TextInput
+              placeholder="Search tables..."
+              placeholderTextColor={theme.muted}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              className="px-4 rounded-xl mb-3 font-semibold"
+              style={{
+                backgroundColor: theme.card,
+                color: theme.text,
+                fontSize: 15,
+                height: 48,
+              }}
+            />
+            <View
+              className="flex-row p-1 rounded-2xl mb-2"
+              style={{ backgroundColor: theme.card }}
+            >
+              {[
+                { id: "all", label: "All" },
+                { id: "available", label: "Free" },
+                { id: "occupied", label: "Active" },
+                { id: "reserved", label: "Reserved" },
+                { id: "billed", label: "Billed" },
+              ].map((tab) => {
+                const isActive = statusFilter === tab.id;
+                return (
+                  <Pressable
+                    key={tab.id}
+                    onPress={() => setStatusFilter(tab.id as any)}
+                    className="flex-1 py-2.5 rounded-xl items-center justify-center"
+                    style={{
+                      backgroundColor: isActive ? theme.primary : "transparent",
+                    }}
+                  >
+                    <Text
+                      className="text-xs font-bold"
+                      style={{
+                        color: isActive ? "#ffffff" : theme.muted,
+                      }}
+                    >
+                      {tab.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
+
+      {!searchQuery.trim() ? (
+      <View className="px-6">
+        <Card
+          variant="default"
+          className="p-3.5 mb-4 rounded-2xl border-0"
+          style={{ backgroundColor: theme.card }}
+        >
+          <View className="flex-row items-center justify-between mb-2">
+            <Text
+              className="text-xs font-black uppercase"
+              style={{ color: theme.text }}
+            >
+              Live operations
+            </Text>
+            <Pressable
+              onPress={() => void refreshFloorData()}
+              disabled={isRefreshing}
+              accessibilityRole="button"
+              accessibilityLabel="Refresh floor data"
+            >
+              <Text
+                className="text-xs font-bold"
+                style={{ color: theme.primary }}
+              >
+                {isRefreshing ? "Refreshing..." : "Refresh"}
+              </Text>
+            </Pressable>
+          </View>
+          <View className="gap-1">
+            <Text className="text-xs" style={{ color: theme.muted }}>
+              Sessions: {dashboard?.sessions.active ?? sessions.length}
+            </Text>
+            <Text className="text-xs" style={{ color: theme.muted }}>
+              Requests: {dashboard?.serviceRequests.pending ?? 0}
+            </Text>
+            <Text className="text-xs" style={{ color: theme.muted }}>
+              Running orders: {runningOrderCount}
+            </Text>
+            <Text
+              className="text-xs font-bold mt-1"
+              style={{ color: theme.text }}
+            >
+              Waiters
+            </Text>
+            {liveState?.waiters.length ? (
+              liveState.waiters.map((waiter) => (
+                <Text
+                  key={waiter._id}
+                  className="text-xs"
+                  style={{ color: theme.muted }}
+                >
+                  {waiter.name}: {waiter.status}
+                </Text>
+              ))
+            ) : (
+              <Text className="text-xs" style={{ color: theme.muted }}>
+                No waiters found
+              </Text>
+            )}
+          </View>
+        </Card>
+
+        {!!loadError && (
+          <Pressable
+            onPress={() => void refreshFloorData()}
+            accessibilityRole="button"
+            className="mb-3 rounded-xl p-3"
+            style={{ backgroundColor: theme.card }}
+          >
+            <Text className="text-xs font-semibold" style={{ color: "#ef4444" }}>
+              {loadError} Tap to retry.
+            </Text>
+          </Pressable>
+        )}
 
         {/* --- FORMATTED STATS CARDS --- */}
         <View className="flex-row justify-between mb-4">
@@ -479,69 +719,17 @@ export default function FloorDashboard() {
           </Card>
         </View>
 
-        {/* --- SEARCH BAR --- */}
-        <TextInput
-          placeholder="Search tables..."
-          placeholderTextColor={theme.muted}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          className="px-4 rounded-xl mb-3 font-semibold"
-          style={{
-            backgroundColor: theme.card,
-            color: theme.text,
-            fontSize: 15,
-            height: 48,
-          }}
-        />
-
-        {/* --- SEGMENTED TAB FILTER --- */}
-        <View
-          className="flex-row p-1 rounded-2xl mb-2"
-          style={{ backgroundColor: theme.card }}
-        >
-          {[
-            { id: "all", label: "All" },
-            { id: "available", label: "Free" },
-            { id: "occupied", label: "Active" },
-            { id: "reserved", label: "Reserved" },
-            { id: "billed", label: "Billed" },
-          ].map((tab) => {
-            const isActive = statusFilter === tab.id;
-            return (
-              <Pressable
-                key={tab.id}
-                onPress={() => setStatusFilter(tab.id as any)}
-                className="flex-1 py-2.5 rounded-xl items-center justify-center"
-                style={{
-                  backgroundColor: isActive ? theme.primary : "transparent",
-                }}
-              >
-                <Text
-                  className="text-xs font-bold"
-                  style={{
-                    color: isActive ? "#ffffff" : theme.muted,
-                  }}
-                >
-                  {tab.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
       </View>
+      ) : null}
 
-      {/* --- TABLE GRID LIST OR CHECKED OUT NOTICE --- */}
       {isCheckedIn ? (
-        <ScrollView
-          className="flex-1 px-6"
-          contentContainerStyle={{ paddingBottom: 60 }}
-          showsVerticalScrollIndicator={false}
-        >
+        <>
+        <View className="px-6">
           {filteredTables.length > 0 ? (
             filteredTables.map((table) => {
               const statusColor = getStatusColor(table.status);
               const capacity = table.capacity;
-              const isBlocked = table.status !== "available";
+              const isBlocked = table.isBlocked ?? table.status !== "available";
 
               return (
                 <Pressable
@@ -592,35 +780,32 @@ export default function FloorDashboard() {
                         Capacity: {capacity} Guests Max
                       </Text>
 
-                      {table.status === "reserved" || !table.currentOrder ? (
+                      {table.waiterName && (
+                        <Text
+                          className="text-xs font-bold mb-1"
+                          style={{ color: theme.text }}
+                        >
+                          Waiter: {table.waiterName}
+                        </Text>
+                      )}
+
+                      {table.status === "available" ||
+                      table.status === "reserved" ? (
                         <Text
                           className="text-xs italic"
                           style={{ color: theme.muted }}
                         >
-                          Ready for seating
+                          {table.status === "reserved"
+                            ? "Reserved"
+                            : "Ready for seating"}
                         </Text>
                       ) : (
-                        (() => {
-                          const assignedWaiter = MANAGER_MOCK_DATA.waiters.find(
-                            (w: any) => w.id === table.currentOrder?.waiterId,
-                          );
-                          const waiterNameDisplay = assignedWaiter
-                            ? assignedWaiter.name
-                            : "";
-                          return (
-                            <Text
-                              className="text-xs font-bold"
-                              style={{ color: theme.text }}
-                            >
-                              {waiterNameDisplay
-                                ? `Waiter: ${waiterNameDisplay} • `
-                                : ""}
-                              {calculateTableTotal(table) > 0
-                                ? `₹${calculateTableTotal(table)}`
-                                : table.currentOrder.timeSeated}
-                            </Text>
-                          );
-                        })()
+                        <Text
+                          className="text-xs font-bold"
+                          style={{ color: theme.text }}
+                        >
+                          In service
+                        </Text>
                       )}
                     </View>
 
@@ -629,7 +814,7 @@ export default function FloorDashboard() {
                         className="text-sm font-bold"
                         style={{ color: theme.primary }}
                       >
-                        Manage →
+                        Details →
                       </Text>
                     </View>
                   </Card>
@@ -650,7 +835,8 @@ export default function FloorDashboard() {
               </Text>
             </Card>
           )}
-        </ScrollView>
+        </View>
+        </>
       ) : (
         <View className="flex-1 px-6 justify-center items-center">
           <Card
@@ -669,11 +855,13 @@ export default function FloorDashboard() {
               className="text-xs font-medium text-center mb-4"
               style={{ color: theme.muted }}
             >
-              Toggle 'Check In' above to view and manage your assigned floor
+              Toggle &apos;Check In&apos; above to view and manage your assigned floor
               tables.
             </Text>
           </Card>
         </View>
+      )}
+      </ScrollView>
       )}
     </SafeAreaView>
   );
