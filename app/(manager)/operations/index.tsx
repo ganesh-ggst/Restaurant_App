@@ -2,6 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import { Redirect, useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import {
+  type ComponentRef,
   memo,
   useCallback,
   useEffect,
@@ -72,6 +73,30 @@ function getLiveBranchOrders(
     const status = order.status.trim().toLowerCase().replace(/[-\s]+/g, "_");
     return (
       orderBranchId === normalizedBranchId && LIVE_ORDER_STATUSES.has(status)
+    );
+  });
+}
+
+function getIncompleteBranchOrders(
+  orders: OperationsOrder[],
+  branchId: string,
+): OperationsOrder[] {
+  const normalizedBranchId = branchId.trim().toLowerCase();
+  const completedStatuses = new Set([
+    "completed",
+    "cancelled",
+    "canceled",
+    "rejected",
+    "refunded",
+    "served",
+    "delivered",
+  ]);
+
+  return orders.filter((order) => {
+    const orderBranchId = getOrderBranchId(order)?.trim().toLowerCase();
+    const status = order.status.trim().toLowerCase().replace(/[-\s]+/g, "_");
+    return (
+      orderBranchId === normalizedBranchId && !completedStatuses.has(status)
     );
   });
 }
@@ -313,6 +338,8 @@ export default function OperationsDashboardScreen() {
     "list" | "create"
   >("list");
   const [categoryName, setCategoryName] = useState("");
+  const [hasAttemptedCategoryCreate, setHasAttemptedCategoryCreate] =
+    useState(false);
   const [categoryIcon, setCategoryIcon] = useState("");
   const [savingCategory, setSavingCategory] = useState(false);
   const [togglingCategoryId, setTogglingCategoryId] = useState("");
@@ -323,6 +350,8 @@ export default function OperationsDashboardScreen() {
   const [offerTitle, setOfferTitle] = useState("");
   const [offerDescription, setOfferDescription] = useState("");
   const [offerCode, setOfferCode] = useState("");
+  const [hasAttemptedOfferSave, setHasAttemptedOfferSave] = useState(false);
+  const [offerDiscountMissing, setOfferDiscountMissing] = useState(false);
   const [offerDiscountType, setOfferDiscountType] = useState("flat");
   const [offerItemSearch, setOfferItemSearch] = useState("");
   const [offerItems, setOfferItems] = useState<OperationsMenuItem[]>([]);
@@ -332,14 +361,16 @@ export default function OperationsDashboardScreen() {
   const [togglingOfferId, setTogglingOfferId] = useState("");
   const [offerError, setOfferError] = useState("");
   const [offerManagerError, setOfferManagerError] = useState("");
-  const [isCheckedIn, setIsCheckedIn] = useState(true);
+  const [isCheckedIn, setIsCheckedIn] = useState<boolean | null>(null);
+  const [checkInStatusLoading, setCheckInStatusLoading] = useState(true);
+  const [checkInStatusError, setCheckInStatusError] = useState("");
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [offerKeyboardHeight, setOfferKeyboardHeight] = useState(0);
   const [pulse] = useState(() => new Animated.Value(1));
-  const offerFormScrollRef = useRef<ScrollView>(null);
+  const offerFormScrollRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
   const applicableItemsOffset = useRef(0);
   const shouldScrollToApplicableItems = useRef(false);
-  const dashboardScrollRef = useRef<ScrollView>(null);
+  const dashboardScrollRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
   const quickInventoryOffset = useRef(0);
   const shouldScrollToQuickInventory = useRef(false);
 
@@ -388,9 +419,18 @@ export default function OperationsDashboardScreen() {
     if (isPullToRefresh) setRefreshing(true);
     setError("");
     setDataWarning("");
+    setIsCheckedIn(null);
+    setCheckInStatusLoading(true);
+    setCheckInStatusError("");
     try {
-      const dashboardData = await operationsApi.getDashboard();
+      const dashboardData = await operationsApi.getDashboard(
+        currentManager?.branchId,
+      );
+      if (typeof dashboardData.checkIn?.isCheckedIn !== "boolean") {
+        throw new Error("The dashboard did not return your check-in status.");
+      }
       setDashboard(dashboardData);
+      setIsCheckedIn(dashboardData.checkIn.isCheckedIn);
       const dashboardCategories = Array.isArray(dashboardData.categories)
         ? dashboardData.categories
         : [];
@@ -482,12 +522,14 @@ export default function OperationsDashboardScreen() {
       }
       setDataWarning(supportingErrors.join("\n"));
     } catch (loadError) {
-      setError(
+      const message =
         loadError instanceof Error
           ? loadError.message
-          : "Unable to load operations data.",
-      );
+          : "Unable to load operations data.";
+      setError(message);
+      setCheckInStatusError(message);
     } finally {
+      setCheckInStatusLoading(false);
       setLoading(false);
       setRefreshing(false);
     }
@@ -495,8 +537,9 @@ export default function OperationsDashboardScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      if (managerLoading || !currentManager) return;
       void loadDashboard();
-    }, [loadDashboard]),
+    }, [currentManager, loadDashboard, managerLoading]),
   );
 
   useEffect(() => {
@@ -615,6 +658,8 @@ export default function OperationsDashboardScreen() {
     setOfferTitle("");
     setOfferDescription("");
     setOfferCode("");
+    setHasAttemptedOfferSave(false);
+    setOfferDiscountMissing(false);
     setOfferDiscountType("flat");
     setOfferItemSearch("");
     setOfferApplicableItemIds([]);
@@ -634,6 +679,8 @@ export default function OperationsDashboardScreen() {
     setOfferTitle(offer.title);
     setOfferDescription(offer.description || "");
     setOfferCode(offer.code);
+    setHasAttemptedOfferSave(false);
+    setOfferDiscountMissing(false);
     setOfferDiscountType(offer.discountType || "flat");
     setOfferItemSearch("");
     setOfferApplicableItemIds(offer.applicableMenuItemIds || []);
@@ -658,26 +705,46 @@ export default function OperationsDashboardScreen() {
   };
 
   const handleSaveOffer = async () => {
+    setHasAttemptedOfferSave(true);
     const offerText = `${offerTitle} ${offerDescription}`;
-    if (!offerTitle.trim() || !offerCode.trim()) {
+    const missingTitle = !offerTitle.trim();
+    const missingCode = !offerCode.trim();
+    if (missingTitle || missingCode) {
       Alert.alert(
         "Offer details needed",
         "Enter an offer title and promo code.",
       );
+      if (missingTitle && offerTitle.length > 0) setOfferTitle("");
+      if (missingCode && offerCode.length > 0) setOfferCode("");
+      if (!offerDescription.trim() && offerDescription.length > 0) {
+        setOfferDescription("");
+      }
       return;
     }
-    if (
+    if (!/^[a-zA-Z0-9]+$/.test(offerCode.trim())) {
+      Alert.alert(
+        "Invalid promo code",
+        "Use only letters and numbers in the promo code. Special characters and spaces aren't allowed.",
+      );
+      return;
+    }
+    const missingDiscount =
       !editingOfferId &&
       !/\d+(?:\.\d+)?\s*%|₹\s*\d|\d+(?:\.\d+)?\s*(?:rs\b|rupees?\b)/i.test(
         offerText,
-      )
-    ) {
+      );
+    setOfferDiscountMissing(missingDiscount);
+    if (missingDiscount) {
       Alert.alert(
         "Add the discount to the offer",
         "Include the discount amount in the title or description, for example “50% OFF” or “FLAT ₹70 OFF”.",
       );
+      if (!offerDescription.trim() && offerDescription.length > 0) {
+        setOfferDescription("");
+      }
       return;
     }
+    setOfferDiscountMissing(false);
     setSavingOffer(true);
     try {
       const body = {
@@ -863,7 +930,24 @@ export default function OperationsDashboardScreen() {
         "You're about to go on duty and manage operations.",
         [
           { text: "Cancel", style: "cancel" },
-          { text: "Confirm", onPress: () => setIsCheckedIn(true) },
+          {
+            text: "Confirm",
+            onPress: () => {
+              setIsCheckingOut(true);
+              void operationsApi
+                .setManagerCheckInStatus(true, currentManager?.branchId)
+                .then(() => setIsCheckedIn(true))
+                .catch((checkInError: unknown) => {
+                  Alert.alert(
+                    "Unable to Check In",
+                    checkInError instanceof Error
+                      ? checkInError.message
+                      : "Please try again.",
+                  );
+                })
+                .finally(() => setIsCheckingOut(false));
+            },
+          },
         ],
       );
       return;
@@ -880,35 +964,56 @@ export default function OperationsDashboardScreen() {
 
     Alert.alert(
       "Check Out?",
-      "You'll be marked off duty. We'll first make sure there are no active orders for your branch.",
+      "You'll be marked off duty after all orders for your branch are complete.",
       [
         { text: "Cancel", style: "cancel" },
         {
           text: "Check Out",
           onPress: () => {
             setIsCheckingOut(true);
-            void operationsApi
-              .getAllOrders()
-              .then((orders) => {
-                const activeOrders = getLiveBranchOrders(orders, branchId);
-                if (activeOrders.length > 0) {
+            void (async () => {
+              try {
+                let orders: OperationsOrder[];
+                try {
+                  orders = await operationsApi.getAllOrders();
+                } catch (orderError) {
                   Alert.alert(
-                    "Cannot Check Out",
-                    `Complete ${activeOrders.length} active order${activeOrders.length === 1 ? "" : "s"} before checking out.`,
+                    "Unable to Verify Orders",
+                    orderError instanceof Error
+                      ? `We couldn't verify your branch's orders. Please try again.\n\n${orderError.message}`
+                      : "We couldn't verify your branch's orders. Please try again.",
                   );
                   return;
                 }
+
+                const incompleteOrders = getIncompleteBranchOrders(
+                  orders,
+                  branchId,
+                );
+                if (incompleteOrders.length > 0) {
+                  Alert.alert(
+                    "Cannot Check Out",
+                    `Complete all ${incompleteOrders.length} remaining order${incompleteOrders.length === 1 ? "" : "s"} before checking out.`,
+                  );
+                  return;
+                }
+
+                await operationsApi.setManagerCheckInStatus(
+                  false,
+                  currentManager?.branchId,
+                );
                 setIsCheckedIn(false);
-              })
-              .catch((orderError: unknown) => {
+              } catch (checkOutError) {
                 Alert.alert(
                   "Unable to Check Out",
-                  orderError instanceof Error
-                    ? `We couldn't verify your branch's orders. Please try again.\n\n${orderError.message}`
-                    : "We couldn't verify your branch's orders. Please try again.",
+                  checkOutError instanceof Error
+                    ? checkOutError.message
+                    : "Please try again.",
                 );
-              })
-              .finally(() => setIsCheckingOut(false));
+              } finally {
+                setIsCheckingOut(false);
+              }
+            })();
           },
         },
       ],
@@ -953,9 +1058,11 @@ export default function OperationsDashboardScreen() {
   };
 
   const handleCreateCategory = async () => {
+    setHasAttemptedCategoryCreate(true);
     const trimmedName = categoryName.trim();
     if (!trimmedName) {
       Alert.alert("Category name required", "Enter a name for the category.");
+      if (categoryName.length > 0) setCategoryName("");
       return;
     }
 
@@ -1101,27 +1208,42 @@ export default function OperationsDashboardScreen() {
           <View className="mr-2 flex-1 flex-row items-center gap-3">
             <View
               className="h-3 w-3 rounded-full"
-              style={{ backgroundColor: isCheckedIn ? "#22c55e" : "#ef4444" }}
+              style={{
+                backgroundColor:
+                  isCheckedIn === null
+                    ? theme.muted
+                    : isCheckedIn
+                      ? "#22c55e"
+                      : "#ef4444",
+              }}
             />
             <View className="min-w-0 flex-1">
               <Text className="text-xs font-black" style={{ color: theme.text }}>
-                {isCheckedIn ? "CHECKED IN" : "CHECKED OUT"}
+                {isCheckedIn === null
+                  ? "CHECK-IN STATUS"
+                  : isCheckedIn
+                    ? "CHECKED IN"
+                    : "CHECKED OUT"}
               </Text>
               <Text
                 className="text-[10px]"
                 numberOfLines={2}
                 style={{ color: theme.muted }}
               >
-                {isCheckedIn
-                  ? "You're on duty and managing operations"
-                  : "You're off duty. Check in when you're ready to manage operations."}
+                {isCheckedIn === null
+                  ? checkInStatusLoading
+                    ? "Checking your saved status..."
+                    : checkInStatusError || "Your status is unavailable."
+                  : isCheckedIn
+                    ? "You're on duty and managing operations"
+                    : "You're off duty. Check in when you're ready to manage operations."}
               </Text>
             </View>
           </View>
           <Switch
-            value={isCheckedIn}
+            value={isCheckedIn === true}
             onValueChange={handleToggleCheckIn}
-            disabled={isCheckingOut}
+            disabled={isCheckingOut || isCheckedIn === null}
             trackColor={{ false: theme.border, true: "#22c55e" }}
             thumbColor="#ffffff"
             style={{ transform: [{ scale: 0.8 }] }}
@@ -1129,7 +1251,41 @@ export default function OperationsDashboardScreen() {
         </Card>
       </View>
 
-      {!isCheckedIn ? (
+      {isCheckedIn === null ? (
+        <View className="flex-1 items-center justify-center px-5">
+          <Card
+            variant="default"
+            className="w-full items-center rounded-3xl border-0 p-8"
+          >
+            {checkInStatusLoading ? (
+              <ActivityIndicator size="large" color={theme.primary} />
+            ) : (
+              <>
+                <Text className="mb-2 text-3xl">⚠️</Text>
+                <Text
+                  className="mb-2 text-center text-lg font-black"
+                  style={{ color: theme.text }}
+                >
+                  Unable to verify check-in status
+                </Text>
+                <Text
+                  className="mb-5 text-center text-sm"
+                  style={{ color: theme.muted }}
+                >
+                  {checkInStatusError}
+                </Text>
+                <Pressable
+                  onPress={() => void loadDashboard()}
+                  className="rounded-xl px-5 py-3"
+                  style={{ backgroundColor: theme.primary }}
+                >
+                  <Text className="font-bold text-white">Retry</Text>
+                </Pressable>
+              </>
+            )}
+          </Card>
+        </View>
+      ) : !isCheckedIn ? (
         <View className="flex-1 items-center justify-center px-5">
           <Card
             variant="default"
@@ -1594,6 +1750,7 @@ export default function OperationsDashboardScreen() {
                     onPress={() => {
                       setCategoryName("");
                       setCategoryIcon("");
+                      setHasAttemptedCategoryCreate(false);
                       setCategoryManagerView("create");
                     }}
                     className="mb-4 items-center justify-center rounded-2xl border-2 border-dashed py-5"
@@ -1670,7 +1827,12 @@ export default function OperationsDashboardScreen() {
                   >
                     <Text
                       className="mb-2 text-sm font-bold uppercase"
-                      style={{ color: theme.muted }}
+                      style={{
+                        color:
+                          hasAttemptedCategoryCreate && !categoryName.trim()
+                            ? theme.danger
+                            : theme.muted,
+                      }}
                     >
                       Category Name
                     </Text>
@@ -1679,16 +1841,37 @@ export default function OperationsDashboardScreen() {
                       onChangeText={setCategoryName}
                       placeholder="e.g. Biryani"
                       placeholderTextColor={theme.muted}
-                      className="mb-4 rounded-xl px-4"
+                      className="rounded-xl px-4"
                       style={{
                         height: 56,
                         backgroundColor: theme.bg,
-                        color: theme.text,
+                        color:
+                          hasAttemptedCategoryCreate && !categoryName.trim()
+                            ? theme.danger
+                            : theme.text,
+                        borderWidth:
+                          hasAttemptedCategoryCreate && !categoryName.trim()
+                            ? 2
+                            : 1,
+                        borderColor:
+                          hasAttemptedCategoryCreate && !categoryName.trim()
+                            ? theme.danger
+                            : theme.border,
                         fontSize: 17,
                       }}
                       autoFocus
                       returnKeyType="next"
                     />
+                    {hasAttemptedCategoryCreate && !categoryName.trim() ? (
+                      <Text
+                        className="mb-4 -mt-3 text-xs font-semibold"
+                        style={{ color: theme.danger }}
+                      >
+                        Category name is required.
+                      </Text>
+                    ) : (
+                      <View className="mb-4" />
+                    )}
                     <Text
                       className="mb-2 text-sm font-bold uppercase"
                       style={{ color: theme.muted }}
@@ -1986,6 +2169,13 @@ export default function OperationsDashboardScreen() {
                 onChangeText: setOfferTitle,
                 placeholder: "e.g. FLAT ₹70 OFF or 50% OFF",
                 autoCapitalize: "words" as const,
+                invalid:
+                  hasAttemptedOfferSave &&
+                  (!offerTitle.trim() ||
+                    (offerDiscountMissing &&
+                      !/\d+(?:\.\d+)?\s*%|₹\s*\d|\d+(?:\.\d+)?\s*(?:rs\b|rupees?\b)/i.test(
+                        offerTitle,
+                      ))),
               },
               {
                 label: "SUBTITLE DESCRIPTION",
@@ -1993,6 +2183,12 @@ export default function OperationsDashboardScreen() {
                 onChangeText: setOfferDescription,
                 placeholder: "e.g. Weekend Special Festival · 20% OFF",
                 autoCapitalize: "sentences" as const,
+                invalid:
+                  hasAttemptedOfferSave &&
+                  offerDiscountMissing &&
+                  !/\d+(?:\.\d+)?\s*%|₹\s*\d|\d+(?:\.\d+)?\s*(?:rs\b|rupees?\b)/i.test(
+                    offerDescription,
+                  ),
               },
               {
                 label: "PROMO CODE",
@@ -2000,24 +2196,53 @@ export default function OperationsDashboardScreen() {
                 onChangeText: setOfferCode,
                 placeholder: "e.g. BIRYANI50",
                 autoCapitalize: "characters" as const,
+                invalid:
+                  hasAttemptedOfferSave &&
+                  (!offerCode.trim() ||
+                    !/^[a-zA-Z0-9]+$/.test(offerCode.trim())),
               },
             ].map((field) => (
               <View key={field.label} className="mb-5">
                 <Text
                   className="mb-2 text-sm font-black"
-                  style={{ color: theme.muted }}
+                  style={{
+                    color: field.invalid ? theme.danger : theme.muted,
+                  }}
                 >
                   {field.label}
                 </Text>
                 <TextInput
                   value={field.value}
-                  onChangeText={field.onChangeText}
                   placeholder={field.placeholder}
                   placeholderTextColor={theme.muted}
                   autoCapitalize={field.autoCapitalize}
-                  className="rounded-2xl px-4 py-4 text-base font-bold"
-                  style={{ backgroundColor: theme.card, color: theme.text }}
+                  onChangeText={(value) => {
+                    field.onChangeText(value);
+                  }}
+                  className="rounded-2xl border px-4 py-4 text-base font-bold"
+                  style={{
+                    backgroundColor: theme.card,
+                    borderColor: field.invalid ? theme.danger : theme.border,
+                    borderWidth: field.invalid ? 2 : 1,
+                    color: field.invalid ? theme.danger : theme.text,
+                  }}
                 />
+                {field.invalid ? (
+                  <Text
+                    className="mt-1 text-xs font-semibold"
+                    style={{ color: theme.danger }}
+                  >
+                    {field.label === "OFFER TITLE"
+                      ? offerTitle.trim()
+                        ? "Include the discount amount here or in the description."
+                        : "Offer title is required."
+                      : field.label === "PROMO CODE"
+                        ? !offerCode.trim()
+                          ? "Promo code is required."
+                          : "Use only letters and numbers."
+                        : "Include the discount amount here or in the offer title."}
+                  </Text>
+                ) : null}
               </View>
             ))}
 

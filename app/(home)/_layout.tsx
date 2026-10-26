@@ -50,9 +50,11 @@ import type {
   CustomerCartItem,
   CustomerCategory,
   CustomerCustomizationSelection,
+  CustomerDineInSession,
   CustomerFeaturedReel,
   CustomerMenuItem,
   CustomerOffer,
+  CreateCustomerOrderInput,
 } from "../../services/api/customer";
 import type { CustomerAddress } from "../../services/api/profile";
 
@@ -92,11 +94,25 @@ function toMenuCardItem(
     (typeof item.categoryId === "object" ? item.categoryId.name : undefined) ||
     "";
   const imageUrls = item.imageUrls?.filter(Boolean) || [];
+  const customTag = item.customTag?.trim();
+  const normalizedMarketingTag = item.marketingTag
+    ?.trim()
+    .toLowerCase()
+    .replace(/[⭐🔥]/g, "")
+    .replace(/[_\s-]+/g, "");
+  const selectedTag = item.customTagEnabled && customTag
+    ? customTag
+    : normalizedMarketingTag === "autodiscount"
+      ? item.discountLabel
+      : normalizedMarketingTag === "bestseller"
+        ? "⭐ Bestseller"
+        : normalizedMarketingTag === "hot"
+          ? "🔥 Hot"
+          : item.marketingTag;
   const marketingTag =
-    item.discountLabel ||
-    (item.marketingTag && item.marketingTag !== "none"
-      ? item.marketingTag.toUpperCase()
-      : "");
+    typeof selectedTag === "string" && selectedTag.trim().toLowerCase() !== "none"
+      ? selectedTag.trim().toUpperCase()
+      : "";
 
   return {
     ...item,
@@ -272,7 +288,8 @@ function getFavoriteIds(favorites: unknown[]): string[] {
 export function CustomTabBar({
   state,
   descriptors,
-  navigation,
+  emitter,
+  navigateToTab,
   bottomInset,
 }: any) {
   const { colorScheme } = useColorScheme();
@@ -375,7 +392,7 @@ export function CustomTabBar({
             const isFocused = currentVisibleIndex === index;
 
             const onPress = () => {
-              const event = navigation.emit({
+              const event = emitter.emit({
                 type: "tabPress",
                 target: route.key,
                 canPreventDefault: true,
@@ -383,11 +400,15 @@ export function CustomTabBar({
 
               if (!isFocused && !event.defaultPrevented) {
                 if (route.name === "search") {
-                  navigation.navigate(route.name, { category: undefined });
+                  descriptors[route.key].navigation.navigate(route.name, {
+                    category: undefined,
+                  });
                 } else if (route.name === "offers") {
-                  navigation.navigate(route.name, { offerId: undefined });
+                  descriptors[route.key].navigation.navigate(route.name, {
+                    offerId: undefined,
+                  });
                 } else {
-                  navigation.navigate(route.name, route.params);
+                  navigateToTab(route.key);
                 }
               }
             };
@@ -524,13 +545,14 @@ export default function HomeLayout() {
     (CustomerBranch & { id: string; address: string }) | null
   >(null);
   const [activeTable, setActiveTable] = useState<string | null>(null);
+  const [dineInSession, setDineInSession] =
+    useState<CustomerDineInSession | null>(null);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [confirmedOrders, setConfirmedOrders] = useState<any[]>([]);
 
   const [dineInCartState, setDineInCartState] = useState<
     "idle" | "waiting" | "approved" | "rejected"
   >("idle");
-  const [orderCountdown, setOrderCountdown] = useState(60);
   const [pendingOrderSnapshot, setPendingOrderSnapshot] = useState<any[]>([]);
   const [showDineInCartModal, setShowDineInCartModal] = useState(false);
 
@@ -599,10 +621,7 @@ export default function HomeLayout() {
     }
 
     if (branchResult.status === "fulfilled") {
-      const activeBranches = branchResult.value.filter(
-        (branch: any) => branch.isActive,
-      );
-      const branchOptions = activeBranches.map((branch: any) => {
+      const branchOptions = branchResult.value.map((branch: any) => {
         const activeName = branch.restaurantNames?.find(
           (option: any) => option.isActive,
         )?.name;
@@ -625,11 +644,23 @@ export default function HomeLayout() {
           ]),
       );
       const defaultBranch =
-        branchOptions.find((branch: any) => menuBranchIds.has(branch.id)) ||
-        branchOptions[0] ||
+        branchOptions.find(
+          (branch: any) =>
+            branch.isActive &&
+            branch.isOnline !== false &&
+            menuBranchIds.has(branch.id),
+        ) ||
+        branchOptions.find(
+          (branch: any) => branch.isActive && branch.isOnline !== false,
+        ) ||
         null;
       const selectedBranch =
-        branchOptions.find((branch: any) => branch.id === activeBranch?.id) ||
+        branchOptions.find(
+          (branch: any) =>
+            branch.id === activeBranch?.id &&
+            branch.isActive &&
+            branch.isOnline !== false,
+        ) ||
         defaultBranch;
       cartBranchId = selectedBranch?.id;
       setBranches(branchOptions);
@@ -846,6 +877,10 @@ export default function HomeLayout() {
   const selectActiveBranch = async (
     branch: CustomerBranch & { id: string; address: string },
   ) => {
+    if (!branch.isActive || branch.isOnline === false) {
+      setActiveBranch(branch);
+      return;
+    }
     if (mode !== "Delivery" || !cartBranchId || cartBranchId === branch.id) {
       setActiveBranch(branch);
       return;
@@ -917,7 +952,7 @@ export default function HomeLayout() {
   };
 
   const createCustomerOrder = async (
-    paymentResult: "success" | "rejected",
+    paymentResult: "success" | "rejected" | "pending",
     tipAmount: number,
     specialInstructions: string,
     taxableAmount?: number,
@@ -932,22 +967,31 @@ export default function HomeLayout() {
       throw new Error("Choose a delivery address before checkout.");
     }
 
-    const order = await api.createOrder({
-      branchId: activeBranch.id,
-      fulfillmentType:
-        mode === "Dine-in"
-          ? "dine-in"
-          : (mode.toLowerCase() as "delivery" | "takeaway"),
-      ...(addressId ? { addressId } : {}),
-      ...(taxableAmount !== undefined ? { taxableAmount } : {}),
-      ...(tax !== undefined ? { tax } : {}),
-      ...(total !== undefined ? { total } : {}),
-      tipAmount,
-      specialInstructions,
-      paymentMethod: "online",
-      status: paymentResult === "success" ? "pending" : "rejected",
-      paymentStatus: paymentResult === "success" ? "paid" : "rejected",
-    });
+    const orderInput: CreateCustomerOrderInput =
+      mode === "Dine-in"
+        ? {
+            branchId: activeBranch.id,
+            fulfillmentType: "dine_in" as const,
+          }
+        : {
+            branchId: activeBranch.id,
+            fulfillmentType: mode.toLowerCase() as "delivery" | "takeaway",
+            ...(addressId ? { addressId } : {}),
+            ...(taxableAmount !== undefined ? { taxableAmount } : {}),
+            ...(tax !== undefined ? { tax } : {}),
+            ...(total !== undefined ? { total } : {}),
+            tipAmount,
+            specialInstructions,
+            paymentMethod: "online" as const,
+            status: paymentResult === "rejected" ? "rejected" : "pending",
+            paymentStatus:
+              paymentResult === "success"
+                ? "paid"
+                : paymentResult === "rejected"
+                  ? "rejected"
+                  : "pending",
+          };
+    const order = await api.createOrder(orderInput);
     return order;
   };
 
@@ -978,6 +1022,10 @@ export default function HomeLayout() {
     addons: CustomerCustomizationSelection[],
     totalAmount: number,
   ) => {
+    if (mode === "Dine-in" && dineInCartState === "waiting") {
+      Alert.alert("Order Being Submitted", "Please wait for the order to finish.");
+      return;
+    }
     const menuItemId = item?._id || item?.id;
     const branchId = activeBranch?.id;
     const existing =
@@ -1043,6 +1091,10 @@ export default function HomeLayout() {
     itemId: string,
     targetCartItemId?: string,
   ) => {
+    if (mode === "Dine-in" && dineInCartState === "waiting") {
+      Alert.alert("Order Being Submitted", "Please wait for the order to finish.");
+      return;
+    }
     const matchingItems = activeCart.filter(
       (cartItem) => cartItem.id === itemId,
     );
@@ -1164,11 +1216,7 @@ export default function HomeLayout() {
         setTimeLeft((prev: number | null) => {
           if (prev !== null && prev <= 1) {
             clearInterval(interval);
-            setActiveTable(null);
-            setMode("Delivery");
-            setDineInCartState("idle");
-            setPendingOrderSnapshot([]);
-            return null;
+            return 0;
           }
           return prev ? prev - 1 : null;
         });
@@ -1180,55 +1228,104 @@ export default function HomeLayout() {
   }, [activeTable, activeCartTotalItems, confirmedOrders]);
 
   useEffect(() => {
-    let timer: ReturnType<typeof setInterval>;
-    if (dineInCartState === "waiting" && orderCountdown > 0) {
-      timer = setInterval(() => {
-        setOrderCountdown((prev: number) => prev - 1);
-      }, 1000);
-    } else if (dineInCartState === "waiting" && orderCountdown === 0) {
-      const isAvailable = Math.random() > 0.1;
+    if (timeLeft !== 0 || !activeTable) return;
+    let isCurrent = true;
 
-      if (isAvailable) {
-        setDineInCartState("approved");
-        setConfirmedOrders((prev) => [...prev, ...pendingOrderSnapshot]);
-      } else {
-        setDineInCartState("rejected");
-      }
-    }
-    return () => clearInterval(timer);
-  }, [dineInCartState, orderCountdown, pendingOrderSnapshot]);
-
-  const handleConfirmOrder = () => {
-    setPendingOrderSnapshot((prev) => [...prev, ...activeCart]);
-    setDineInCartState("waiting");
-    setOrderCountdown(60);
-    setCarts((prev) => ({ ...prev, [mode]: [] }));
-  };
-
-  const handleCancelOrder = () => {
-    setCarts((prev) => {
-      const currentCart = prev[mode] || [];
-      const restoredCart = [...currentCart];
-      pendingOrderSnapshot.forEach((snapItem) => {
-        const existing = restoredCart.find((c) => c.id === snapItem.id);
-        if (existing) {
-          existing.quantity += snapItem.quantity;
-          existing.total += snapItem.total;
-        } else {
-          restoredCart.push(snapItem);
+    const closeExpiredSession = async () => {
+      try {
+        if (dineInSession?._id) {
+          await api.closeDineInSession(dineInSession._id);
         }
+        if (!isCurrent) return;
+        setDineInSession(null);
+        setActiveTable(null);
+        setMode("Delivery");
+        setDineInCartState("idle");
+        setPendingOrderSnapshot([]);
+      } catch (error) {
+        if (!isCurrent) return;
+        Alert.alert(
+          "Unable to Close Dine-in Session",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+        setTimeLeft(null);
+      }
+    };
+
+    void closeExpiredSession();
+    return () => {
+      isCurrent = false;
+    };
+  }, [activeTable, dineInSession, timeLeft]);
+
+  const handleConfirmOrder = async () => {
+    if (!dineInSession?._id || !activeBranch?.id || activeCart.length === 0) {
+      Alert.alert(
+        "Unable to Submit Order",
+        "Check in to a table and add items before submitting your order.",
+      );
+      return;
+    }
+
+    const orderSnapshot = [...activeCart];
+    setPendingOrderSnapshot(orderSnapshot);
+    setDineInCartState("waiting");
+    setCarts((prev) => ({ ...prev, [mode]: [] }));
+
+    try {
+      await createCustomerOrder(
+        "pending",
+        0,
+        "",
+        cartPricing?.taxableAmount,
+        cartPricing?.tax,
+        cartPricing?.total,
+      );
+      setDineInCartState("approved");
+      setConfirmedOrders((prev) => [...prev, ...orderSnapshot]);
+      try {
+        await reloadCart(activeBranch.id);
+      } catch (error) {
+        Alert.alert(
+          "Order Submitted",
+          `Your order was sent, but the cart could not be refreshed. ${error instanceof Error ? error.message : "Please refresh and try again."}`,
+        );
+      }
+    } catch (error) {
+      setCarts((prev) => {
+        const restoredCart = [...(prev[mode] || [])];
+        orderSnapshot.forEach((snapshotItem) => {
+          const existing = restoredCart.find(
+            (cartItem) => cartItem.id === snapshotItem.id,
+          );
+          if (existing) {
+            existing.quantity += snapshotItem.quantity;
+            existing.total += snapshotItem.total;
+          } else {
+            restoredCart.push(snapshotItem);
+          }
+        });
+        return { ...prev, [mode]: restoredCart };
       });
-      return { ...prev, [mode]: restoredCart };
-    });
-    setDineInCartState("idle");
-    setOrderCountdown(60);
-    setPendingOrderSnapshot([]);
+      setDineInCartState("rejected");
+      Alert.alert(
+        "Unable to Submit Order",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    }
   };
 
   const shouldShowGlobalCartButton =
     (mode !== "Delivery" || activeBranch?.id === cartBranchId) &&
     (activeCartTotalItems > 0 ||
       (mode === "Dine-in" && dineInCartState !== "idle"));
+  const isDineInCartPending =
+    mode === "Dine-in" &&
+    activeCartTotalItems > 0 &&
+    dineInCartState !== "waiting" &&
+    dineInCartState !== "rejected";
+  const isDineInCartAccepted =
+    dineInCartState === "approved" && !isDineInCartPending;
 
   return (
     <FavoritesContext.Provider value={{ favorites, toggleFavorite }}>
@@ -1260,11 +1357,14 @@ export default function HomeLayout() {
           setActiveAddress,
           activeBranch,
           setActiveBranch: selectActiveBranch,
+          setActiveBranchForDineInSession: setActiveBranch,
           handleAddToCart,
           handleDecrementCartItem,
           handleRemoveCartItems,
           activeTable,
           setActiveTable,
+          dineInSession,
+          setDineInSession,
           timeLeft,
           confirmedOrders,
           setConfirmedOrders,
@@ -1293,7 +1393,6 @@ export default function HomeLayout() {
                 orderMode={mode}
                 activeCartTotalItems={activeCartTotalItems}
                 dineInCartState={dineInCartState}
-                orderCountdown={orderCountdown}
                 theme={theme}
                 bottomOffset={tabBarBottom + TAB_BAR_HEIGHT}
                 onPress={() => {
@@ -1318,11 +1417,13 @@ export default function HomeLayout() {
               onPress={() => setShowDineInCartModal(false)}
             >
               <Pressable
-                className="rounded-t-[32px] p-6 pb-12"
+                className="rounded-t-[32px] p-6"
                 style={{
                   backgroundColor: theme.bg,
                   minHeight: "50%",
                   maxHeight: "85%",
+                  flexShrink: 1,
+                  paddingBottom: Math.max(insets.bottom, 16),
                 }}
                 onPress={(e) => e.stopPropagation()}
               >
@@ -1342,35 +1443,37 @@ export default function HomeLayout() {
                 </View>
 
                 <ScrollView
+                  style={{ flexShrink: 1 }}
                   showsVerticalScrollIndicator={false}
-                  contentContainerStyle={{ paddingBottom: 20 }}
+                  contentContainerStyle={{ paddingBottom: 12 }}
                 >
                   {/* --- 1. KITCHEN TRACKING STATUS CARD --- */}
-                  {dineInCartState !== "idle" && (
+                  {(dineInCartState !== "idle" || isDineInCartPending) && (
                     <Animated.View
                       entering={FadeIn.duration(300)}
                       className="rounded-[24px] p-5 mb-6 shadow-sm border"
                       style={{
                         backgroundColor:
-                          dineInCartState === "waiting"
-                            ? "#FFFBEB"
-                            : dineInCartState === "approved"
+                          dineInCartState === "rejected"
+                            ? "#FEF2F2"
+                            : isDineInCartAccepted
                               ? "#ECFDF5"
-                              : "#FEF2F2",
+                              : "#FFFBEB",
                         borderColor:
-                          dineInCartState === "waiting"
-                            ? "#FDE68A"
-                            : dineInCartState === "approved"
+                          dineInCartState === "rejected"
+                            ? "#FECACA"
+                            : isDineInCartAccepted
                               ? "#A7F3D0"
-                              : "#FECACA",
+                              : "#FDE68A",
                       }}
                     >
                       <View className="flex-row justify-between items-center mb-4">
                         <View className="flex-row items-center">
-                          {dineInCartState === "waiting" && (
+                          {(dineInCartState === "waiting" ||
+                            isDineInCartPending) && (
                             <Timer size={24} color="#F59E0B" />
                           )}
-                          {dineInCartState === "approved" && (
+                          {isDineInCartAccepted && (
                             <CheckCircle2 size={24} color="#10B981" />
                           )}
                           {dineInCartState === "rejected" && (
@@ -1380,31 +1483,42 @@ export default function HomeLayout() {
                             className="text-lg font-black ml-2 tracking-tight"
                             style={{
                               color:
-                                dineInCartState === "waiting"
-                                  ? "#D97706"
-                                  : dineInCartState === "approved"
+                                dineInCartState === "rejected"
+                                  ? "#DC2626"
+                                  : isDineInCartAccepted
                                     ? "#059669"
-                                    : "#DC2626",
+                                    : "#D97706",
                             }}
                           >
-                            {dineInCartState === "waiting"
-                              ? "Kitchen Reviewing..."
-                              : dineInCartState === "approved"
-                                ? "Order Approved!"
-                                : "Items Unavailable"}
+                            {dineInCartState === "rejected"
+                              ? "Order Not Submitted"
+                              : isDineInCartAccepted
+                                ? "Accepted"
+                                : "Pending"}
                           </Text>
                         </View>
                         {dineInCartState === "waiting" && (
                           <View className="bg-orange-200 px-3 py-1 rounded-full">
                             <Text className="font-black text-orange-700">
-                              00:{orderCountdown.toString().padStart(2, "0")}
+                              Please wait
                             </Text>
                           </View>
                         )}
                       </View>
 
+                      <Text className="text-sm font-semibold text-gray-700 mb-3">
+                        {isDineInCartAccepted
+                          ? "Order submitted to the kitchen."
+                          : dineInCartState === "waiting"
+                            ? "Sending your order to the kitchen..."
+                            : "Items added to your cart. Submit the order to send them to the kitchen."}
+                      </Text>
+
                       <View className="mb-4">
-                        {pendingOrderSnapshot.map((item: any, idx: number) => (
+                        {(isDineInCartPending
+                          ? activeCart
+                          : pendingOrderSnapshot
+                        ).map((item: any, idx: number) => (
                           <View
                             key={idx}
                             className="flex-row justify-between items-center mb-1.5"
@@ -1423,17 +1537,9 @@ export default function HomeLayout() {
                         ))}
                       </View>
 
-                      {dineInCartState === "waiting" ? (
-                        <Pressable
-                          onPress={handleCancelOrder}
-                          className="w-full py-3 rounded-xl items-center justify-center shadow-sm"
-                          style={{ backgroundColor: "#EF4444" }}
-                        >
-                          <Text className="text-white font-black text-xs uppercase tracking-wider">
-                            Cancel this Request
-                          </Text>
-                        </Pressable>
-                      ) : (
+                      {(dineInCartState === "rejected" ||
+                        (dineInCartState === "approved" &&
+                          !isDineInCartPending)) && (
                         <Pressable
                           onPress={() => {
                             setDineInCartState("idle");
@@ -1558,56 +1664,6 @@ export default function HomeLayout() {
                           );
                         })}
                       </View>
-
-                      <View
-                        className="border-t pt-4 mt-2 mb-6"
-                        style={{ borderColor: theme.border }}
-                      >
-                        <View className="flex-row justify-between items-center mb-1">
-                          <Text
-                            className="text-sm font-bold"
-                            style={{ color: theme.muted }}
-                          >
-                            Item Total
-                          </Text>
-                          <Text
-                            className="text-sm font-bold"
-                            style={{ color: theme.text }}
-                          >
-                            ₹{formatPrice(activeCartSubtotal)}
-                          </Text>
-                        </View>
-                        <Text
-                          className="text-xs font-semibold mb-3"
-                          style={{ color: theme.muted }}
-                        >
-                          Taxes will be added to your final table bill.
-                        </Text>
-                        <View className="flex-row justify-between items-center">
-                          <Text
-                            className="text-xl font-black"
-                            style={{ color: theme.text }}
-                          >
-                            Total
-                          </Text>
-                          <Text
-                            className="text-xl font-black"
-                            style={{ color: theme.primary }}
-                          >
-                            ₹{formatPrice(activeCartSubtotal)}
-                          </Text>
-                        </View>
-                      </View>
-
-                      <Pressable
-                        onPress={handleConfirmOrder}
-                        className="w-full h-14 rounded-2xl items-center justify-center shadow-sm"
-                        style={{ backgroundColor: theme.primary }}
-                      >
-                        <Text className="text-white font-black text-lg tracking-wide">
-                          Confirm & Send to Kitchen
-                        </Text>
-                      </Pressable>
                     </View>
                   )}
 
@@ -1626,6 +1682,58 @@ export default function HomeLayout() {
                     </Pressable>
                   )}
                 </ScrollView>
+                {activeCartTotalItems > 0 && (
+                  <>
+                    <View
+                      className="border-t pt-4 mt-2 mb-4"
+                      style={{ borderColor: theme.border }}
+                    >
+                      <View className="flex-row justify-between items-center mb-1">
+                        <Text
+                          className="text-sm font-bold"
+                          style={{ color: theme.muted }}
+                        >
+                          Item Total
+                        </Text>
+                        <Text
+                          className="text-sm font-bold"
+                          style={{ color: theme.text }}
+                        >
+                          ₹{formatPrice(activeCartSubtotal)}
+                        </Text>
+                      </View>
+                      <Text
+                        className="text-xs font-semibold mb-3"
+                        style={{ color: theme.muted }}
+                      >
+                        Taxes will be added to your final table bill.
+                      </Text>
+                      <View className="flex-row justify-between items-center">
+                        <Text
+                          className="text-xl font-black"
+                          style={{ color: theme.text }}
+                        >
+                          Total
+                        </Text>
+                        <Text
+                          className="text-xl font-black"
+                          style={{ color: theme.primary }}
+                        >
+                          ₹{formatPrice(activeCartSubtotal)}
+                        </Text>
+                      </View>
+                    </View>
+                    <Pressable
+                      onPress={handleConfirmOrder}
+                      className="w-full h-14 rounded-2xl items-center justify-center shadow-sm"
+                      style={{ backgroundColor: theme.primary }}
+                    >
+                      <Text className="text-white font-black text-lg tracking-wide">
+                        Confirm & Send to Kitchen
+                      </Text>
+                    </Pressable>
+                  </>
+                )}
               </Pressable>
             </Pressable>
           </Modal>

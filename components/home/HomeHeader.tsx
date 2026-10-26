@@ -105,6 +105,8 @@ export const HomeHeader = memo(
     greetings = [],
     searchPlaceholders = [],
     branchContentLoaded = false,
+    isBranchOnline = false,
+    isBranchStatusLoading = true,
     router,
     activeTable,
     timeLeft,
@@ -365,6 +367,35 @@ export const HomeHeader = memo(
           </View>
         </View>
 
+        {isBranchStatusLoading ? (
+          <View
+            className="mx-4 mb-6 rounded-2xl border p-5"
+            style={{ borderColor: theme.border, backgroundColor: theme.card }}
+          >
+            <Text className="text-base font-black" style={{ color: theme.text }}>
+              Checking restaurant availability
+            </Text>
+            <Text className="mt-1 text-sm" style={{ color: theme.muted }}>
+              Please wait while we check whether this branch is open.
+            </Text>
+          </View>
+        ) : !isBranchOnline ? (
+          <View
+            className="mx-4 mb-6 rounded-2xl border p-5"
+            style={{ borderColor: theme.border, backgroundColor: theme.card }}
+          >
+            <Text className="text-lg font-black" style={{ color: theme.text }}>
+              {restaurantName
+                ? `${restaurantName} is closed`
+                : "Restaurant is closed"}
+            </Text>
+            <Text className="mt-1 text-sm" style={{ color: theme.muted }}>
+              This restaurant is currently offline. Please check back later or
+              choose another branch.
+            </Text>
+          </View>
+        ) : (
+          <>
         {(orderMode === "Delivery" || orderMode === "Takeaway") &&
         !searchQuery ? (
           <Animated.View
@@ -527,8 +558,8 @@ export const HomeHeader = memo(
                     </Text>
 
                     {/* FIX: Re-structured this view so both buttons display cleanly side by side! */}
-                    {!(isTimerRunning || confirmedOrdersLength > 0) && (
-                      <View className="flex-row">
+                    <View className="flex-row">
+                      {!(isTimerRunning || confirmedOrdersLength > 0) && (
                         <Pressable
                           onPress={onOpenScanner}
                           className="bg-white/20 px-4 py-2 rounded-xl mr-2"
@@ -537,6 +568,8 @@ export const HomeHeader = memo(
                             Change Table
                           </Text>
                         </Pressable>
+                      )}
+                      {!isTimerRunning && (
                         <Pressable
                           onPress={onLeaveTable}
                           className="bg-white/20 px-4 py-2 rounded-xl"
@@ -545,8 +578,8 @@ export const HomeHeader = memo(
                             Leave Table
                           </Text>
                         </Pressable>
-                      </View>
-                    )}
+                      )}
+                    </View>
                   </View>
                   <View className="h-16 w-16 bg-white rounded-2xl items-center justify-center shadow-lg transform rotate-3 ml-2">
                     <UtensilsCrossed
@@ -710,12 +743,6 @@ export const HomeHeader = memo(
                     >
                       Track Your Order
                     </Text>
-                    <Text
-                      className="text-xs font-semibold"
-                      style={{ color: theme.muted }}
-                    >
-                      Pick up at the counter in 15 mins.
-                    </Text>
                   </View>
                 </View>
                 <ChevronRightCircle
@@ -741,6 +768,8 @@ export const HomeHeader = memo(
           >
             Search Results
           </Text>
+        )}
+          </>
         )}
       </View>
     );

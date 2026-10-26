@@ -20,7 +20,7 @@ import {
 } from "../../../../services/api/floor-manager";
 import { useAppTheme } from "../../../../hooks/useAppTheme";
 
-type TableStatus = "available" | "active" | "billed";
+type TableStatus = "free" | "active" | "billed";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object"
@@ -46,7 +46,7 @@ function normalizeStatus(status: string): TableStatus {
   const normalized = status.toLowerCase();
   if (normalized === "billed") return "billed";
   if (normalized === "occupied" || normalized === "active") return "active";
-  return "available";
+  return "free";
 }
 
 function getSessionCustomerCount(
@@ -105,7 +105,7 @@ export default function TableDetailScreen() {
   const [customerFirstName, setCustomerFirstName] = useState("");
   const [customerNameError, setCustomerNameError] = useState("");
   const [bill, setBill] = useState<Record<string, unknown> | null>(null);
-  const [status, setStatus] = useState<TableStatus>("available");
+  const [status, setStatus] = useState<TableStatus>("free");
   const [capacity, setCapacity] = useState("");
   const [customerCount, setCustomerCount] = useState("0");
   const [isLoading, setIsLoading] = useState(true);
@@ -127,7 +127,11 @@ export default function TableDetailScreen() {
     try {
       const nextDetails = await floorManagerApi.getTableDetails(tableId);
       setDetails(nextDetails);
-      setStatus(normalizeStatus(nextDetails.table.status));
+      setStatus(
+        normalizeStatus(
+          nextDetails.table.operationalStatus || nextDetails.table.status,
+        ),
+      );
       setCapacity(String(nextDetails.table.capacity));
       setCustomerCount(
         String(getSessionCustomerCount(nextDetails.table, nextDetails.session)),
@@ -200,8 +204,10 @@ export default function TableDetailScreen() {
 
   const table = details?.table;
   const session = details?.session ?? null;
-  const tableStatus = table ? normalizeStatus(table.status) : "available";
-  const isBlocked = status !== "available";
+  const tableStatus = table
+    ? normalizeStatus(table.operationalStatus || table.status)
+    : "free";
+  const isBlocked = status !== "free";
   const assignedWaiter =
     table && asRecord(table.assignedWaiterId)
       ? getText(asRecord(table.assignedWaiterId)?.name)
@@ -252,36 +258,36 @@ export default function TableDetailScreen() {
       );
       return;
     }
-    if (status === tableStatus) {
+    const customerCountChanged =
+      parsedCustomers !== getSessionCustomerCount(table, details?.session ?? null);
+    if (
+      status === tableStatus &&
+      !customerCountChanged &&
+      parsedCapacity === table.capacity
+    ) {
       Alert.alert(
-        "Action Required",
-        "You forgot to change option to related next option.",
+        "No Changes",
+        "Update the table status, customer count, or capacity before saving.",
       );
       return;
     }
 
     setIsSaving(true);
     try {
-      const changes: {
-        capacity?: number;
-        status?: TableStatus;
-        customersSeated?: number;
-      } = {};
-      if (parsedCapacity !== table.capacity) changes.capacity = parsedCapacity;
-      if (status !== tableStatus) changes.status = status;
-      if (
-        parsedCustomers !==
-        getSessionCustomerCount(table, details?.session ?? null)
-      ) {
-        changes.customersSeated = parsedCustomers;
+      if (parsedCapacity !== table.capacity) {
+        await floorManagerApi.updateTable(tableId, {
+          capacity: parsedCapacity,
+        });
       }
-      if (Object.keys(changes).length > 0) {
-        await floorManagerApi.updateTable(tableId, changes);
+      if (status !== tableStatus || customerCountChanged) {
+        await floorManagerApi.updateTableStatus(
+          tableId,
+          status,
+          parsedCustomers,
+        );
       }
       await loadTableDetails();
-      Alert.alert("Saved", "Table changes were saved successfully.", [
-        { text: "OK", onPress: () => router.back() },
-      ]);
+      Alert.alert("Saved", "Table changes were saved successfully.");
     } catch (error) {
       await loadTableDetails();
       Alert.alert(
@@ -296,16 +302,15 @@ export default function TableDetailScreen() {
   };
 
   const statusOptions: { id: TableStatus; label: string; color: string }[] =
-    tableStatus === "available"
+    tableStatus === "free"
       ? [
-          { id: "available", label: "Free", color: "#22c55e" },
+          { id: "free", label: "Free", color: "#22c55e" },
           { id: "active", label: "Active", color: theme.primary },
         ]
       : tableStatus === "billed"
         ? [
-            { id: "active", label: "Active", color: theme.primary },
             { id: "billed", label: "Billed", color: "#168f50" },
-            { id: "available", label: "Free", color: "#22c55e" },
+            { id: "free", label: "Free", color: "#22c55e" },
           ]
         : [
             { id: "active", label: "Active", color: theme.primary },
@@ -588,7 +593,7 @@ export default function TableDetailScreen() {
             className="mb-2 text-xs font-bold uppercase"
             style={{ color: theme.muted }}
           >
-            Assigned Waiter{tableStatus !== "available" ? " (Locked)" : ""}
+            Assigned Waiter{tableStatus !== "free" ? " (Locked)" : ""}
           </Text>
           <View
             className="mb-2 flex-row items-center rounded-xl border px-4 py-3"
@@ -599,7 +604,7 @@ export default function TableDetailScreen() {
           >
             <Text className="text-xs font-bold text-white">
               👤 {assignedWaiter || "No waiter assigned"}
-              {assignedWaiter && tableStatus !== "available"
+              {assignedWaiter && tableStatus !== "free"
                 ? " (Assigned Waiter)"
                 : ""}
             </Text>

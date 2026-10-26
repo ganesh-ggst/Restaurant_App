@@ -9,10 +9,12 @@ import {
   Star,
   X,
 } from "lucide-react-native";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
+  Animated as NativeAnimated,
   Alert,
   Dimensions,
+  Easing,
   Image,
   Modal,
   Pressable,
@@ -35,11 +37,86 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFavorites } from "../../app/(home)/_layout";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import type { CustomerCustomizationSelection } from "../../services/api/customer";
+import {
+  formatCustomTag,
+  getRandomCustomTagIcon,
+} from "../../utils/menu-tags";
 
 const { width } = Dimensions.get("window");
 
 const hasImageUri = (uri: unknown): uri is string =>
   typeof uri === "string" && uri.trim().length > 0;
+
+interface TagTickerProps {
+  label: string;
+  bottom: number;
+}
+
+function TagTicker({ label, bottom }: TagTickerProps) {
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const [textWidth, setTextWidth] = useState(0);
+  const [translateX] = useState(() => new NativeAnimated.Value(0));
+  const isOverflowing = textWidth > viewportWidth && viewportWidth > 0;
+  const repeatedDistance = textWidth + 24;
+
+  useEffect(() => {
+    if (!isOverflowing) return;
+
+    translateX.setValue(0);
+    const animation = NativeAnimated.loop(
+      NativeAnimated.timing(translateX, {
+        toValue: -repeatedDistance,
+        duration: Math.max(4000, repeatedDistance * 30),
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+    );
+    animation.start();
+
+    return () => animation.stop();
+  }, [isOverflowing, repeatedDistance, translateX]);
+
+  return (
+    <View
+      onLayout={(event) => setViewportWidth(event.nativeEvent.layout.width)}
+      className="absolute left-3 overflow-hidden"
+      style={{ bottom, width: "76%" }}
+    >
+      <NativeAnimated.View
+        style={[
+          { flexDirection: "row", alignSelf: "flex-start" },
+          { transform: [{ translateX }] },
+        ]}
+      >
+        {[0, ...(isOverflowing ? [1] : [])].map((copy) => (
+          <ScrollView
+            key={copy}
+            horizontal
+            scrollEnabled={false}
+            showsHorizontalScrollIndicator={false}
+            onContentSizeChange={
+              copy === 0 ? (contentWidth) => setTextWidth(contentWidth) : undefined
+            }
+            className={copy > 0 ? "ml-6" : ""}
+            style={{
+              width: textWidth || undefined,
+              flexGrow: 0,
+              flexShrink: 0,
+            }}
+          >
+            <Text
+              numberOfLines={1}
+              className="text-sm font-black tracking-tight text-white"
+              style={{ flexShrink: 0 }}
+            >
+              {label.toUpperCase()}
+            </Text>
+          </ScrollView>
+        ))}
+      </NativeAnimated.View>
+    </View>
+  );
+}
 
 interface FoodCardProps {
   item: any;
@@ -100,6 +177,7 @@ export default function FoodCard({
   const [showDetails, setShowDetails] = useState(false);
   const [showCustomization, setShowCustomization] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
+  const [fallbackCustomTagIcon] = useState(getRandomCustomTagIcon);
 
   const [customQty, setCustomQty] = useState(1);
   const [selectedAddons, setSelectedAddons] = useState<string[]>([]);
@@ -133,6 +211,31 @@ export default function FoodCard({
   const galleryImages = (
     item.gallery && item.gallery.length > 0 ? item.gallery : [item.image]
   ).filter(hasImageUri);
+  const customTag =
+    typeof item.customTag === "string" ? item.customTag.trim() : "";
+  const customTagLabel = formatCustomTag(customTag, fallbackCustomTagIcon);
+  const marketingTag =
+    (typeof item.marketingTag === "string" && item.marketingTag.trim()) ||
+    (typeof item.offer === "string" ? item.offer.trim() : "");
+  const normalizedMarketingTag = marketingTag
+    .toLowerCase()
+    .replace(/[⭐🔥]/g, "")
+    .replace(/[_\s-]+/g, "");
+  const marketingDisplayTag =
+    normalizedMarketingTag === "bestseller"
+      ? "⭐ Bestseller"
+      : normalizedMarketingTag === "hot"
+        ? "🔥 Hot"
+        : marketingTag;
+  const offerTag =
+    (item.customTagEnabled && customTagLabel) ||
+    (normalizedMarketingTag === "autodiscount"
+      ? typeof item.discountLabel === "string"
+        ? item.discountLabel.trim()
+        : ""
+      : normalizedMarketingTag === "none"
+        ? ""
+        : marketingDisplayTag);
 
   const isFav = favorites?.includes(item.id);
 
@@ -235,6 +338,32 @@ export default function FoodCard({
 
   const getBasePrice = () =>
     Number(String(item.price).replace(/[^\d.]/g, "")) || 0;
+  const compareAtPrice = Number(item.compareAtPrice);
+  const hasOfferPrice =
+    Number.isFinite(compareAtPrice) && compareAtPrice > getBasePrice();
+  const renderPrice = (className: string, containerClassName = "") => (
+    <View
+      className={`flex-col items-start ${containerClassName}`}
+      style={{ minWidth: 0 }}
+    >
+      {hasOfferPrice && (
+        <Text
+          className="text-[10px] font-bold"
+          style={{ color: theme.muted, textDecorationLine: "line-through" }}
+          numberOfLines={1}
+        >
+          ₹{compareAtPrice}
+        </Text>
+      )}
+      <Text
+        className={`${className} shrink-0`}
+        style={{ color: theme.text }}
+        numberOfLines={1}
+      >
+        {item.price}
+      </Text>
+    </View>
+  );
 
   const calculateTotal = () => {
     const base = getBasePrice();
@@ -392,13 +521,11 @@ export default function FoodCard({
                 </Text>
               </View>
             )}
-            {item.offer && (
-              <Text
-                className="absolute left-3 text-lg font-black text-white tracking-tight"
-                style={{ bottom: isItemAvailable ? 12 : 32 }}
-              >
-                {item.offer}
-              </Text>
+            {offerTag && (
+              <TagTicker
+                label={offerTag}
+                bottom={isItemAvailable ? 12 : 32}
+              />
             )}
           </View>
 
@@ -433,12 +560,7 @@ export default function FoodCard({
 
             {!isItemAvailable ? (
               <View className="mt-4">
-                <Text
-                  className="text-lg font-black"
-                  style={{ color: theme.text }}
-                >
-                  {item.price}
-                </Text>
+                {renderPrice("text-lg font-black")}
                 <View
                   className="mt-3 h-10 w-full items-center justify-center rounded-xl border"
                   style={{
@@ -457,17 +579,12 @@ export default function FoodCard({
                 </View>
               </View>
             ) : (
-              <View className="mt-4 flex-row items-center justify-between">
-                <Text
-                  className="text-lg font-black"
-                  style={{ color: theme.text }}
-                >
-                  {item.price}
-                </Text>
+              <View className="mt-4 flex-row items-center">
+                {renderPrice("text-lg font-black", "mr-2 flex-1")}
 
                 {cartQuantity > 0 ? (
                   <View
-                    className="h-10 min-w-[88px] flex-row items-center justify-between rounded-lg border"
+                    className="h-10 w-[76px] shrink-0 flex-row items-center justify-between rounded-lg border"
                     style={{
                       backgroundColor: theme.primary,
                       borderColor: theme.primary,
@@ -478,7 +595,7 @@ export default function FoodCard({
                         e.stopPropagation();
                         onDecrement && onDecrement();
                       }}
-                      className="h-full justify-center px-2"
+                      className="h-full justify-center px-1.5"
                     >
                       <Minus size={16} color="#fff" strokeWidth={3} />
                     </Pressable>
@@ -493,7 +610,7 @@ export default function FoodCard({
                         e.stopPropagation();
                         openCustomization();
                       }}
-                      className="h-full justify-center px-2"
+                      className="h-full justify-center px-1.5"
                     >
                       <Plus size={16} color="#fff" strokeWidth={3} />
                     </Pressable>
@@ -504,7 +621,7 @@ export default function FoodCard({
                       e.stopPropagation();
                       openCustomization();
                     }}
-                    className="h-10 min-w-[88px] items-center justify-center rounded-xl border px-5"
+                    className="h-10 w-[76px] shrink-0 items-center justify-center rounded-xl border"
                     style={{
                       backgroundColor: theme.isDark
                         ? "rgba(255,255,255,0.05)"
@@ -513,7 +630,7 @@ export default function FoodCard({
                     }}
                   >
                     <Text
-                      className="text-sm font-black uppercase"
+                      className="text-xs font-black uppercase"
                       style={{ color: theme.primary }}
                     >
                       ADD
@@ -609,12 +726,7 @@ export default function FoodCard({
                 >
                   {item.name}
                 </Text>
-                <Text
-                  style={{ color: theme.text }}
-                  className="text-xl font-black mb-4"
-                >
-                  {item.price}
-                </Text>
+                <View className="mb-4">{renderPrice("text-xl font-black")}</View>
                 <Text
                   style={{ color: theme.text }}
                   className="text-[15px] font-medium leading-6"

@@ -104,6 +104,9 @@ export interface OperationsDashboard {
     code?: string;
     address?: string;
   };
+  checkIn: {
+    isCheckedIn: boolean;
+  };
   stats: {
     totalItems: number;
     inStockItems: number;
@@ -237,9 +240,12 @@ function requireArray<T>(data: T[] | undefined, message: string): T[] {
 const encode = (value: string) => encodeURIComponent(value);
 
 export const operationsApi = {
-  async getDashboard(): Promise<OperationsDashboard> {
+  async getDashboard(branchId?: string | null): Promise<OperationsDashboard> {
+    const branchQuery = branchId
+      ? `?branchId=${encode(branchId)}`
+      : "";
     return requireData(
-      await request<OperationsDashboard>("GET", "/dashboard"),
+      await request<OperationsDashboard>("GET", `/dashboard${branchQuery}`),
       "The server did not return the operations dashboard.",
     );
   },
@@ -552,6 +558,18 @@ export const operationsApi = {
     return requireArray(
       orders,
       "The server did not return a valid orders list.",
+    );
+  },
+
+  async setManagerCheckInStatus(
+    isCheckedIn: boolean,
+    branchId?: string | null,
+  ): Promise<void> {
+    await request(
+      "PATCH",
+      "/manager/check-in-status",
+      { isCheckedIn, ...(branchId ? { branchId } : {}) },
+      "operations",
     );
   },
 

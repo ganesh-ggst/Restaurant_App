@@ -1,4 +1,4 @@
-import { forwardRef } from "react";
+import { forwardRef, type ComponentRef } from "react";
 import { Text, TextInput, View } from "react-native";
 import { useAppTheme } from "../../hooks/useAppTheme";
 
@@ -23,7 +23,7 @@ interface InputProps {
   autoFocus?: boolean;
 }
 
-export const Input = forwardRef<TextInput, InputProps>(
+export const Input = forwardRef<ComponentRef<typeof TextInput>, InputProps>(
   (
     {
       label,

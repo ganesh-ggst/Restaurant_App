@@ -10,7 +10,7 @@ import {
   ScrollText,
   X,
 } from "lucide-react-native";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   Alert,
   Dimensions,
@@ -38,6 +38,7 @@ import { api } from "../../../services/api";
 import { authApi } from "../../../services/api/auth";
 import type {
   CustomerCustomizationSelection,
+  CustomerDineInSession,
   CustomerOrder,
 } from "../../../services/api/customer";
 import { useOrderMode } from "../_layout";
@@ -75,10 +76,7 @@ function formatOrderStatus(status: unknown) {
 }
 
 function formatFulfillmentType(fulfillmentType: unknown) {
-  const normalized = String(fulfillmentType || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[_\s]+/g, "-");
+  const normalized = normalizeFulfillmentType(fulfillmentType);
 
   switch (normalized) {
     case "delivery":
@@ -90,6 +88,39 @@ function formatFulfillmentType(fulfillmentType: unknown) {
     default:
       return "Order type unavailable";
   }
+}
+
+function normalizeFulfillmentType(fulfillmentType: unknown) {
+  return String(fulfillmentType || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-");
+}
+
+function getEffectiveOrderStatus(
+  order: any,
+  activeDineInSessionId: string | null | undefined,
+) {
+  const status = normalizeOrderStatus(order?.status);
+  if (
+    normalizeFulfillmentType(order?.fulfillmentType) !== "dine-in" ||
+    ["rejected", "cancelled", "refunded"].includes(status) ||
+    activeDineInSessionId === undefined
+  ) {
+    return status;
+  }
+
+  const sessionId =
+    typeof order?.dineInSessionId === "string"
+      ? order.dineInSessionId
+      : order?.dineInSessionId?._id;
+  if (
+    activeDineInSessionId === null ||
+    (sessionId && sessionId !== activeDineInSessionId)
+  ) {
+    return "completed";
+  }
+  return status === "pending" ? "accepted" : status;
 }
 
 function mapCustomerOrder(order: CustomerOrder) {
@@ -126,22 +157,30 @@ function mapCustomerOrder(order: CustomerOrder) {
   };
 }
 
-function getOrderStatusTimeline(order: any) {
-  const fulfillmentType = String(order?.fulfillmentType || "delivery")
-    .trim()
-    .toLowerCase()
-    .replace(/[_\s]+/g, "-");
-  const currentStatus = normalizeOrderStatus(order?.status);
+function getOrderStatusTimeline(
+  order: any,
+  activeDineInSessionId: string | null | undefined,
+) {
+  const fulfillmentType = normalizeFulfillmentType(
+    order?.fulfillmentType || "delivery",
+  );
+  const isDineIn = fulfillmentType === "dine-in";
+  const currentStatus = getEffectiveOrderStatus(
+    order,
+    activeDineInSessionId,
+  );
   const history = Array.isArray(order?.statusHistory)
     ? order.statusHistory
     : [];
   const statusDescriptions: Record<string, string> = {
     pending: "Order placed",
-    accepted: "Order accepted by the restaurant",
+    accepted: isDineIn
+      ? "Order submitted to the kitchen"
+      : "Order accepted by the restaurant",
     preparing: "Your order is being prepared",
     ready: "Your order is ready",
     "out for delivery": "Your order is on the way",
-    completed: "Order completed",
+    completed: isDineIn ? "Dine-in session ended" : "Order completed",
     rejected: "Order rejected by the restaurant",
   };
   const standardStatuses = fulfillmentType === "dine-in"
@@ -196,6 +235,32 @@ const calculateOrderTotals = (order: any) => {
       gstAmount: 0,
       totalTaxesAndCharges: 0,
       finalPayable: 0,
+    };
+  }
+
+  const fulfillmentType = normalizeFulfillmentType(order.fulfillmentType);
+  if (fulfillmentType === "dine-in" || fulfillmentType === "takeaway") {
+    const itemTotal =
+      Number(order.subtotal) ||
+      order.items.reduce((sum: number, item: any) => {
+        const price =
+          typeof item.price === "string"
+            ? parseFloat(item.price.replace(/[^\d.]/g, "")) || 0
+            : Number(item.unitPrice) || 0;
+        return sum + price * item.quantity;
+      }, 0);
+    const discount = Number(order.discount) || 0;
+    const gstAmount = Number(order.tax) || 0;
+
+    return {
+      itemTotal,
+      actualDeliveryFee: 0,
+      isFreeDelivery: false,
+      packagingCharge: 0,
+      platformFee: 0,
+      gstAmount,
+      totalTaxesAndCharges: gstAmount,
+      finalPayable: Math.max(0, itemTotal - discount + gstAmount),
     };
   }
 
@@ -309,6 +374,9 @@ const BillDetailsAccordion = ({ order, theme }: any) => {
   if (!order) return null;
 
   const totals = calculateOrderTotals(order);
+  const fulfillmentType = normalizeFulfillmentType(order.fulfillmentType);
+  const isDineInOrder = fulfillmentType === "dine-in";
+  const isGstOnlyOrder = isDineInOrder || fulfillmentType === "takeaway";
 
   return (
     <Animated.View
@@ -375,12 +443,13 @@ const BillDetailsAccordion = ({ order, theme }: any) => {
             </Text>
           </View>
 
-          <View
-            style={{
-              zIndex: activePopover === "delivery" ? 100 : 1,
-              elevation: activePopover === "delivery" ? 10 : 0,
-            }}
-          >
+          {!isGstOnlyOrder && (
+            <View
+              style={{
+                zIndex: activePopover === "delivery" ? 100 : 1,
+                elevation: activePopover === "delivery" ? 10 : 0,
+              }}
+            >
             {activePopover === "delivery" && (
               <>
                 <Pressable
@@ -438,9 +507,9 @@ const BillDetailsAccordion = ({ order, theme }: any) => {
                         }
                       >
                         {totals.isFreeDelivery
-                          ? "FREE"
-                          : `₹${formatPrice(totals.actualDeliveryFee)}`}
-                      </Text>
+                            ? "FREE"
+                            : `₹${formatPrice(totals.actualDeliveryFee)}`}
+                        </Text>
                     </View>
                   </View>
                   <View
@@ -511,7 +580,8 @@ const BillDetailsAccordion = ({ order, theme }: any) => {
                 </Text>
               )}
             </Pressable>
-          </View>
+            </View>
+          )}
 
           <View
             style={{
@@ -547,9 +617,10 @@ const BillDetailsAccordion = ({ order, theme }: any) => {
                     style={{ color: theme.text }}
                     className="font-black text-[15px] mb-4"
                   >
-                    GST & Other Charges
+                    {isGstOnlyOrder ? "GST" : "GST & Other Charges"}
                   </Text>
-                  <View className="flex-row justify-between mb-3">
+                  {!isGstOnlyOrder && (
+                    <View className="flex-row justify-between mb-3">
                     <Text
                       style={{ color: theme.muted }}
                       className="text-[13px] font-semibold"
@@ -562,8 +633,10 @@ const BillDetailsAccordion = ({ order, theme }: any) => {
                     >
                       ₹{formatPrice(totals.packagingCharge)}
                     </Text>
-                  </View>
-                  <View className="flex-row justify-between mb-1">
+                    </View>
+                  )}
+                  {!isGstOnlyOrder && (
+                    <View className="flex-row justify-between mb-1">
                     <Text
                       style={{ color: theme.muted }}
                       className="text-[13px] font-semibold"
@@ -576,19 +649,24 @@ const BillDetailsAccordion = ({ order, theme }: any) => {
                     >
                       ₹{formatPrice(totals.platformFee)}
                     </Text>
-                  </View>
-                  <Text
-                    style={{ color: theme.muted, opacity: 0.7 }}
-                    className="text-[11px] mb-4 leading-4 pr-10"
-                  >
-                    Inclusive of GST. This fee helps us operate.
-                  </Text>
+                    </View>
+                  )}
+                  {!isGstOnlyOrder && (
+                    <Text
+                      style={{ color: theme.muted, opacity: 0.7 }}
+                      className="text-[11px] mb-4 leading-4 pr-10"
+                    >
+                      Inclusive of GST. This fee helps us operate.
+                    </Text>
+                  )}
                   <View className="flex-row justify-between mb-1">
                     <Text
                       style={{ color: theme.muted }}
                       className="text-[13px] font-semibold"
                     >
-                      Restaurant GST (5%)
+                      {isGstOnlyOrder
+                        ? "GST"
+                        : `Restaurant GST (${order.taxPercentage || 5}%)`}
                     </Text>
                     <Text
                       style={{ color: theme.text }}
@@ -627,7 +705,7 @@ const BillDetailsAccordion = ({ order, theme }: any) => {
                   style={{ color: theme.muted, lineHeight: 18 }}
                   className="font-semibold text-[14px]"
                 >
-                  GST & Other Charges
+                  {isGstOnlyOrder ? "GST" : "GST & Other Charges"}
                 </Text>
               </View>
               <Text style={{ color: theme.text }} className="font-semibold">
@@ -680,6 +758,10 @@ export default function OrdersScreen() {
   } = useOrderMode();
   const [orders, setOrders] = useState<any[]>([]);
   const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
+  const [activeDineInSession, setActiveDineInSession] = useState<
+    CustomerDineInSession | null | undefined
+  >(undefined);
+  const sessionCheckErrorShown = useRef(false);
   const activeCart = carts[orderMode] || [];
   const activeCartTotalItems = activeCart.reduce(
     (sum: number, item: any) => sum + item.quantity,
@@ -710,7 +792,39 @@ export default function OrdersScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      let isFocused = true;
+      let sessionRequestInProgress = false;
+      const refreshDineInSession = async () => {
+        if (sessionRequestInProgress) return;
+        sessionRequestInProgress = true;
+        try {
+          const token = await authApi.getAccessToken();
+          if (!token || !isFocused) return;
+          const session = await api.getDineInSession();
+          if (!isFocused) return;
+          setActiveDineInSession(session);
+          sessionCheckErrorShown.current = false;
+        } catch (error) {
+          if (!isFocused || sessionCheckErrorShown.current) return;
+          sessionCheckErrorShown.current = true;
+          Alert.alert(
+            "Unable to Refresh Dine-in Status",
+            error instanceof Error ? error.message : "Please try again.",
+          );
+        } finally {
+          sessionRequestInProgress = false;
+        }
+      };
+
       void refreshOrders();
+      void refreshDineInSession();
+      const interval = setInterval(() => {
+        void refreshDineInSession();
+      }, 10_000);
+      return () => {
+        isFocused = false;
+        clearInterval(interval);
+      };
     }, [refreshOrders]),
   );
 
@@ -748,7 +862,37 @@ export default function OrdersScreen() {
     );
   };
 
-  const displayOrders = orders.filter((order) => {
+  const endedSessionStatuses = [
+    "cancelled",
+    "canceled",
+    "closed",
+    "completed",
+    "ended",
+    "expired",
+  ];
+  const activeDineInSessionId =
+    activeDineInSession === null ||
+    (activeDineInSession?.status &&
+      endedSessionStatuses.includes(
+        normalizeOrderStatus(activeDineInSession.status),
+      ))
+      ? null
+      : activeDineInSession?._id;
+  const ordersWithLiveStatus = orders.map((order) => {
+    const status = getEffectiveOrderStatus(order, activeDineInSessionId);
+    return {
+      ...order,
+      status: formatOrderStatus(status),
+      isActive: ![
+        "completed",
+        "cancelled",
+        "rejected",
+        "refunded",
+      ].includes(status),
+    };
+  });
+
+  const displayOrders = ordersWithLiveStatus.filter((order) => {
     const matchesStatus =
       activeTab === "Active" ? order.isActive : !order.isActive;
     const orderBranchId = getOrderBranchId(order);
@@ -1433,7 +1577,10 @@ export default function OrdersScreen() {
                   flexGrow: 1,
                 }}
               >
-                {getOrderStatusTimeline(trackingOrder).map(
+                {getOrderStatusTimeline(
+                  trackingOrder,
+                  activeDineInSessionId,
+                ).map(
                   (step: any, index: number, steps: any[]) => (
                     <View
                       key={step.status}

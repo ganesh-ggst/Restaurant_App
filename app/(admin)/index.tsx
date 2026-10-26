@@ -23,11 +23,18 @@ import {
   adminNotificationsApi,
   type AdminDashboardData,
 } from "../../services/api/admin-profile";
+import { getAuthDestination } from "../../services/authRouting";
 
 export default function AdminDashboard() {
   const theme = useAppTheme();
   const router = useRouter();
-  const { currentManager, loading: authLoading, isAdmin } = useCurrentManager();
+  const {
+    currentManager,
+    loading: authLoading,
+    error: authError,
+    isAdmin,
+    refreshCurrentManager,
+  } = useCurrentManager();
 
   const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
   const [pulseAnim] = useState(() => new Animated.Value(1));
@@ -83,8 +90,20 @@ export default function AdminDashboard() {
       if (authLoading) return () => {
         isCurrent = false;
       };
+      if (!currentManager) {
+        return () => {
+          isCurrent = false;
+        };
+      }
       if (!isAdmin) {
-        router.replace("/(auth)/login" as any);
+        if (currentManager.role.toLowerCase() !== "admin") {
+          router.replace(
+            getAuthDestination(
+              currentManager.role,
+              currentManager.managerType,
+            ) as any,
+          );
+        }
         return () => {
           isCurrent = false;
         };
@@ -138,7 +157,7 @@ export default function AdminDashboard() {
     return () => {
       isCurrent = false;
     };
-    }, [authLoading, isAdmin, router]),
+    }, [authLoading, currentManager, isAdmin, router]),
   );
 
   const reloadDashboard = async (isPullRefresh = false) => {
@@ -177,9 +196,12 @@ export default function AdminDashboard() {
   };
 
   const handleToggleBranchLive = (newValue: boolean) => {
-    const branchId = dashboard?.branch.id || currentManager?.branchId;
+    const branchId = dashboard?.branch.id;
     if (!branchId || branchUpdating) {
-      Alert.alert("Unable to update branch", "Branch information is not available. Refresh and try again.");
+      Alert.alert(
+        "Unable to update branch",
+        "The branch ID is not available from the admin dashboard. Refresh and try again.",
+      );
       return;
     }
 
@@ -220,8 +242,9 @@ export default function AdminDashboard() {
                   ? "Your branch is still serving guests"
                   : "We couldn’t update the branch",
                 blockedByActiveWork
-                  ? "Please complete active tables and pending orders before taking the branch offline."
-                  : "Please try again in a moment.",
+                  ? serverMessage ||
+                    "Please complete active tables and pending orders before taking the branch offline."
+                  : serverMessage || "Please try again in a moment.",
               );
             } finally {
               setBranchUpdating(false);
@@ -246,6 +269,65 @@ export default function AdminDashboard() {
     }
     return `₹${num.toFixed(2)}`;
   };
+
+  if (authLoading) {
+    return (
+      <SafeAreaView
+        className="flex-1 items-center justify-center"
+        style={{ backgroundColor: theme.bg }}
+      >
+        <StatusBar style={theme.isDark ? "light" : "dark"} />
+        <ActivityIndicator size="large" color={theme.primary} />
+      </SafeAreaView>
+    );
+  }
+
+  if (!currentManager || !isAdmin) {
+    const inactiveAdmin = currentManager?.role.toLowerCase() === "admin";
+    return (
+      <SafeAreaView
+        className="flex-1 items-center justify-center px-6"
+        style={{ backgroundColor: theme.bg }}
+      >
+        <StatusBar style={theme.isDark ? "light" : "dark"} />
+        <Card
+          variant="default"
+          className="w-full items-center rounded-3xl border-0 p-8"
+        >
+          <Text className="mb-2 text-3xl">{inactiveAdmin ? "🔒" : "⚠️"}</Text>
+          <Text
+            className="mb-2 text-center text-lg font-black"
+            style={{ color: theme.text }}
+          >
+            {inactiveAdmin ? "Admin account inactive" : "Unable to verify admin"}
+          </Text>
+          <Text
+            className="mb-5 text-center text-sm"
+            style={{ color: theme.muted }}
+          >
+            {inactiveAdmin
+              ? "This admin account is inactive. Contact your administrator for access."
+              : authError ||
+                "Your login is still active, but account details could not be loaded."}
+          </Text>
+          {!inactiveAdmin ? (
+            <Pressable
+              onPress={() => void refreshCurrentManager()}
+              className="rounded-xl px-5 py-3"
+              style={{ backgroundColor: theme.primary }}
+            >
+              <Text
+                className="font-bold"
+                style={{ color: theme.primaryForeground }}
+              >
+                Retry
+              </Text>
+            </Pressable>
+          ) : null}
+        </Card>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView className="flex-1" style={{ backgroundColor: theme.bg }}>

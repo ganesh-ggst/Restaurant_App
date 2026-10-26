@@ -276,9 +276,14 @@ export interface CheckoutPreviewInput {
   offerCode?: string;
 }
 
-export interface CreateCustomerOrderInput {
-  branchId: string;
-  fulfillmentType: "delivery" | "takeaway" | "dine-in";
+export type CreateCustomerOrderInput =
+  | {
+      branchId: string;
+      fulfillmentType: "dine_in";
+    }
+  | {
+      branchId: string;
+      fulfillmentType: "delivery" | "takeaway";
   addressId?: string;
   subtotal?: number;
   discount?: number;
@@ -294,6 +299,59 @@ export interface CreateCustomerOrderInput {
   paymentMethod: "online";
   status: "pending" | "rejected";
   paymentStatus: "pending" | "paid" | "rejected";
+    };
+
+export interface CustomerDineInSession {
+  _id: string;
+  branchId: string;
+  tableNumber: number;
+  tableId?: string | { _id: string; tableNumber?: number };
+  status?: string;
+  assignedWaiterName?: string;
+}
+
+export interface CustomerDineInWaiter {
+  tableNumber: number;
+  waiterName: string;
+}
+
+export interface CustomerDineInWifiConnection {
+  id: string;
+  name: string;
+  password: string;
+}
+
+export interface CustomerDineInBill {
+  sessionId: string;
+  tableNumber: number;
+  assignedWaiterName?: string;
+  orders: {
+    _id: string;
+    orderNumber?: string;
+    items: {
+      name: string;
+      quantity: number;
+      itemTotal: number;
+      unitPrice?: number;
+    }[];
+  }[];
+  coupons: unknown[];
+  pricing: {
+    subtotal: number;
+    discount: number;
+    packagingFee: number;
+    platformFee: number;
+    deliveryFee: number;
+    taxableAmount: number;
+    tax: number;
+    taxPercentage: number | null;
+    taxRates: unknown[];
+    total: number;
+    paidTotal: number;
+    amountDue: number;
+  };
+  paymentStatus: string;
+  canPay: boolean;
 }
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL?.trim().replace(
@@ -307,6 +365,7 @@ async function request<T>(
   path: string,
   body?: object,
   authenticated = false,
+  allowMissingSession = false,
 ): Promise<T | undefined> {
   if (!API_BASE_URL) {
     throw new Error(
@@ -332,6 +391,12 @@ async function request<T>(
     });
 
     if (!response.data?.success) {
+      if (
+        allowMissingSession &&
+        /no active .*session|session not found/i.test(response.data?.message || "")
+      ) {
+        return undefined;
+      }
       throw new Error(
         formatApiError(
           response.data?.message || "The API request failed.",
@@ -344,6 +409,13 @@ async function request<T>(
     if (isAxiosError<ApiEnvelope<unknown>>(error)) {
       const responseData = error.response?.data;
       const message = responseData?.message;
+      if (
+        allowMissingSession &&
+        (error.response?.status === 404 ||
+          /no active .*session|session not found/i.test(message || ""))
+      ) {
+        return undefined;
+      }
       if (message) throw new Error(formatApiError(message, responseData.errors));
       if (error.response?.status === 401) {
         throw new Error(
@@ -384,6 +456,131 @@ function requireArray<T>(data: T[] | undefined, message: string): T[] {
 const encode = (value: string) => encodeURIComponent(value);
 
 export const customerApi = {
+  async takeDineInTable(
+    branchId: string,
+    tableNumber: number,
+  ): Promise<CustomerDineInSession> {
+    const result = requireData(
+      await request<CustomerDineInSession | { session: CustomerDineInSession }>(
+        "POST",
+        "/dine-in/take-table",
+        { branchId, tableNumber },
+        true,
+      ),
+      "The server did not return the dine-in session.",
+    );
+    const session = "session" in result ? result.session : result;
+    if (!session?._id || typeof session.tableNumber !== "number") {
+      throw new Error("The server returned an invalid dine-in session.");
+    }
+    return session;
+  },
+
+  async changeDineInTable(
+    branchId: string,
+    tableNumber: number,
+  ): Promise<CustomerDineInSession> {
+    const result = requireData(
+      await request<
+        CustomerDineInSession | { session: CustomerDineInSession }
+      >("POST", "/dine-in/change-table", { branchId, tableNumber }, true),
+      "The server did not return the updated dine-in session.",
+    );
+    const session = "session" in result ? result.session : result;
+    if (!session?._id || typeof session.tableNumber !== "number") {
+      throw new Error("The server returned an invalid dine-in session.");
+    }
+    return session;
+  },
+
+  async getDineInSession(): Promise<CustomerDineInSession | null> {
+    const result = await request<CustomerDineInSession | null>(
+      "GET",
+      "/dine-in/session",
+      undefined,
+      true,
+      true,
+    );
+    if (result == null) return null;
+    if (!result._id || typeof result.tableNumber !== "number") {
+      throw new Error("The server returned an invalid dine-in session.");
+    }
+    return result;
+  },
+
+  async closeDineInSession(sessionId: string): Promise<void> {
+    await request<void>(
+      "POST",
+      "/dine-in/close",
+      { sessionId },
+      true,
+    );
+  },
+
+  async getDineInWaiter(): Promise<CustomerDineInWaiter> {
+    return requireData(
+      await request<CustomerDineInWaiter>(
+        "GET",
+        "/dine-in/waiter",
+        undefined,
+        true,
+      ),
+      "The server did not return waiter details.",
+    );
+  },
+
+  async getDineInServiceRequests(): Promise<unknown[]> {
+    return requireArray(
+      await request<unknown[]>(
+        "GET",
+        "/dine-in/service-requests",
+        undefined,
+        true,
+      ),
+      "The server did not return service requests.",
+    );
+  },
+
+  async createDineInServiceRequest(
+    sessionId: string,
+    type: "water" | "waiter",
+  ): Promise<void> {
+    await request<void>(
+      "POST",
+      "/dine-in/service-request",
+      { sessionId, type },
+      true,
+    );
+  },
+
+  async getDineInWifi(): Promise<CustomerDineInWifiConnection[]> {
+    const result = requireData(
+      await request<{ wifiConnections: CustomerDineInWifiConnection[] }>(
+        "GET",
+        "/dine-in/wifi",
+        undefined,
+        true,
+      ),
+      "The server did not return Wi-Fi details.",
+    );
+    return requireArray(
+      result.wifiConnections,
+      "The server did not return Wi-Fi details.",
+    );
+  },
+
+  async getDineInBill(): Promise<CustomerDineInBill> {
+    return requireData(
+      await request<CustomerDineInBill>(
+        "GET",
+        "/dine-in/session/bill",
+        undefined,
+        true,
+      ),
+      "The server did not return the dine-in bill.",
+    );
+  },
+
   async getMenuItems(
     stock?: "all" | "in_stock" | "out_of_stock",
     branchId?: string,

@@ -35,6 +35,7 @@ export default function EditCrossSellScreen() {
   const [item, setItem] = useState<OperationsMenuItem | null>(null);
   const [loading, setLoading] = useState(!isNewItem);
   const [saving, setSaving] = useState(false);
+  const [hasAttemptedSave, setHasAttemptedSave] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState("");
@@ -162,6 +163,7 @@ export default function EditCrossSellScreen() {
   };
 
   const handleSave = async () => {
+    setHasAttemptedSave(true);
     const numericPrice = Number(price);
     const numericQuantity = Number(quantity);
     if (!name.trim()) {
@@ -233,6 +235,7 @@ export default function EditCrossSellScreen() {
     keyboardType: "default" | "numeric" = "default",
     multiline = false,
     required = false,
+    invalid = false,
   ) => (
     <View className="mb-4">
       <Text className="mb-2 text-xs font-bold uppercase" style={{ color: theme.muted }}>
@@ -253,12 +256,22 @@ export default function EditCrossSellScreen() {
         className="rounded-xl border px-4 py-3"
         style={{
           backgroundColor: theme.card,
-          borderColor: theme.border,
-          color: theme.text,
+          borderColor: invalid ? theme.danger : theme.border,
+          borderWidth: invalid ? 2 : 1,
+          color: invalid ? theme.danger : theme.text,
           minHeight: multiline ? 88 : 48,
           textAlignVertical: multiline ? "top" : "center",
         }}
       />
+      {invalid ? (
+        <Text className="mt-1 text-xs font-semibold" style={{ color: theme.danger }}>
+          {label === "Cross-sell name"
+            ? "Name is required."
+            : label === "Regular price (₹)"
+              ? "Enter a price greater than zero."
+              : "Enter a non-negative whole number."}
+        </Text>
+      ) : null}
     </View>
   );
 
@@ -347,7 +360,13 @@ export default function EditCrossSellScreen() {
                 onPress={() => void pickImage("gallery")}
                 disabled={uploadingImage}
                 className="flex-1 flex-row items-center justify-center rounded-xl border px-3 py-3"
-                style={{ borderColor: theme.border }}
+                style={{
+                  borderColor:
+                    hasAttemptedSave && !imageUrl.trim()
+                      ? theme.danger
+                      : theme.border,
+                  borderWidth: hasAttemptedSave && !imageUrl.trim() ? 2 : 1,
+                }}
               >
                 <Feather name="image" size={16} color={theme.primary} />
                 <Text className="ml-2 text-sm font-bold" style={{ color: theme.primary }}>
@@ -358,7 +377,13 @@ export default function EditCrossSellScreen() {
                 onPress={() => void pickImage("camera")}
                 disabled={uploadingImage}
                 className="flex-1 flex-row items-center justify-center rounded-xl border px-3 py-3"
-                style={{ borderColor: theme.border }}
+                style={{
+                  borderColor:
+                    hasAttemptedSave && !imageUrl.trim()
+                      ? theme.danger
+                      : theme.border,
+                  borderWidth: hasAttemptedSave && !imageUrl.trim() ? 2 : 1,
+                }}
               >
                 <Feather name="camera" size={16} color={theme.primary} />
                 <Text className="ml-2 text-sm font-bold" style={{ color: theme.primary }}>
@@ -366,6 +391,11 @@ export default function EditCrossSellScreen() {
                 </Text>
               </Pressable>
             </View>
+            {hasAttemptedSave && !imageUrl.trim() ? (
+              <Text className="mt-2 text-xs font-semibold" style={{ color: theme.danger }}>
+                Add an image to continue.
+              </Text>
+            ) : null}
             {uploadingImage ? (
               <View className="mt-4 flex-row items-center justify-center">
                 <ActivityIndicator size="small" color={theme.primary} />
@@ -403,10 +433,41 @@ export default function EditCrossSellScreen() {
                 </Pressable>
               ))}
             </View>
-            {field("Cross-sell name", name, setName, "e.g. Refreshing drink", "default", false, true)}
+            {field(
+              "Cross-sell name",
+              name,
+              setName,
+              "e.g. Refreshing drink",
+              "default",
+              false,
+              true,
+              hasAttemptedSave && !name.trim(),
+            )}
             {field("Description", description, setDescription, "Describe this item", "default", true)}
-            {field("Regular price (₹)", price, setPrice, "0", "numeric", false, true)}
-            {field("Available quantity", quantity, setQuantity, "e.g. 30", "numeric", false, true)}
+            {field(
+              "Regular price (₹)",
+              price,
+              setPrice,
+              "0",
+              "numeric",
+              false,
+              true,
+              hasAttemptedSave &&
+                (!Number.isFinite(Number(price)) || Number(price) <= 0),
+            )}
+            {field(
+              "Available quantity",
+              quantity,
+              setQuantity,
+              "e.g. 30",
+              "numeric",
+              false,
+              true,
+              hasAttemptedSave &&
+                (!quantity.trim() ||
+                  !Number.isInteger(Number(quantity)) ||
+                  Number(quantity) < 0),
+            )}
           </Card>
 
           <Button

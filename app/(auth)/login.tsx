@@ -1,6 +1,6 @@
 import { useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ComponentRef, useCallback, useEffect, useRef, useState } from "react";
 import {
   Image,
   Keyboard,
@@ -35,7 +35,8 @@ export default function LoginScreen() {
   const [error, setError] = useState<string>("");
   const [keyboardVisible, setKeyboardVisible] = useState(false);
 
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
+  const otpRequestVersion = useRef(0);
   const imageWidth = Math.max(0, windowWidth - 40);
   const heroHeight = keyboardVisible
     ? Math.max(88, Math.min(156, windowHeight * 0.16, imageWidth / 1.7))
@@ -48,6 +49,7 @@ export default function LoginScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      otpRequestVersion.current += 1;
       setPhone("");
       setError("");
 
@@ -84,16 +86,21 @@ export default function LoginScreen() {
 
     setLoading(true);
     setError("");
+    const requestVersion = otpRequestVersion.current;
 
     const fullPhoneNumber = `+91${phone}`;
 
     try {
       await api.sendOtp(fullPhoneNumber);
 
+      if (otpRequestVersion.current !== requestVersion) return;
+
       router.push(
         `/(auth)/verify-otp?phone=${encodeURIComponent(fullPhoneNumber)}` as any,
       );
     } catch (err) {
+      if (otpRequestVersion.current !== requestVersion) return;
+
       setError(
         err instanceof Error ? err.message : "Failed to send OTP. Please try again.",
       );
@@ -212,11 +219,13 @@ export default function LoginScreen() {
                 value={phone}
                 onChangeText={(text) => {
                   const numericText = text.replace(/[^0-9]/g, "");
+                  otpRequestVersion.current += 1;
                   setPhone(numericText);
                   setError("");
                 }}
                 keyboardType={"number-pad" as any}
                 maxLength={10}
+                editable
                 autoFocus
                 prefix={
                   <View

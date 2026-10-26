@@ -14,6 +14,7 @@ export interface FloorManagerDashboard {
     _id: string;
     name: string;
     code?: string;
+    isActive?: boolean;
   };
   checkIn: {
     isCheckedIn: boolean;
@@ -58,6 +59,7 @@ export interface FloorManagerTable {
   tableNumber: number;
   capacity: number;
   status: string;
+  operationalStatus?: string;
   customersSeated?: number;
   isBlocked?: boolean;
   assignedWaiterId?:
@@ -238,18 +240,24 @@ export const floorManagerApi = {
 
   async updateTable(
     id: string,
-    changes: {
-      tableNumber?: number;
-      capacity?: number;
-      isActive?: boolean;
-      status?: "available" | "active" | "billed";
-      customersSeated?: number;
-    },
+    changes: { capacity: number },
   ): Promise<void> {
     await request(
       "PATCH",
       `/tables/${encodeURIComponent(id)}`,
       changes,
+    );
+  },
+
+  async updateTableStatus(
+    id: string,
+    status: "free" | "active" | "billed",
+    customerCount: number,
+  ): Promise<void> {
+    await request(
+      "PATCH",
+      `/tables/${encodeURIComponent(id)}/status`,
+      { status, customerCount },
     );
   },
 

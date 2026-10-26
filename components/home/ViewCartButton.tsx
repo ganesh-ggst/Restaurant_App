@@ -1,11 +1,10 @@
-import { ChevronRightCircle, Timer } from "lucide-react-native";
+import { ChevronRightCircle } from "lucide-react-native";
 import { Pressable, Text, View } from "react-native";
 
 export default function ViewCartButton({
   orderMode,
   activeCartTotalItems,
   dineInCartState = "idle",
-  orderCountdown = 0,
   onPress,
   theme,
   bottomOffset,
@@ -37,19 +36,16 @@ export default function ViewCartButton({
         {isWaiting ? (
           <>
             <Text className="text-white font-black text-[17px]">
-              Kitchen Reviewing...
+              Submitting order...
             </Text>
-            <View className="flex-row items-center">
-              <Timer size={18} color="#fff" style={{ marginRight: 6 }} />
-              <Text className="text-white font-black text-[17px]">
-                00:{orderCountdown.toString().padStart(2, "0")}
-              </Text>
-            </View>
+            <Text className="text-white font-black text-[17px]">
+              Please wait
+            </Text>
           </>
         ) : isApproved ? (
           <>
             <Text className="text-white font-black text-[17px]">
-              Order Approved!
+              Order Submitted!
             </Text>
             <View className="flex-row items-center">
               <Text className="text-white font-black text-[17px] mr-2">
@@ -61,7 +57,7 @@ export default function ViewCartButton({
         ) : isRejected ? (
           <>
             <Text className="text-white font-black text-[17px]">
-              Item Unavailable
+              Order Not Submitted
             </Text>
             <View className="flex-row items-center">
               <Text className="text-white font-black text-[17px] mr-2">
