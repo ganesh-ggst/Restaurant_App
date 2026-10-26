@@ -35,7 +35,7 @@ export default function VerifyOtpScreen() {
   const [resendSeconds, setResendSeconds] = useState(0);
   const [error, setError] = useState<string>("");
 
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<any>(null);
   const verificationInProgress = useRef(false);
 
   const handleVerifyCode = useCallback(

@@ -27,7 +27,7 @@ import {
   X,
 } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
-import { useCallback, useEffect, useState } from "react";
+import { type ComponentRef, useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Modal,
@@ -72,6 +72,7 @@ export default function ProfileScreen() {
   const { user, error, reloadProfile, clearUser } = useProfile();
   const [showThemeModal, setShowThemeModal] = useState(false);
   const [failedAvatarUrl, setFailedAvatarUrl] = useState("");
+  const profileScrollRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
   const { mode, carts, dineInCartState } = useOrderMode();
   const cartItems = (carts?.[mode] || []).reduce(
     (total: number, item: { quantity: number }) => total + item.quantity,
@@ -231,6 +232,7 @@ export default function ProfileScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      profileScrollRef.current?.scrollTo({ y: 0, animated: false });
       setFailedAvatarUrl("");
       void reloadProfile();
     }, [reloadProfile]),
@@ -240,6 +242,7 @@ export default function ProfileScreen() {
     <SafeAreaView className="flex-1" style={{ backgroundColor: theme.bg }}>
       <StatusBar style={theme.isDark ? "light" : "dark"} />
       <ScrollView
+        ref={profileScrollRef}
         contentContainerStyle={{
           flexGrow: 1,
           paddingBottom: insets.bottom + (cartButtonVisible ? 230 : 150),

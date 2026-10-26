@@ -13,7 +13,7 @@ import {
   Trash2,
   X,
 } from "lucide-react-native";
-import { memo, useEffect, useRef, useState } from "react";
+import { type ComponentRef, memo, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Dimensions,
@@ -157,7 +157,7 @@ export const DeliveryCartModal = memo(
     const [showAddressModal, setShowAddressModal] = useState(false);
     const [currentAddress, setCurrentAddress] = useState(activeAddress);
     const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
-    const instructionInputRef = useRef<TextInput | null>(null);
+    const instructionInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
 
     useEffect(() => {
       if (activeAddress) setCurrentAddress(activeAddress);

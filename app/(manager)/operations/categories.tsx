@@ -1,6 +1,6 @@
 import { useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ComponentRef, useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -45,9 +45,11 @@ export default function CategoriesScreen() {
     null,
   );
   const [categoryName, setCategoryName] = useState("");
+  const [hasAttemptedCategorySave, setHasAttemptedCategorySave] =
+    useState(false);
   const [categoryIcon, setCategoryIcon] = useState("");
 
-  const iconInputRef = useRef<TextInput>(null);
+  const iconInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
   const categoryMessageTimeout = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -133,6 +135,7 @@ export default function CategoriesScreen() {
     setModalMode("add");
     setEditingCategoryId(null);
     setCategoryName("");
+    setHasAttemptedCategorySave(false);
     setCategoryIcon("");
     setIsModalVisible(true);
   };
@@ -141,6 +144,7 @@ export default function CategoriesScreen() {
     setModalMode("edit");
     setEditingCategoryId(category.id);
     setCategoryName(category.name);
+    setHasAttemptedCategorySave(false);
     setCategoryIcon(category.icon || "");
     setIsModalVisible(true);
   };
@@ -148,12 +152,18 @@ export default function CategoriesScreen() {
   const closeModal = () => {
     setIsModalVisible(false);
     setCategoryName("");
+    setHasAttemptedCategorySave(false);
     setCategoryIcon("");
     setEditingCategoryId(null);
   };
 
   const handleSaveCategory = async () => {
-    if (!categoryName.trim()) return;
+    setHasAttemptedCategorySave(true);
+    if (!categoryName.trim()) {
+      Alert.alert("Category name required", "Enter a name for the category.");
+      if (categoryName.length > 0) setCategoryName("");
+      return;
+    }
 
     setSaving(true);
     try {
@@ -537,7 +547,12 @@ export default function CategoriesScreen() {
 
                   <Text
                     className="text-sm font-bold mb-2 uppercase"
-                    style={{ color: theme.muted }}
+                    style={{
+                      color:
+                        hasAttemptedCategorySave && !categoryName.trim()
+                          ? theme.danger
+                          : theme.muted,
+                    }}
                   >
                     Category Name
                   </Text>
@@ -546,10 +561,21 @@ export default function CategoriesScreen() {
                     placeholderTextColor={theme.muted}
                     value={categoryName}
                     onChangeText={setCategoryName}
-                    className="px-4 rounded-xl mb-4 font-bold"
+                    className="px-4 rounded-xl font-bold"
                     style={{
                       backgroundColor: theme.bg,
-                      color: theme.text,
+                      color:
+                        hasAttemptedCategorySave && !categoryName.trim()
+                          ? theme.danger
+                          : theme.text,
+                      borderWidth:
+                        hasAttemptedCategorySave && !categoryName.trim()
+                          ? 2
+                          : 1,
+                      borderColor:
+                        hasAttemptedCategorySave && !categoryName.trim()
+                          ? theme.danger
+                          : theme.border,
                       fontSize: 18,
                       height: 56,
                       textAlignVertical: "center",
@@ -559,6 +585,16 @@ export default function CategoriesScreen() {
                     onSubmitEditing={() => iconInputRef.current?.focus()}
                     autoFocus={true}
                   />
+                  {hasAttemptedCategorySave && !categoryName.trim() ? (
+                    <Text
+                      className="mb-4 mt-1 text-xs font-semibold"
+                      style={{ color: theme.danger }}
+                    >
+                      Category name is required.
+                    </Text>
+                  ) : (
+                    <View className="mb-4" />
+                  )}
 
                   <Text
                     className="text-sm font-bold mb-2 uppercase"

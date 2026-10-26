@@ -41,6 +41,13 @@ function getTableNumber(value: string) {
   return match ? match[0] : String(value).toUpperCase().trim();
 }
 
+function isAssignedBranchInactive(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : "";
+  return /assigned branch is not active|branch is not active|branch is offline/i.test(
+    message,
+  );
+}
+
 function getFloorTables(liveState: FloorManagerLiveState): FloorDisplayTable[] {
   return liveState.tables
     .filter((table) => table.isActive !== false)
@@ -96,6 +103,7 @@ export default function FloorDashboard() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isUpdatingCheckIn, setIsUpdatingCheckIn] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [branchIsOffline, setBranchIsOffline] = useState(false);
 
   const fetchFloorData = useCallback(async () => {
     const [nextDashboard, nextLiveState] = await Promise.all([
@@ -127,7 +135,11 @@ export default function FloorDashboard() {
       setLiveState(data.liveState);
       setSessions(data.sessions);
       setTables(data.tables);
-      setIsCheckedIn(data.dashboard.checkIn.isCheckedIn);
+      const branchIsOffline = data.dashboard.branch.isActive === false;
+      setIsCheckedIn(
+        branchIsOffline ? false : data.dashboard.checkIn.isCheckedIn,
+      );
+      setBranchIsOffline(branchIsOffline);
       setLoadError(data.sessionsError);
       setIsLoading(false);
     },
@@ -139,6 +151,17 @@ export default function FloorDashboard() {
     try {
       applyFloorData(await fetchFloorData());
     } catch (error) {
+      if (isAssignedBranchInactive(error)) {
+        setDashboard(null);
+        setLiveState(null);
+        setSessions([]);
+        setTables([]);
+        setIsCheckedIn(false);
+        setBranchIsOffline(true);
+        setLoadError("");
+        setIsLoading(false);
+        return;
+      }
       setLoadError(
         error instanceof Error
           ? error.message
@@ -211,6 +234,17 @@ export default function FloorDashboard() {
           if (isFocused) applyFloorData(data);
         } catch (error) {
           if (isFocused) {
+            if (isAssignedBranchInactive(error)) {
+              setDashboard(null);
+              setLiveState(null);
+              setSessions([]);
+              setTables([]);
+              setIsCheckedIn(false);
+              setBranchIsOffline(true);
+              setLoadError("");
+              setIsLoading(false);
+              return;
+            }
             setLoadError(
               error instanceof Error
                 ? error.message
@@ -244,7 +278,33 @@ export default function FloorDashboard() {
             void (async () => {
               setIsUpdatingCheckIn(true);
               try {
-                if (!newValue) {
+                if (newValue) {
+                  let latestDashboard: FloorManagerDashboard;
+                  try {
+                    latestDashboard = await floorManagerApi.getDashboard();
+                  } catch (error) {
+                    if (isAssignedBranchInactive(error)) {
+                      setBranchIsOffline(true);
+                      setIsCheckedIn(false);
+                      Alert.alert(
+                        "Branch is offline",
+                        "Your assigned branch is offline. Ask an admin to bring it online before checking in.",
+                      );
+                      return;
+                    }
+                    throw error;
+                  }
+                  if (latestDashboard.branch.isActive === false) {
+                    setBranchIsOffline(true);
+                    setIsCheckedIn(false);
+                    Alert.alert(
+                      "Branch is offline",
+                      "Your assigned branch is offline. Ask an admin to bring it online before checking in.",
+                    );
+                    return;
+                  }
+                  setBranchIsOffline(false);
+                } else {
                   const [latestDashboard, latestLiveState] = await Promise.all([
                     floorManagerApi.getDashboard(),
                     floorManagerApi.getLiveState(),
@@ -272,6 +332,15 @@ export default function FloorDashboard() {
                 setIsCheckedIn(newValue);
                 void refreshFloorData();
               } catch (error) {
+                if (newValue && isAssignedBranchInactive(error)) {
+                  setBranchIsOffline(true);
+                  setIsCheckedIn(false);
+                  Alert.alert(
+                    "Branch is offline",
+                    "Your assigned branch is offline. Ask an admin to bring it online before checking in.",
+                  );
+                  return;
+                }
                 Alert.alert(
                   "Unable to update check-in status",
                   error instanceof Error
@@ -441,14 +510,18 @@ export default function FloorDashboard() {
                 style={{ color: theme.text }}
               >
                 {!dashboard
-                  ? "STATUS UNAVAILABLE"
+                  ? branchIsOffline
+                    ? "CHECKED OUT"
+                    : "STATUS UNAVAILABLE"
                   : isCheckedIn
                     ? "CHECKED IN"
                     : "CHECKED OUT"}
               </Text>
               <Text className="text-[10px]" style={{ color: theme.muted }}>
                 {!dashboard
-                  ? "Waiting for floor status"
+                  ? branchIsOffline
+                    ? "Branch is offline"
+                    : "Waiting for floor status"
                   : isCheckedIn
                     ? "On duty & managing floor"
                     : "Off duty"}
@@ -459,7 +532,7 @@ export default function FloorDashboard() {
           <Switch
             value={isCheckedIn}
             onValueChange={handleToggleCheckIn}
-            disabled={!dashboard || isUpdatingCheckIn}
+            disabled={(!dashboard && !branchIsOffline) || isUpdatingCheckIn}
             trackColor={{ false: theme.border, true: "#22c55e" }}
             thumbColor={"#ffffff"}
             style={{ transform: [{ scale: 0.8 }] }}
@@ -472,6 +545,40 @@ export default function FloorDashboard() {
           <Text className="text-sm" style={{ color: theme.muted }}>
             Loading live floor data...
           </Text>
+        </View>
+      ) : !dashboard && branchIsOffline ? (
+        <View className="flex-1 px-6 justify-center items-center">
+          <Card
+            variant="default"
+            className="p-8 rounded-3xl border-0 items-center w-full shadow-lg"
+            style={{ backgroundColor: theme.card }}
+          >
+            <Text className="text-3xl mb-3">🔒</Text>
+            <Text
+              className="text-lg font-black mb-2 text-center"
+              style={{ color: theme.text }}
+            >
+              You are Checked Out
+            </Text>
+            <Text
+              className="text-sm text-center mb-5"
+              style={{ color: theme.muted }}
+            >
+              Your assigned branch is offline. You can check in after an admin
+              brings the branch online.
+            </Text>
+            <Pressable
+              onPress={() => void refreshFloorData()}
+              disabled={isRefreshing}
+              accessibilityRole="button"
+              className="rounded-xl px-5 py-3"
+              style={{ backgroundColor: theme.primary }}
+            >
+              <Text className="font-bold text-white">
+                {isRefreshing ? "Checking branch..." : "Check branch status"}
+              </Text>
+            </Pressable>
+          </Card>
         </View>
       ) : !dashboard ? (
         <View className="flex-1 px-6 justify-center items-center">

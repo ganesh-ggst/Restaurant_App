@@ -15,13 +15,13 @@ import {
   QrCode,
   Receipt,
   ScanLine,
-  ShoppingBag,
   Store,
   Wifi,
   X,
 } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AppState,
   Alert,
   FlatList,
   Image,
@@ -45,19 +45,84 @@ import { HomeHeader } from "../../../components/home/HomeHeader";
 import { ProfileAvatarButton } from "../../../components/profile/ProfileAvatarButton";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { api } from "../../../services/api";
+import { authApi } from "../../../services/api/auth";
+import type {
+  CustomerBranch,
+  CustomerDineInBill,
+  CustomerDineInWaiter,
+  CustomerDineInWifiConnection,
+} from "../../../services/api/customer";
 import { useOrderMode } from "../_layout";
 
 const hasImageUri = (uri: unknown): uri is string =>
   typeof uri === "string" && uri.trim().length > 0;
 
-const getNumericPrice = (price: any) => {
-  if (typeof price === "number") return price;
-  return parseInt(String(price).replace(/\D/g, ""), 10) || 0;
-};
+function matchesSearchText(query: string, value: string): boolean {
+  const normalizedQuery = query.toLowerCase().replace(/\s+/g, "");
+  const normalizedValue = value.toLowerCase();
+  if (!normalizedQuery) return true;
+  if (normalizedValue.includes(normalizedQuery)) return true;
+
+  let queryIndex = 0;
+  for (const character of normalizedValue) {
+    if (character === normalizedQuery[queryIndex]) queryIndex += 1;
+    if (queryIndex === normalizedQuery.length) return true;
+  }
+
+  return false;
+}
 
 const formatPrice = (price: number) => {
   return Number.isInteger(price) ? price : price.toFixed(2);
 };
+
+function parseScannedTableNumber(value: string): number | null {
+  const source = value.trim();
+  if (!source) return null;
+
+  try {
+    const parsed = JSON.parse(source) as { tableNumber?: unknown };
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof parsed.tableNumber === "number"
+    ) {
+      return Number.isInteger(parsed.tableNumber) && parsed.tableNumber > 0
+        ? parsed.tableNumber
+        : null;
+    }
+  } catch {
+    // QR values may be plain text or URLs rather than JSON.
+  }
+
+  try {
+    const url = new URL(source);
+    const tableNumber = Number(
+      url.searchParams.get("tableNumber") || url.searchParams.get("table"),
+    );
+    if (Number.isInteger(tableNumber) && tableNumber > 0) return tableNumber;
+  } catch {
+    // Continue with the supported plain-text QR formats.
+  }
+
+  const match = source.match(/(?:table(?:number)?)[^0-9]{0,8}(\d+)/i);
+  const tableNumber = Number(match?.[1] || (/^\d+$/.test(source) ? source : ""));
+  return Number.isInteger(tableNumber) && tableNumber > 0
+    ? tableNumber
+    : null;
+}
+
+function isDineInSessionClosed(status: string | undefined): boolean {
+  return ["cancelled", "closed", "completed", "ended", "expired"].includes(
+    status?.trim().toLowerCase() || "",
+  );
+}
+
+function isBranchOnline(
+  branch: Pick<CustomerBranch, "isActive" | "isOnline"> | null | undefined,
+): boolean {
+  return Boolean(branch?.isActive && branch.isOnline !== false);
+}
 
 type SpeechRecognitionPackage = typeof import("expo-speech-recognition");
 
@@ -100,10 +165,13 @@ export default function HomeScreen() {
     setActiveAddress,
     activeBranch,
     setActiveBranch,
+    setActiveBranchForDineInSession,
     handleAddToCart,
     handleDecrementCartItem,
     activeTable,
     setActiveTable,
+    dineInSession,
+    setDineInSession,
     timeLeft,
     confirmedOrders,
     setConfirmedOrders,
@@ -131,17 +199,33 @@ export default function HomeScreen() {
   const [lastMode, setLastMode] = useState("Delivery");
 
   const [showDineInCheckInModal, setShowDineInCheckInModal] = useState(false);
+  const [isChangingDineInTable, setIsChangingDineInTable] = useState(false);
   const [showCameraScannerModal, setShowCameraScannerModal] = useState(false);
+  const [isCheckingDineInSession, setIsCheckingDineInSession] = useState(false);
 
   const [activeServiceModal, setActiveServiceModal] = useState<
-    "waiter" | "water" | "wifi" | "bill" | "bill_warning" | null
+    "waiter" | "water" | "wifi" | "bill" | null
   >(null);
 
   const [tableNumber, setTableNumber] = useState("");
   const [scanned, setScanned] = useState(false);
+  const [serviceLoading, setServiceLoading] = useState(false);
+  const [serviceError, setServiceError] = useState<string | null>(null);
+  const [serviceRequestSent, setServiceRequestSent] = useState(false);
+  const [serviceRequests, setServiceRequests] = useState<unknown[]>([]);
+  const [dineInWaiter, setDineInWaiter] =
+    useState<CustomerDineInWaiter | null>(null);
+  const [wifiConnections, setWifiConnections] = useState<
+    CustomerDineInWifiConnection[]
+  >([]);
+  const [dineInBill, setDineInBill] = useState<CustomerDineInBill | null>(null);
+  const didRestoreDineInSession = useRef(false);
+  const sessionCheckErrorShown = useRef(false);
 
   const activeCart = carts[orderMode] || [];
   const selectedBranchId = activeBranch?.id;
+  const isSelectedBranchOnline =
+    branchesLoaded && isBranchOnline(activeBranch);
   const branchCategories = useMemo(
     () =>
       categories.filter(
@@ -164,6 +248,112 @@ export default function HomeScreen() {
       typeof reel.branchId === "string" ? reel.branchId : reel.branchId?._id;
     return !reelBranchId || reelBranchId === selectedBranchId;
   });
+
+  useEffect(() => {
+    if (!branchesLoaded || didRestoreDineInSession.current) return;
+    didRestoreDineInSession.current = true;
+
+    void authApi
+      .getAccessToken()
+      .then((token) => {
+        if (!token) return null;
+        return api.getDineInSession();
+      })
+      .then((session) => {
+        if (!session) return;
+        setDineInSession(session);
+        setActiveTable(String(session.tableNumber));
+        setGlobalOrderMode("Dine-in");
+
+        const sessionBranch = branches.find(
+          (branch: { id: string; _id?: string }) =>
+            branch.id === session.branchId || branch._id === session.branchId,
+        );
+        if (sessionBranch) {
+          setActiveBranchForDineInSession(sessionBranch);
+        }
+      })
+      .catch((error) => {
+        Alert.alert(
+          "Unable to Restore Dine-in Session",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      });
+  }, [
+    branches,
+    branchesLoaded,
+    setActiveBranchForDineInSession,
+    setActiveTable,
+    setDineInSession,
+    setGlobalOrderMode,
+  ]);
+
+  const finishDineInSession = useCallback(() => {
+    setDineInSession(null);
+    setActiveTable(null);
+    setConfirmedOrders([]);
+    setDineInCartState("idle");
+    setPendingOrderSnapshot([]);
+    setGlobalOrderMode("Delivery");
+    setLastMode("Delivery");
+    setActiveServiceModal(null);
+    setDineInBill(null);
+  }, [
+    setActiveTable,
+    setConfirmedOrders,
+    setDineInCartState,
+    setDineInSession,
+    setGlobalOrderMode,
+    setPendingOrderSnapshot,
+  ]);
+
+  useEffect(() => {
+    const sessionId = dineInSession?._id;
+    if (orderMode !== "Dine-in" || !sessionId) return;
+
+    let isCurrent = true;
+    let requestInProgress = false;
+
+    const checkSession = async () => {
+      if (requestInProgress) return;
+      requestInProgress = true;
+      try {
+        const session = await api.getDineInSession();
+        if (!isCurrent) return;
+
+        sessionCheckErrorShown.current = false;
+        if (
+          !session ||
+          session._id !== sessionId ||
+          isDineInSessionClosed(session.status)
+        ) {
+          finishDineInSession();
+        }
+      } catch (error) {
+        if (!isCurrent || sessionCheckErrorShown.current) return;
+        sessionCheckErrorShown.current = true;
+        Alert.alert(
+          "Unable to Check Dine-in Session",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      } finally {
+        requestInProgress = false;
+      }
+    };
+
+    void checkSession();
+    const interval = setInterval(() => void checkSession(), 10_000);
+    const appStateSubscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") void checkSession();
+    });
+
+    return () => {
+      isCurrent = false;
+      clearInterval(interval);
+      appStateSubscription.remove();
+    };
+  }, [dineInSession?._id, finishDineInSession, orderMode]);
+
   const restaurantName =
     activeBranch?.restaurantNames?.find(
       (restaurantName: { isActive: boolean; name: string }) =>
@@ -206,40 +396,6 @@ export default function HomeScreen() {
       ),
     [activeBranch?.storefrontDisplay?.emptyStates],
   );
-  const taxPercentage =
-    activeBranch?.taxDetailOptions?.find(
-      (option: { gstPercentage: number; isActive: boolean }) => option.isActive,
-    )?.gstPercentage ??
-    activeBranch?.taxDetails?.gstPercentage ??
-    0;
-  const gstRate = taxPercentage / 100;
-  const activeWifi = activeBranch?.wifiConnections?.find(
-    (connection: { name: string; password: string; isActive: boolean }) =>
-      connection.isActive,
-  );
-  const assignedWaiter = Array.isArray(activeBranch?.managerIds)
-    ? activeBranch.managerIds.find(
-        (
-          manager:
-            | string
-            | {
-                _id: string;
-                firstName?: string;
-                lastName?: string;
-                managerType?: string;
-              },
-        ) =>
-          typeof manager !== "string" &&
-          manager.managerType?.toLowerCase().includes("waiter"),
-      )
-    : undefined;
-  const assignedWaiterName =
-    assignedWaiter && typeof assignedWaiter !== "string"
-      ? [assignedWaiter.firstName, assignedWaiter.lastName]
-          .filter(Boolean)
-          .join(" ")
-      : "";
-
   const isOrderLocked =
     confirmedOrders.length > 0 || dineInCartState === "waiting";
 
@@ -268,6 +424,58 @@ export default function HomeScreen() {
     }
   }, [lastMode, pendingModeSetup, setGlobalOrderMode]);
 
+  const selectDineInBranch = async (branch: (typeof branches)[number]) => {
+    if (!isBranchOnline(branch)) {
+      Alert.alert(
+        "Restaurant is closed",
+        "This restaurant is currently offline. Please choose an online branch.",
+      );
+      return;
+    }
+    setIsCheckingDineInSession(true);
+    try {
+      const session = await api.getDineInSession();
+
+      if (session) {
+        const sessionBranch =
+          branches.find(
+            (candidate: { id: string; _id?: string }) =>
+              candidate.id === session.branchId ||
+              candidate._id === session.branchId,
+          );
+        if (!sessionBranch) {
+          throw new Error(
+            "The active table session belongs to a branch that is unavailable.",
+          );
+        }
+        setActiveBranchForDineInSession(sessionBranch);
+        setDineInSession(session);
+        setActiveTable(String(session.tableNumber));
+        setGlobalOrderMode("Dine-in");
+        setActiveOfferIndex(0);
+        setShowAddressModal(false);
+        setPendingModeSetup(null);
+        return;
+      }
+
+      setActiveBranchForDineInSession(branch);
+      setActiveOfferIndex(0);
+      setShowAddressModal(false);
+      setPendingModeSetup(null);
+      setDineInSession(null);
+      setActiveTable(null);
+      setTableNumber("");
+      setShowDineInCheckInModal(true);
+    } catch (error) {
+      Alert.alert(
+        "Unable to Check Dine-in Session",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setIsCheckingDineInSession(false);
+    }
+  };
+
   useEffect(() => {
     return navigation.addListener("blur", () => {
       if (showAddressModal) handleCancelAddressModal();
@@ -276,23 +484,79 @@ export default function HomeScreen() {
 
   const cancelCheckInModal = () => {
     setShowDineInCheckInModal(false);
+    setIsChangingDineInTable(false);
     Keyboard.dismiss();
     if (!activeTable) {
       setGlobalOrderMode(lastMode || "Delivery");
     }
   };
 
-  const handleManualTableSubmit = () => {
-    if (!tableNumber.trim()) return;
-    const assignedTable = tableNumber.trim();
-    setActiveTable(assignedTable);
-    setShowDineInCheckInModal(false);
-    Keyboard.dismiss();
+  const checkInAtTable = async (enteredTableNumber: string | number) => {
+    if (isChangingDineInTable && !dineInSession?._id) {
+      Alert.alert(
+        "Unable to Change Table",
+        "Your active dine-in session could not be found. Please refresh and try again.",
+      );
+      return;
+    }
+
+    if (!activeBranch?.id) {
+      Alert.alert("Choose a Restaurant", "Select a branch before checking in.");
+      return;
+    }
+
+    const parsedTableNumber = Number(enteredTableNumber);
+    if (!Number.isInteger(parsedTableNumber) || parsedTableNumber < 1) {
+      Alert.alert("Invalid Table Number", "Enter a valid table number.");
+      return;
+    }
+    try {
+      const session = isChangingDineInTable
+        ? await api.changeDineInTable(activeBranch.id, parsedTableNumber)
+        : await api.takeDineInTable(activeBranch.id, parsedTableNumber);
+      setDineInSession(session);
+      setActiveTable(String(session.tableNumber));
+      setShowDineInCheckInModal(false);
+      setShowCameraScannerModal(false);
+      setIsChangingDineInTable(false);
+      Keyboard.dismiss();
+
+      try {
+        const refreshedSession = await api.getDineInSession();
+        if (refreshedSession) {
+          setDineInSession(refreshedSession);
+          setActiveTable(String(refreshedSession.tableNumber));
+        }
+      } catch (error) {
+        Alert.alert(
+          "Table Connected",
+          `Your table is active, but the latest session details could not be refreshed. ${error instanceof Error ? error.message : "Please try again."}`,
+        );
+      }
+    } catch (error) {
+      setScanned(false);
+      Alert.alert(
+        isChangingDineInTable ? "Unable to Change Table" : "Unable to Check In",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    }
   };
 
-  const handleSimulateQRScan = (detectedTable: string) => {
-    setActiveTable(detectedTable);
-    setShowCameraScannerModal(false);
+  const handleManualTableSubmit = () => {
+    if (tableNumber.trim()) void checkInAtTable(tableNumber.trim());
+  };
+
+  const handleQRScan = (scannedValue: string) => {
+    const scannedTableNumber = parseScannedTableNumber(scannedValue);
+    if (!scannedTableNumber) {
+      setScanned(false);
+      Alert.alert(
+        "Invalid Table QR",
+        "This QR code does not contain a valid table number.",
+      );
+      return;
+    }
+    void checkInAtTable(scannedTableNumber);
   };
 
   const cancelCameraModal = () => {
@@ -304,27 +568,123 @@ export default function HomeScreen() {
     }, 400);
   };
 
-  const handleServiceRequest = (
+  const handleLeaveTable = async () => {
+    try {
+      const session = await api.getDineInSession();
+      if (
+        !session ||
+        (dineInSession?._id && session._id !== dineInSession._id) ||
+        isDineInSessionClosed(session.status)
+      ) {
+        finishDineInSession();
+        return;
+      }
+
+      await api.closeDineInSession(session._id);
+      finishDineInSession();
+    } catch (error) {
+      try {
+        const session = await api.getDineInSession();
+        if (
+          !session ||
+          (dineInSession?._id && session._id !== dineInSession._id) ||
+          isDineInSessionClosed(session.status)
+        ) {
+          finishDineInSession();
+          return;
+        }
+      } catch {
+        // Keep the original leave-table error visible below.
+      }
+      Alert.alert(
+        "Unable to Leave Table",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    }
+  };
+
+  const handleServiceRequest = async (
     serviceType: "waiter" | "water" | "wifi" | "bill",
   ) => {
-    if (!activeTable) {
+    if (!activeTable || !dineInSession?._id) {
       setTableNumber("");
       setShowDineInCheckInModal(true);
       return;
     }
 
-    if (serviceType === "bill") {
-      const activeCartTotalItems = activeCart.reduce(
-        (sum: number, item: any) => sum + item.quantity,
-        0,
-      );
-      if (activeCartTotalItems > 0) {
-        setActiveServiceModal("bill_warning");
-        return;
-      }
-    }
-
     setActiveServiceModal(serviceType);
+    setServiceLoading(true);
+    setServiceError(null);
+    setServiceRequestSent(false);
+    setDineInWaiter(null);
+
+    try {
+      if (serviceType === "wifi") {
+        setWifiConnections([]);
+        setWifiConnections(await api.getDineInWifi());
+      } else if (serviceType === "bill") {
+        setDineInBill(null);
+        const bill = await api.getDineInBill();
+        const session = await api.getDineInSession();
+        if (
+          !session ||
+          session._id !== dineInSession._id ||
+          isDineInSessionClosed(session.status)
+        ) {
+          finishDineInSession();
+          return;
+        }
+        setDineInBill(bill);
+      } else {
+        await api.createDineInServiceRequest(dineInSession._id, serviceType);
+        setServiceRequestSent(true);
+
+        const results = await Promise.allSettled([
+          api.getDineInServiceRequests(),
+          ...(serviceType === "waiter" ? [api.getDineInWaiter()] : []),
+        ]);
+        const requestResult = results[0];
+        if (requestResult.status === "fulfilled") {
+          setServiceRequests(requestResult.value);
+        } else {
+          setServiceError(
+            `Your request was sent, but its status could not be refreshed. ${requestResult.reason instanceof Error ? requestResult.reason.message : "Please try again."}`,
+          );
+        }
+
+        if (serviceType === "waiter") {
+          const waiterResult = results[1];
+          if (waiterResult?.status === "fulfilled") {
+            setDineInWaiter(waiterResult.value as CustomerDineInWaiter);
+          } else if (waiterResult?.status === "rejected") {
+            setServiceError(
+              `Your request was sent, but waiter details could not be loaded. ${waiterResult.reason instanceof Error ? waiterResult.reason.message : "Please try again."}`,
+            );
+          }
+        }
+      }
+    } catch (error) {
+      if (serviceType === "bill") {
+        try {
+          const session = await api.getDineInSession();
+          if (
+            !session ||
+            session._id !== dineInSession._id ||
+            isDineInSessionClosed(session.status)
+          ) {
+            finishDineInSession();
+            return;
+          }
+        } catch {
+          // Preserve the bill request error below.
+        }
+      }
+      setServiceError(
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setServiceLoading(false);
+    }
   };
 
   const searchRecognizedSpeech = useCallback(async (transcript: string) => {
@@ -488,11 +848,8 @@ export default function HomeScreen() {
     const lowerQuery = searchQuery.toLowerCase().trim();
     if (lowerQuery && voiceResultIds === null) {
       filtered = filtered.filter((item: any) => {
-        if (item.name.toLowerCase().includes(lowerQuery)) return true;
         const queryWords = lowerQuery.split(" ").filter((w) => w.length > 0);
-        return queryWords.some((word) =>
-          item.name.toLowerCase().includes(word),
-        );
+        return queryWords.some((word) => matchesSearchText(word, item.name));
       });
     }
     return filtered.sort(
@@ -502,7 +859,7 @@ export default function HomeScreen() {
     );
   };
 
-  const listData = getFilteredData();
+  const listData = isSelectedBranchOnline ? getFilteredData() : [];
   const offerCardHeight = offersViewportWidth * 0.4;
   const offersCarousel =
     (orderMode === "Delivery" || orderMode === "Takeaway") && !searchQuery ? (
@@ -629,17 +986,18 @@ export default function HomeScreen() {
     );
   };
 
-  const confirmedBillSubtotal = confirmedOrders.reduce(
-    (sum: number, item: any) =>
-      sum + (item.total || getNumericPrice(item.price) * item.quantity),
-    0,
-  );
-  const confirmedBillTaxes = confirmedBillSubtotal * gstRate;
-  const confirmedBillTotal = confirmedBillSubtotal + confirmedBillTaxes;
+  const billItems =
+    dineInBill?.orders.flatMap((order) =>
+      order.items.map((item, index) => ({
+        ...item,
+        key: `${order._id}:${index}`,
+      })),
+    ) || [];
 
   const renderAddressModalItem = ({ item }: any) => {
     const isDeliveryAddress =
       orderMode === "Delivery" && addressModalSelection === "address";
+    const branchIsOnline = isBranchOnline(item);
     const isActive = isDeliveryAddress
       ? activeAddress?.id === item.id
       : activeBranch?.id === item.id;
@@ -648,28 +1006,30 @@ export default function HomeScreen() {
     return (
       <Pressable
         onPress={() => {
+          if (!isDeliveryAddress && !branchIsOnline) return;
           if (isDeliveryAddress) setActiveAddress(item);
-          else {
+          else if (pendingModeSetup === "Dine-in") {
+            void selectDineInBranch(item);
+            return;
+          } else {
             setActiveBranch(item);
             setActiveOfferIndex(0);
           }
 
           setShowAddressModal(false);
 
-          if (pendingModeSetup === "Dine-in") {
-            setTimeout(() => {
-              setTableNumber("");
-              setShowDineInCheckInModal(true);
-              setPendingModeSetup(null);
-            }, 400);
-          } else if (pendingModeSetup === "Takeaway") {
+          if (pendingModeSetup === "Takeaway") {
             setPendingModeSetup(null);
           }
         }}
+        disabled={
+          isCheckingDineInSession || (!isDeliveryAddress && !branchIsOnline)
+        }
         className="flex-row items-center p-4 mb-3 rounded-2xl border"
         style={{
           backgroundColor: theme.card,
           borderColor: isActive ? theme.primary : theme.border,
+          opacity: !isDeliveryAddress && !branchIsOnline ? 0.6 : 1,
         }}
       >
         <Icon size={24} color={isActive ? theme.primary : theme.muted} />
@@ -677,6 +1037,11 @@ export default function HomeScreen() {
           <Text className="text-base font-bold" style={{ color: theme.text }}>
             {isDeliveryAddress ? item.type : item.name}
           </Text>
+          {!isDeliveryAddress && !branchIsOnline ? (
+            <Text className="mt-1 text-xs font-bold" style={{ color: theme.danger }}>
+              BRANCH IS OFFLINE
+            </Text>
+          ) : null}
           <Text
             className="text-sm font-semibold mt-1"
             style={{ color: theme.muted }}
@@ -836,12 +1201,10 @@ export default function HomeScreen() {
               isOrderLocked={isOrderLocked}
               onOpenScanner={() => {
                 setTableNumber("");
+                setIsChangingDineInTable(Boolean(activeTable && dineInSession?._id));
                 setShowDineInCheckInModal(true);
               }}
-              onLeaveTable={() => {
-                setActiveTable(null);
-                setGlobalOrderMode(lastMode || "Delivery");
-              }}
+              onLeaveTable={() => void handleLeaveTable()}
               onCallWaiter={() => handleServiceRequest("waiter")}
               onRequestWater={() => handleServiceRequest("water")}
               onRequestWifi={() => handleServiceRequest("wifi")}
@@ -866,6 +1229,8 @@ export default function HomeScreen() {
               timeLeft={timeLeft}
               confirmedOrdersLength={confirmedOrders.length}
               isTimerRunning={dineInCartState === "waiting"}
+              isBranchOnline={isSelectedBranchOnline}
+              isBranchStatusLoading={!branchesLoaded}
             />
           }
           ListEmptyComponent={renderEmptyState}
@@ -907,7 +1272,9 @@ export default function HomeScreen() {
             >
               {orderMode === "Delivery" && addressModalSelection === "address"
                 ? "Choose Delivery Address"
-                : "Choose Branch"}
+                    : isCheckingDineInSession
+                      ? "Checking Dine-in Session..."
+                      : "Choose Branch"}
             </Text>
             <Pressable
               onPress={handleCancelAddressModal}
@@ -1143,7 +1510,7 @@ export default function HomeScreen() {
                   ? undefined
                   : ({ data }) => {
                       setScanned(true);
-                      handleSimulateQRScan(data.substring(0, 4) || "T-10");
+                      handleQRScan(data);
                     }
               }
             />
@@ -1232,27 +1599,37 @@ export default function HomeScreen() {
                   className="text-2xl font-black mb-2"
                   style={{ color: theme.text }}
                 >
-                  Waiter Called
+                  {serviceLoading
+                    ? "Calling Waiter..."
+                    : serviceError && !serviceRequestSent
+                      ? "Unable to Call Waiter"
+                      : serviceRequestSent
+                        ? "Waiter Called"
+                        : "Call Waiter"}
                 </Text>
                 <Text
                   className="text-base text-center font-semibold mb-6"
                   style={{ color: theme.muted }}
                 >
-                  {assignedWaiterName ? (
-                    <>
-                      Your assigned waiter,{" "}
-                      <Text style={{ color: theme.primary }}>
-                        {assignedWaiterName}
-                      </Text>
-                      , has been notified and will be at Table {activeTable}{" "}
-                      shortly!
-                    </>
-                  ) : (
-                    `Your branch team has been notified and will be at Table ${activeTable} shortly!`
-                  )}
+                  {serviceError ||
+                    (serviceLoading
+                      ? "Sending your request to the restaurant..."
+                      : serviceRequestSent
+                        ? `Your request was sent for Table ${activeTable}${dineInWaiter?.waiterName ? `. ${dineInWaiter.waiterName} is your assigned waiter.` : "."}`
+                        : `Call the waiter assigned to Table ${activeTable}.`)}
                 </Text>
+                {serviceRequestSent && serviceRequests.length > 0 && (
+                  <Text
+                    className="text-xs font-semibold mb-4"
+                    style={{ color: theme.muted }}
+                  >
+                    {serviceRequests.length} service request
+                    {serviceRequests.length === 1 ? "" : "s"} currently listed.
+                  </Text>
+                )}
                 <Pressable
                   onPress={() => setActiveServiceModal(null)}
+                  disabled={serviceLoading}
                   className="w-full h-14 rounded-2xl items-center justify-center shadow-sm"
                   style={{ backgroundColor: theme.primary }}
                 >
@@ -1275,16 +1652,28 @@ export default function HomeScreen() {
                   className="text-2xl font-black mb-2"
                   style={{ color: theme.text }}
                 >
-                  Water Requested
+                  {serviceLoading
+                    ? "Requesting Water..."
+                    : serviceError && !serviceRequestSent
+                      ? "Unable to Request Water"
+                      : serviceRequestSent
+                        ? "Water Requested"
+                        : "Request Water"}
                 </Text>
                 <Text
                   className="text-base text-center font-semibold mb-6"
                   style={{ color: theme.muted }}
                 >
-                  We are bringing fresh water to Table {activeTable} right away.
+                  {serviceError ||
+                    (serviceLoading
+                      ? "Sending your request to the restaurant..."
+                      : serviceRequestSent
+                        ? `Your water request for Table ${activeTable} was sent.`
+                        : `Request water for Table ${activeTable}.`)}
                 </Text>
                 <Pressable
                   onPress={() => setActiveServiceModal(null)}
+                  disabled={serviceLoading}
                   className="w-full h-14 rounded-2xl items-center justify-center shadow-sm"
                   style={{ backgroundColor: theme.primary }}
                 >
@@ -1317,29 +1706,51 @@ export default function HomeScreen() {
                   }}
                 >
                   <Text
-                    className="text-sm font-bold mb-1"
-                    style={{ color: theme.muted }}
-                  >
-                    Network Name:
-                  </Text>
-                  <Text
                     className="text-lg font-black mb-3"
                     style={{ color: theme.text }}
                   >
-                    {activeWifi?.name || "Wi-Fi details unavailable"}
+                    {serviceLoading
+                      ? "Loading Wi-Fi details..."
+                      : serviceError || ""}
                   </Text>
-                  <Text
-                    className="text-sm font-bold mb-1"
-                    style={{ color: theme.muted }}
-                  >
-                    Password:
-                  </Text>
-                  <Text
-                    className="text-lg font-black"
-                    style={{ color: theme.primary }}
-                  >
-                    {activeWifi?.password || "Wi-Fi details unavailable"}
-                  </Text>
+                  {wifiConnections.map((connection) => (
+                    <View key={connection.id} className="mb-3">
+                      <Text
+                        className="text-sm font-bold mb-1"
+                        style={{ color: theme.muted }}
+                      >
+                        Network Name:
+                      </Text>
+                      <Text
+                        className="text-lg font-black mb-2"
+                        style={{ color: theme.text }}
+                      >
+                        {connection.name}
+                      </Text>
+                      <Text
+                        className="text-sm font-bold mb-1"
+                        style={{ color: theme.muted }}
+                      >
+                        Password:
+                      </Text>
+                      <Text
+                        className="text-lg font-black"
+                        style={{ color: theme.primary }}
+                      >
+                        {connection.password}
+                      </Text>
+                    </View>
+                  ))}
+                  {!serviceLoading &&
+                    !serviceError &&
+                    wifiConnections.length === 0 && (
+                      <Text
+                        className="text-base font-semibold"
+                        style={{ color: theme.muted }}
+                      >
+                        No Wi-Fi details are available.
+                      </Text>
+                    )}
                 </View>
                 <Pressable
                   onPress={() => setActiveServiceModal(null)}
@@ -1348,39 +1759,6 @@ export default function HomeScreen() {
                 >
                   <Text className="text-white font-black text-lg tracking-wide">
                     Close
-                  </Text>
-                </Pressable>
-              </>
-            )}
-
-            {activeServiceModal === "bill_warning" && (
-              <>
-                <View
-                  className="w-20 h-20 rounded-full items-center justify-center mb-4"
-                  style={{ backgroundColor: "rgba(239, 68, 68, 0.15)" }}
-                >
-                  <ShoppingBag size={40} color="#EF4444" />
-                </View>
-                <Text
-                  className="text-2xl font-black mb-2 text-center"
-                  style={{ color: theme.text }}
-                >
-                  Hold on!
-                </Text>
-                <Text
-                  className="text-base text-center font-semibold mb-6"
-                  style={{ color: theme.muted }}
-                >
-                  You have unordered items in your cart. Please place your order
-                  or clear your cart before paying the bill.
-                </Text>
-                <Pressable
-                  onPress={() => setActiveServiceModal(null)}
-                  className="w-full h-14 rounded-2xl items-center justify-center shadow-sm"
-                  style={{ backgroundColor: theme.primary }}
-                >
-                  <Text className="text-white font-black text-lg tracking-wide">
-                    Got it
                   </Text>
                 </Pressable>
               </>
@@ -1401,11 +1779,27 @@ export default function HomeScreen() {
                 >
                   Table {activeTable} Bill
                 </Text>
+                {serviceLoading && (
+                  <Text
+                    className="w-full text-center font-semibold mt-2"
+                    style={{ color: theme.muted }}
+                  >
+                    Fetching the latest bill...
+                  </Text>
+                )}
+                {serviceError && (
+                  <Text
+                    className="w-full text-center font-semibold mt-2"
+                    style={{ color: "#DC2626" }}
+                  >
+                    {serviceError}
+                  </Text>
+                )}
 
                 <View className="w-full max-h-48 mt-4 mb-2">
                   <FlatList
-                    data={confirmedOrders}
-                    keyExtractor={(i, index) => index.toString()}
+                    data={billItems}
+                    keyExtractor={(item) => item.key}
                     showsVerticalScrollIndicator={false}
                     renderItem={({ item }) => (
                       <View className="flex-row justify-between w-full mb-3">
@@ -1419,11 +1813,7 @@ export default function HomeScreen() {
                           className="text-base font-bold"
                           style={{ color: theme.text }}
                         >
-                          ₹
-                          {formatPrice(
-                            item.total ||
-                              getNumericPrice(item.price) * item.quantity,
-                          )}
+                          ₹{formatPrice(item.itemTotal)}
                         </Text>
                       </View>
                     )}
@@ -1432,62 +1822,176 @@ export default function HomeScreen() {
                         className="text-center italic"
                         style={{ color: theme.muted }}
                       >
-                        No items ordered yet.
+                        {serviceLoading
+                          ? ""
+                          : "No items are on this bill yet."}
                       </Text>
                     }
                   />
                 </View>
 
-                {confirmedOrders.length > 0 && (
+                {dineInBill && (
                   <View
-                    className="w-full border-t pt-4 mb-6"
+                    className="w-full border-t pt-4 mb-3"
                     style={{ borderColor: theme.border }}
                   >
                     <View className="flex-row justify-between w-full mb-2">
                       <Text
-                        className="text-sm font-bold"
+                        className="text-sm font-semibold"
                         style={{ color: theme.muted }}
                       >
-                        Taxes & Fees ({taxPercentage.toFixed(0)}%)
+                        Subtotal
                       </Text>
                       <Text
-                        className="text-sm font-bold"
+                        className="text-sm font-semibold"
                         style={{ color: theme.muted }}
                       >
-                        ₹{formatPrice(confirmedBillTaxes)}
+                        ₹{formatPrice(dineInBill.pricing.subtotal)}
                       </Text>
                     </View>
+                    {dineInBill.pricing.discount > 0 && (
+                      <View className="flex-row justify-between w-full mb-2">
+                        <Text
+                          className="text-sm font-semibold"
+                          style={{ color: theme.muted }}
+                        >
+                          Discount
+                        </Text>
+                        <Text
+                          className="text-sm font-semibold"
+                          style={{ color: theme.muted }}
+                        >
+                          -₹{formatPrice(dineInBill.pricing.discount)}
+                        </Text>
+                      </View>
+                    )}
+                    {dineInBill.pricing.packagingFee > 0 && (
+                      <View className="flex-row justify-between w-full mb-2">
+                        <Text
+                          className="text-sm font-semibold"
+                          style={{ color: theme.muted }}
+                        >
+                          Packaging fee
+                        </Text>
+                        <Text
+                          className="text-sm font-semibold"
+                          style={{ color: theme.muted }}
+                        >
+                          ₹{formatPrice(dineInBill.pricing.packagingFee)}
+                        </Text>
+                      </View>
+                    )}
+                    {dineInBill.pricing.platformFee > 0 && (
+                      <View className="flex-row justify-between w-full mb-2">
+                        <Text
+                          className="text-sm font-semibold"
+                          style={{ color: theme.muted }}
+                        >
+                          Platform fee
+                        </Text>
+                        <Text
+                          className="text-sm font-semibold"
+                          style={{ color: theme.muted }}
+                        >
+                          ₹{formatPrice(dineInBill.pricing.platformFee)}
+                        </Text>
+                      </View>
+                    )}
+                    {dineInBill.pricing.deliveryFee > 0 && (
+                      <View className="flex-row justify-between w-full mb-2">
+                        <Text
+                          className="text-sm font-semibold"
+                          style={{ color: theme.muted }}
+                        >
+                          Delivery fee
+                        </Text>
+                        <Text
+                          className="text-sm font-semibold"
+                          style={{ color: theme.muted }}
+                        >
+                          ₹{formatPrice(dineInBill.pricing.deliveryFee)}
+                        </Text>
+                      </View>
+                    )}
+                    <View className="flex-row justify-between w-full mb-2">
+                      <Text
+                        className="text-sm font-semibold"
+                        style={{ color: theme.muted }}
+                      >
+                        {dineInBill.pricing.taxPercentage
+                          ? `Tax (${dineInBill.pricing.taxPercentage}%)`
+                          : "Tax"}
+                      </Text>
+                      <Text
+                        className="text-sm font-semibold"
+                        style={{ color: theme.muted }}
+                      >
+                        ₹{formatPrice(dineInBill.pricing.tax)}
+                      </Text>
+                    </View>
+                    <View className="flex-row justify-between w-full mb-2">
+                      <Text
+                        className="text-sm font-semibold"
+                        style={{ color: theme.muted }}
+                      >
+                        Bill total
+                      </Text>
+                      <Text
+                        className="text-sm font-semibold"
+                        style={{ color: theme.muted }}
+                      >
+                        ₹{formatPrice(dineInBill.pricing.total)}
+                      </Text>
+                    </View>
+                    {dineInBill.pricing.paidTotal > 0 && (
+                      <View className="flex-row justify-between w-full mb-2">
+                        <Text
+                          className="text-sm font-semibold"
+                          style={{ color: theme.muted }}
+                        >
+                          Paid
+                        </Text>
+                        <Text
+                          className="text-sm font-semibold"
+                          style={{ color: theme.muted }}
+                        >
+                          -₹{formatPrice(dineInBill.pricing.paidTotal)}
+                        </Text>
+                      </View>
+                    )}
                     <View className="flex-row justify-between w-full">
                       <Text
                         className="text-xl font-black"
                         style={{ color: theme.text }}
                       >
-                        Grand Total
+                        Amount Due
                       </Text>
                       <Text
                         className="text-xl font-black"
                         style={{ color: theme.primary }}
                       >
-                        ₹{formatPrice(confirmedBillTotal)}
+                        ₹{formatPrice(dineInBill.pricing.amountDue)}
                       </Text>
                     </View>
+                    <Text
+                      className="text-xs font-semibold text-center mt-3"
+                      style={{ color: theme.muted }}
+                    >
+                      {dineInBill.canPay
+                        ? "The bill is ready, but in-app payment is not available yet."
+                        : `This bill is not payable yet. Payment status: ${dineInBill.paymentStatus}.`}
+                    </Text>
                   </View>
                 )}
 
                 <Pressable
-                  onPress={() => {
-                    setActiveServiceModal(null);
-                    setActiveTable(null);
-                    setConfirmedOrders([]);
-                    if (setDineInCartState) setDineInCartState("idle");
-                    if (setPendingOrderSnapshot) setPendingOrderSnapshot([]);
-                    setGlobalOrderMode("Delivery");
-                  }}
+                  onPress={() => setActiveServiceModal(null)}
+                  disabled={serviceLoading}
                   className="w-full h-14 mt-4 rounded-2xl items-center justify-center shadow-sm"
-                  style={{ backgroundColor: theme.primary }}
+                  style={{ backgroundColor: theme.primary, opacity: serviceLoading ? 0.6 : 1 }}
                 >
                   <Text className="text-white font-black text-lg tracking-wide">
-                    Pay & Leave Table
+                    Close
                   </Text>
                 </Pressable>
               </>

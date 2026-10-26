@@ -2,12 +2,14 @@ import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Image,
+  Keyboard,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   Switch,
@@ -27,6 +29,13 @@ import {
   operationsApi,
 } from "../../../../services/api/operations";
 import { operationsCache } from "../../../../services/api/operations-cache";
+import {
+  formatCustomTag,
+  getCustomTagIcon,
+  getRandomCustomTagIcon,
+  saveCustomTag,
+  stripCustomTagIcon,
+} from "../../../../utils/menu-tags";
 
 type CustomizationEditor =
   | { type: "group"; groupIndex: number | null }
@@ -104,6 +113,7 @@ export default function EditMenuItemScreen() {
   const [item, setItem] = useState<OperationsMenuItem | null>(null);
   const [loading, setLoading] = useState(!isNewItem);
   const [saving, setSaving] = useState(false);
+  const [hasAttemptedSave, setHasAttemptedSave] = useState(false);
   const [itemName, setItemName] = useState("");
   const [description, setDescription] = useState("");
   const [regularPrice, setRegularPrice] = useState("");
@@ -117,6 +127,7 @@ export default function EditMenuItemScreen() {
   const [foodType, setFoodType] = useState<"veg" | "non_veg">("veg");
   const [marketingTag, setMarketingTag] = useState("auto_discount");
   const [customTag, setCustomTag] = useState("");
+  const [customTagIcon, setCustomTagIcon] = useState(getRandomCustomTagIcon);
   const [customTagEnabled, setCustomTagEnabled] = useState(false);
   const [customizationGroups, setCustomizationGroups] = useState<
     OperationsCustomizationGroup[]
@@ -133,7 +144,27 @@ export default function EditMenuItemScreen() {
     useState("1");
   const [optionName, setOptionName] = useState("");
   const [optionPrice, setOptionPrice] = useState("0");
+  const [hasAttemptedOptionSave, setHasAttemptedOptionSave] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const hasLoadedItem = useRef(false);
+
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const showSubscription = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardHeight(event.endCoordinates.height);
+    });
+    const hideSubscription = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -192,7 +223,11 @@ export default function EditMenuItemScreen() {
                 found.compareAtPrice,
               ),
         );
-        setCustomTag(hasCustomTag ? found.customTag || "" : "");
+        const foundCustomTag = hasCustomTag ? found.customTag || "" : "";
+        setCustomTag(stripCustomTagIcon(foundCustomTag));
+        setCustomTagIcon(
+          getCustomTagIcon(foundCustomTag) ?? getRandomCustomTagIcon(),
+        );
         setCustomTagEnabled(hasCustomTag);
         setCustomizationGroups(found.customizationGroups || []);
       })()
@@ -295,6 +330,7 @@ export default function EditMenuItemScreen() {
   };
 
   const handleSave = async () => {
+    setHasAttemptedSave(true);
     const parsedRegularPrice = Number(regularPrice);
     const parsedOfferPrice = offerPrice.trim() ? Number(offerPrice) : undefined;
     const parsedQuantity = Number(quantity);
@@ -408,7 +444,9 @@ export default function EditMenuItemScreen() {
         customTagEnabled || marketingTag === "auto_discount"
           ? null
           : getMarketingTagPayload(marketingTag),
-      customTag: customTagEnabled ? customTag.trim() : null,
+      customTag: customTagEnabled
+        ? saveCustomTag(customTag, customTagIcon)
+        : null,
       customTagEnabled: customTagEnabled && Boolean(customTag.trim()),
       customizationGroups,
       ...(item?.tags !== undefined ? { tags: item.tags } : {}),
@@ -474,6 +512,7 @@ export default function EditMenuItemScreen() {
     keyboardType: "default" | "numeric" = "default",
     multiline = false,
     required = false,
+    invalid = false,
   ) => (
     <View className="mb-4">
       <Text
@@ -498,10 +537,28 @@ export default function EditMenuItemScreen() {
         className="rounded-xl border px-4 py-3"
         style={{
           ...inputStyle,
+          borderColor: invalid ? theme.danger : theme.border,
+          borderWidth: invalid ? 2 : 1,
+          color: invalid ? theme.danger : theme.text,
           minHeight: multiline ? 88 : 48,
           textAlignVertical: multiline ? "top" : "center",
         }}
       />
+      {invalid ? (
+        <Text className="mt-1 text-xs font-semibold" style={{ color: theme.danger }}>
+          {label === "Item name"
+            ? "Item name is required."
+            : label === "Option name"
+              ? "Option name is required."
+              : label === "Additional price (₹)"
+                ? "Enter a valid non-negative price."
+            : label === "Available quantity"
+              ? "Enter a non-negative whole number."
+              : label === "Custom tag"
+                ? "Enter a custom tag or turn it off."
+                : "This field is required."}
+        </Text>
+      ) : null}
     </View>
   );
 
@@ -575,13 +632,17 @@ export default function EditMenuItemScreen() {
 
     if (customizationEditor?.type === "option") {
       const name = optionName.trim();
+      const trimmedPrice = optionPrice.trim();
       const priceValue = Number(optionPrice);
       if (
         !name ||
-        !optionPrice.trim() ||
+        !trimmedPrice ||
         !Number.isFinite(priceValue) ||
         priceValue < 0
       ) {
+        setHasAttemptedOptionSave(true);
+        if (!name && optionName.length > 0) setOptionName("");
+        if (!trimmedPrice && optionPrice.length > 0) setOptionPrice("");
         Alert.alert(
           "Invalid add-on option",
           "Enter an option name and a valid non-negative price.",
@@ -673,6 +734,7 @@ export default function EditMenuItemScreen() {
   const openNewOptionEditor = (groupIndex: number) => {
     setOptionName("");
     setOptionPrice("0");
+    setHasAttemptedOptionSave(false);
     setCustomizationEditor({ type: "option", groupIndex });
   };
 
@@ -711,7 +773,12 @@ export default function EditMenuItemScreen() {
         >
           <Text
             className="mb-2 text-xs font-black uppercase"
-            style={{ color: theme.muted }}
+            style={{
+              color:
+                hasAttemptedSave && !imageUrl.trim()
+                  ? theme.danger
+                  : theme.muted,
+            }}
           >
             Images
           </Text>
@@ -783,7 +850,13 @@ export default function EditMenuItemScreen() {
                 onPress={() => void pickMenuImages("cover", "gallery")}
                 disabled={uploadingImage}
                 className="flex-1 flex-row items-center justify-center rounded-xl border px-3 py-3"
-                style={{ borderColor: theme.border }}
+                style={{
+                  borderColor:
+                    hasAttemptedSave && !imageUrl.trim()
+                      ? theme.danger
+                      : theme.border,
+                  borderWidth: hasAttemptedSave && !imageUrl.trim() ? 2 : 1,
+                }}
               >
                 <Feather name="image" size={16} color={theme.primary} />
                 <Text
@@ -797,7 +870,13 @@ export default function EditMenuItemScreen() {
                 onPress={() => void pickMenuImages("cover", "camera")}
                 disabled={uploadingImage}
                 className="flex-1 flex-row items-center justify-center rounded-xl border px-3 py-3"
-                style={{ borderColor: theme.border }}
+                style={{
+                  borderColor:
+                    hasAttemptedSave && !imageUrl.trim()
+                      ? theme.danger
+                      : theme.border,
+                  borderWidth: hasAttemptedSave && !imageUrl.trim() ? 2 : 1,
+                }}
               >
                 <Feather name="camera" size={16} color={theme.primary} />
                 <Text
@@ -808,6 +887,14 @@ export default function EditMenuItemScreen() {
                 </Text>
               </Pressable>
             </View>
+            {hasAttemptedSave && !imageUrl.trim() ? (
+              <Text
+                className="mb-4 text-xs font-semibold"
+                style={{ color: theme.danger }}
+              >
+                Add a cover image to continue.
+              </Text>
+            ) : null}
             <View className="mb-3 flex-row items-center justify-between">
               <Text
                 className="text-xs font-bold uppercase"
@@ -937,6 +1024,7 @@ export default function EditMenuItemScreen() {
               "default",
               false,
               true,
+              hasAttemptedSave && !itemName.trim(),
             )}
             {field(
               "Description",
@@ -1007,9 +1095,40 @@ export default function EditMenuItemScreen() {
                 placeholderTextColor={theme.muted}
                 keyboardType="numeric"
                 className="rounded-xl border px-4 py-3"
-                style={{ ...inputStyle, minHeight: 48 }}
+                style={{
+                  ...inputStyle,
+                  borderColor:
+                    hasAttemptedSave &&
+                    (!Number.isFinite(Number(regularPrice)) ||
+                      Number(regularPrice) <= 0)
+                      ? theme.danger
+                      : theme.border,
+                  borderWidth:
+                    hasAttemptedSave &&
+                    (!Number.isFinite(Number(regularPrice)) ||
+                      Number(regularPrice) <= 0)
+                      ? 2
+                      : 1,
+                  color:
+                    hasAttemptedSave &&
+                    (!Number.isFinite(Number(regularPrice)) ||
+                      Number(regularPrice) <= 0)
+                      ? theme.danger
+                      : theme.text,
+                  minHeight: 48,
+                }}
                 accessibilityLabel="Required regular price in rupees"
               />
+              {hasAttemptedSave &&
+              (!Number.isFinite(Number(regularPrice)) ||
+                Number(regularPrice) <= 0) ? (
+                <Text
+                  className="mt-1 text-xs font-semibold"
+                  style={{ color: theme.danger }}
+                >
+                  Enter a price greater than ₹0.
+                </Text>
+              ) : null}
             </View>
             {showOfferPrice ? (
               <View className="mb-4">
@@ -1062,6 +1181,10 @@ export default function EditMenuItemScreen() {
               "numeric",
               false,
               true,
+              hasAttemptedSave &&
+                (!quantity.trim() ||
+                  !Number.isInteger(Number(quantity)) ||
+                  Number(quantity) < 0),
             )}
             <Text
               className="mb-2 text-xs font-bold uppercase"
@@ -1154,6 +1277,7 @@ export default function EditMenuItemScreen() {
                 onValueChange={(enabled) => {
                   setCustomTagEnabled(enabled);
                   setCustomTag("");
+                  if (enabled) setCustomTagIcon(getRandomCustomTagIcon());
                   setMarketingTag(enabled ? "none" : "auto_discount");
                 }}
                 trackColor={{ false: theme.border, true: theme.primary }}
@@ -1171,6 +1295,7 @@ export default function EditMenuItemScreen() {
                   "default",
                   false,
                   true,
+                  hasAttemptedSave && customTagEnabled && !customTag.trim(),
                 )}
                 {customTag.trim() ? (
                   <View className="mb-2 flex-row items-center">
@@ -1182,7 +1307,7 @@ export default function EditMenuItemScreen() {
                         className="text-[10px] font-black"
                         style={{ color: theme.primaryForeground }}
                       >
-                        {customTag.trim()}
+                        {formatCustomTag(customTag, customTagIcon)}
                       </Text>
                     </View>
                     <Text
@@ -1192,6 +1317,14 @@ export default function EditMenuItemScreen() {
                       Saved as customTag
                     </Text>
                   </View>
+                ) : null}
+                {hasAttemptedSave && !customTag.trim() ? (
+                  <Text
+                    className="mb-3 text-xs font-semibold"
+                    style={{ color: theme.danger }}
+                  >
+                    Enter a custom tag to continue.
+                  </Text>
                 ) : null}
               </>
             ) : null}
@@ -1371,11 +1504,15 @@ export default function EditMenuItemScreen() {
             className="flex-1 px-5"
             enableOnAndroid
             enableAutomaticScroll
-            extraScrollHeight={24}
+            extraScrollHeight={8}
             contentContainerStyle={{
               flexGrow: 1,
-              justifyContent: "center",
-              paddingVertical: 16,
+              justifyContent:
+                customizationEditor?.type === "option" && keyboardHeight > 0
+                  ? "flex-end"
+                  : "center",
+              paddingTop: 16,
+              paddingBottom: 16,
             }}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
@@ -1409,82 +1546,6 @@ export default function EditMenuItemScreen() {
                     false,
                     true,
                   )}
-                  <Text
-                    className="mb-2 text-xs font-bold uppercase"
-                    style={{ color: theme.muted }}
-                  >
-                    How many options can customers select?
-                  </Text>
-                  <View className="mb-4 flex-row gap-2">
-                    {(["single", "multiple"] as const).map((selectionType) => {
-                      const isSelected =
-                        customizationSelectionType === selectionType;
-                      return (
-                        <Pressable
-                          key={selectionType}
-                          onPress={() => {
-                            setCustomizationSelectionType(selectionType);
-                            if (selectionType === "single") {
-                              setCustomizationMaxSelections("1");
-                              setCustomizationMinSelections((current) =>
-                                Number(current) > 1 ? "1" : current,
-                              );
-                            } else if (Number(customizationMaxSelections) < 2) {
-                              const existingGroup =
-                                customizationEditor.groupIndex === null
-                                  ? null
-                                  : customizationGroups[
-                                      customizationEditor.groupIndex
-                                    ];
-                              const availableOptionCount =
-                                existingGroup?.options.filter(
-                                  (option) => option.isAvailable,
-                                ).length ?? 0;
-                              setCustomizationMaxSelections(
-                                String(Math.max(2, availableOptionCount)),
-                              );
-                            }
-                          }}
-                          className="flex-1 items-center rounded-xl border px-3 py-3"
-                          style={{
-                            backgroundColor: isSelected
-                              ? theme.primary
-                              : theme.bg,
-                            borderColor: isSelected
-                              ? theme.primary
-                              : theme.border,
-                          }}
-                        >
-                          <Text
-                            className="text-sm font-bold"
-                            style={{
-                              color: isSelected
-                                ? theme.primaryForeground
-                                : theme.text,
-                            }}
-                          >
-                            {selectionType === "single"
-                              ? "Choose one"
-                              : "Choose multiple"}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                  {field(
-                    "Minimum choices",
-                    customizationMinSelections,
-                    setCustomizationMinSelections,
-                    "0",
-                    "numeric",
-                  )}
-                  {field(
-                    "Maximum choices",
-                    customizationMaxSelections,
-                    setCustomizationMaxSelections,
-                    "1",
-                    "numeric",
-                  )}
                 </>
               ) : (
                 <>
@@ -1496,6 +1557,7 @@ export default function EditMenuItemScreen() {
                     "default",
                     false,
                     true,
+                    hasAttemptedOptionSave && !optionName.trim(),
                   )}
                   {field(
                     "Additional price (₹)",
@@ -1505,6 +1567,10 @@ export default function EditMenuItemScreen() {
                     "numeric",
                     false,
                     true,
+                    hasAttemptedOptionSave &&
+                      (!optionPrice.trim() ||
+                        !Number.isFinite(Number(optionPrice)) ||
+                        Number(optionPrice) < 0),
                   )}
                 </>
               )}
