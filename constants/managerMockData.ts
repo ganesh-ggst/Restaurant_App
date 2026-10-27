@@ -66,6 +66,8 @@ export interface StoreDetailOption {
   value: string;
   subValue?: string;
   isActive: boolean;
+  area?: string;
+  phone?: string;
 }
 
 export interface StoreDetailSection {
@@ -620,31 +622,6 @@ export const MANAGER_MOCK_DATA: {
           value: "Oops! No matches found.",
           subValue: "We couldn't find anything exactly matching.",
           isActive: true,
-        },
-      ],
-    },
-    {
-      id: "sf_celebrations",
-      title: "Celebration Emojis",
-      selectionType: "multiple",
-      options: [
-        {
-          id: "sf_cel_1",
-          value: "🎉",
-          subValue: "Checkout success confetti effect",
-          isActive: true,
-        },
-        {
-          id: "sf_cel_2",
-          value: "✨",
-          subValue: "Checkout success sparkle effect",
-          isActive: false,
-        },
-        {
-          id: "sf_cel_3",
-          value: "🌸",
-          subValue: "Checkout success floral effect",
-          isActive: false,
         },
       ],
     },

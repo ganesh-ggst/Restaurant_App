@@ -104,9 +104,12 @@ export interface OperationsDashboard {
     code?: string;
     address?: string;
   };
-  checkIn: {
-    isCheckedIn: boolean;
+  checkIn?: {
+    isCheckedIn?: boolean;
+    isCheckIn?: boolean;
   };
+  isCheckedIn?: boolean;
+  isCheckIn?: boolean;
   stats: {
     totalItems: number;
     inStockItems: number;
@@ -244,10 +247,26 @@ export const operationsApi = {
     const branchQuery = branchId
       ? `?branchId=${encode(branchId)}`
       : "";
-    return requireData(
+    const dashboard = requireData(
       await request<OperationsDashboard>("GET", `/dashboard${branchQuery}`),
       "The server did not return the operations dashboard.",
     );
+    const isCheckedIn =
+      typeof dashboard.checkIn?.isCheckedIn === "boolean"
+        ? dashboard.checkIn.isCheckedIn
+        : typeof dashboard.checkIn?.isCheckIn === "boolean"
+          ? dashboard.checkIn.isCheckIn
+          : typeof dashboard.isCheckedIn === "boolean"
+            ? dashboard.isCheckedIn
+            : dashboard.isCheckIn;
+
+    return {
+      ...dashboard,
+      checkIn: {
+        ...dashboard.checkIn,
+        ...(typeof isCheckedIn === "boolean" ? { isCheckedIn } : {}),
+      },
+    };
   },
 
   async getManagers(): Promise<OperationsManagerAssignment[]> {
@@ -405,7 +424,7 @@ export const operationsApi = {
 
   async uploadMenuImages(
     files: { uri: string; fileName: string; mimeType: string }[],
-    folder: "menu item" | "cross-sells",
+    folder: "menu item" | "cross-sells" | "storefront-display",
   ): Promise<string[]> {
     if (files.length === 0) return [];
     if (!API_BASE_URL) {
@@ -563,12 +582,11 @@ export const operationsApi = {
 
   async setManagerCheckInStatus(
     isCheckedIn: boolean,
-    branchId?: string | null,
   ): Promise<void> {
     await request(
       "PATCH",
       "/manager/check-in-status",
-      { isCheckedIn, ...(branchId ? { branchId } : {}) },
+      { isCheckedIn },
       "operations",
     );
   },

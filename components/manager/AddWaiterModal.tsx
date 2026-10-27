@@ -101,6 +101,7 @@ export default function AddWaiterModal() {
 
   const [activeTab, setActiveTab] = useState<"add" | "showAll">("add");
   const [waiterName, setWaiterName] = useState("");
+  const [waiterNameError, setWaiterNameError] = useState("");
   const [waiterSearch, setWaiterSearch] = useState("");
   const [waiterStatusFilter, setWaiterStatusFilter] = useState<
     "all" | "active" | "inactive"
@@ -108,6 +109,7 @@ export default function AddWaiterModal() {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editedName, setEditedName] = useState("");
+  const [editedNameError, setEditedNameError] = useState("");
   const [editedIsActive, setEditedIsActive] = useState<boolean>(true);
   const [waiters, setWaiters] = useState<AdminWaiter[]>([]);
   const [waiterNumbers, setWaiterNumbers] = useState<Map<string, number>>(
@@ -146,9 +148,10 @@ export default function AddWaiterModal() {
 
   const handleSave = async () => {
     if (!waiterName.trim()) {
-      Alert.alert("Error", "Please enter waiter name.");
+      setWaiterNameError("Waiter Name is required.");
       return;
     }
+    setWaiterNameError("");
 
     setSaving(true);
     try {
@@ -170,14 +173,16 @@ export default function AddWaiterModal() {
   const handleStartEdit = (waiter: any) => {
     setEditingId(waiter.id);
     setEditedName(waiter.name);
+    setEditedNameError("");
     setEditedIsActive(waiter.isActive !== false);
   };
 
   const handleSaveEdit = async (waiterId: string) => {
     if (!editedName.trim()) {
-      Alert.alert("Error", "Waiter name cannot be empty.");
+      setEditedNameError("Waiter Name is required.");
       return;
     }
+    setEditedNameError("");
 
     setSaving(true);
     try {
@@ -240,6 +245,7 @@ export default function AddWaiterModal() {
         (waiterNumbersById.get(second.id) ?? Number.MAX_SAFE_INTEGER) ||
       String(first.id).localeCompare(String(second.id)),
   );
+  const waiterSearchTerm = waiterSearch.trim();
   const filteredWaiters = sortedWaiters.filter(
     (waiter: any) =>
       (waiterStatusFilter === "all" ||
@@ -248,8 +254,17 @@ export default function AddWaiterModal() {
           : waiter.isActive === false)) &&
       JSON.stringify(waiter)
         .toLowerCase()
-        .includes(waiterSearch.trim().toLowerCase()),
+        .includes(waiterSearchTerm.toLowerCase()),
   );
+  const noWaitersMessage = waiterSearchTerm
+    ? `No waiters match “${waiterSearchTerm}”${
+        waiterStatusFilter === "all"
+          ? "."
+          : ` with the ${waiterStatusFilter} filter.`
+      }`
+    : waiterStatusFilter === "all"
+      ? "No waiters found. Add one from the Add Waiter tab."
+      : `No ${waiterStatusFilter} waiters found.`;
 
   return (
     <View
@@ -422,10 +437,15 @@ export default function AddWaiterModal() {
                 </Text>
                 <TextInput
                   value={waiterName}
-                  onChangeText={setWaiterName}
+                  onChangeText={(value) => {
+                    setWaiterName(value);
+                    if (waiterNameError) setWaiterNameError("");
+                  }}
+                  onBlur={() => setWaiterName(waiterName.trim())}
                   style={{
                     backgroundColor: theme.card,
-                    borderColor: theme.border,
+                    borderColor: waiterNameError ? theme.danger : theme.border,
+                    borderWidth: waiterNameError ? 2 : 1,
                     color: theme.text,
                     paddingVertical: 12,
                     fontSize: 17,
@@ -436,6 +456,11 @@ export default function AddWaiterModal() {
                   placeholder="Enter Waiter Name"
                   autoFocus={true}
                 />
+                {waiterNameError ? (
+                  <Text className="mt-1 text-xs font-semibold" style={{ color: theme.danger }}>
+                    {waiterNameError}
+                  </Text>
+                ) : null}
               </View>
 
               <Pressable
@@ -470,14 +495,14 @@ export default function AddWaiterModal() {
                   className="text-base text-center py-8"
                   style={{ color: theme.muted }}
                 >
-                  No waiters found. Add one from the Add Waiter tab.
+                  {noWaitersMessage}
                 </Text>
               ) : filteredWaiters.length === 0 ? (
                 <Text
                   className="text-base text-center py-8"
                   style={{ color: theme.muted }}
                 >
-                  No waiters match “{waiterSearch.trim()}”.
+                  {noWaitersMessage}
                 </Text>
               ) : (
                 filteredWaiters.map((waiter: any) => {
@@ -575,10 +600,17 @@ export default function AddWaiterModal() {
                             </Text>
                             <TextInput
                               value={editedName}
-                              onChangeText={setEditedName}
+                              onChangeText={(value) => {
+                                setEditedName(value);
+                                if (editedNameError) setEditedNameError("");
+                              }}
+                              onBlur={() => setEditedName(editedName.trim())}
                               style={{
                                 backgroundColor: theme.bg,
-                                borderColor: theme.primary,
+                                borderColor: editedNameError
+                                  ? theme.danger
+                                  : theme.primary,
+                                borderWidth: editedNameError ? 2 : 1,
                                 color: theme.text,
                                 paddingVertical: 8,
                                 paddingHorizontal: 10,
@@ -588,6 +620,11 @@ export default function AddWaiterModal() {
                               className="rounded-xl border"
                               autoFocus={true}
                             />
+                            {editedNameError ? (
+                              <Text className="mt-1 text-xs font-semibold" style={{ color: theme.danger }}>
+                                {editedNameError}
+                              </Text>
+                            ) : null}
                           </View>
 
                           <View className="mt-1">

@@ -1,8 +1,5 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
-import {
-  useNavigation,
-  useRouter,
-} from "expo-router";
+import { useNavigation, useRouter } from "expo-router";
 import {
   ArrowLeft,
   BellRing,
@@ -21,8 +18,8 @@ import {
 } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AppState,
   Alert,
+  AppState,
   FlatList,
   Image,
   Keyboard,
@@ -34,10 +31,9 @@ import {
   ScrollView,
   Text,
   TextInput,
-  TouchableWithoutFeedback,
   View,
 } from "react-native";
-import Animated, { FadeIn } from "react-native-reanimated";
+import Animated, { FadeIn, SlideInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import FoodCard from "../../../components/home/FoodCard";
@@ -49,6 +45,7 @@ import { authApi } from "../../../services/api/auth";
 import type {
   CustomerBranch,
   CustomerDineInBill,
+  CustomerDineInTable,
   CustomerDineInWaiter,
   CustomerDineInWifiConnection,
 } from "../../../services/api/customer";
@@ -76,20 +73,32 @@ const formatPrice = (price: number) => {
   return Number.isInteger(price) ? price : price.toFixed(2);
 };
 
-function parseScannedTableNumber(value: string): number | null {
+interface ScannedTablePayload {
+  branchId?: string;
+  tableId?: string;
+  tableNumber?: number;
+}
+
+function parseScannedTablePayload(value: string): ScannedTablePayload | null {
   const source = value.trim();
   if (!source) return null;
 
   try {
-    const parsed = JSON.parse(source) as { tableNumber?: unknown };
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      typeof parsed.tableNumber === "number"
-    ) {
-      return Number.isInteger(parsed.tableNumber) && parsed.tableNumber > 0
-        ? parsed.tableNumber
-        : null;
+    const parsed = JSON.parse(source) as {
+      branchId?: unknown;
+      tableId?: unknown;
+      tableNumber?: unknown;
+    };
+    if (parsed && typeof parsed === "object") {
+      const branchId =
+        typeof parsed.branchId === "string" ? parsed.branchId.trim() : undefined;
+      const tableId =
+        typeof parsed.tableId === "string" ? parsed.tableId.trim() : undefined;
+      const tableNumber = Number(parsed.tableNumber);
+      if (tableId) return { branchId, tableId };
+      if (Number.isInteger(tableNumber) && tableNumber > 0) {
+        return { branchId, tableNumber };
+      }
     }
   } catch {
     // QR values may be plain text or URLs rather than JSON.
@@ -97,18 +106,25 @@ function parseScannedTableNumber(value: string): number | null {
 
   try {
     const url = new URL(source);
+    const branchId = url.searchParams.get("branchId")?.trim();
+    const tableId = url.searchParams.get("tableId")?.trim();
+    if (tableId) return { branchId: branchId || undefined, tableId };
     const tableNumber = Number(
       url.searchParams.get("tableNumber") || url.searchParams.get("table"),
     );
-    if (Number.isInteger(tableNumber) && tableNumber > 0) return tableNumber;
+    if (Number.isInteger(tableNumber) && tableNumber > 0) {
+      return { branchId: branchId || undefined, tableNumber };
+    }
   } catch {
     // Continue with the supported plain-text QR formats.
   }
 
-  const match = source.match(/(?:table(?:number)?)[^0-9]{0,8}(\d+)/i);
-  const tableNumber = Number(match?.[1] || (/^\d+$/.test(source) ? source : ""));
+  const match = source.match(/^\s*table(?:\s*number)?\s*#?\s*(\d+)\s*$/i);
+  const tableNumber = Number(
+    match?.[1] || (/^\d+$/.test(source) ? source : ""),
+  );
   return Number.isInteger(tableNumber) && tableNumber > 0
-    ? tableNumber
+    ? { tableNumber }
     : null;
 }
 
@@ -202,6 +218,18 @@ export default function HomeScreen() {
   const [isChangingDineInTable, setIsChangingDineInTable] = useState(false);
   const [showCameraScannerModal, setShowCameraScannerModal] = useState(false);
   const [isCheckingDineInSession, setIsCheckingDineInSession] = useState(false);
+  const [availableDineInTables, setAvailableDineInTables] = useState<
+    CustomerDineInTable[]
+  >([]);
+  const [tablesLoadedForBranchId, setTablesLoadedForBranchId] = useState<
+    string | null
+  >(null);
+  const [tablesLoading, setTablesLoading] = useState(false);
+  const [tablesError, setTablesError] = useState<string | null>(null);
+  const [checkingInTableNumber, setCheckingInTableNumber] = useState<
+    number | null
+  >(null);
+  const dineInTablesRequestId = useRef(0);
 
   const [activeServiceModal, setActiveServiceModal] = useState<
     "waiter" | "water" | "wifi" | "bill" | null
@@ -213,8 +241,9 @@ export default function HomeScreen() {
   const [serviceError, setServiceError] = useState<string | null>(null);
   const [serviceRequestSent, setServiceRequestSent] = useState(false);
   const [serviceRequests, setServiceRequests] = useState<unknown[]>([]);
-  const [dineInWaiter, setDineInWaiter] =
-    useState<CustomerDineInWaiter | null>(null);
+  const [dineInWaiter, setDineInWaiter] = useState<CustomerDineInWaiter | null>(
+    null,
+  );
   const [wifiConnections, setWifiConnections] = useState<
     CustomerDineInWifiConnection[]
   >([]);
@@ -224,8 +253,38 @@ export default function HomeScreen() {
 
   const activeCart = carts[orderMode] || [];
   const selectedBranchId = activeBranch?.id;
-  const isSelectedBranchOnline =
-    branchesLoaded && isBranchOnline(activeBranch);
+  const isSelectedBranchOnline = branchesLoaded && isBranchOnline(activeBranch);
+
+  const loadAvailableDineInTables = useCallback(async (branchId = selectedBranchId) => {
+    const requestId = ++dineInTablesRequestId.current;
+    if (!branchId) {
+      setAvailableDineInTables([]);
+      setTablesLoadedForBranchId(null);
+      setTablesError("Choose a restaurant branch to see its tables.");
+      setTablesLoading(false);
+      return;
+    }
+
+    setTablesLoading(true);
+    setTablesError(null);
+    setTablesLoadedForBranchId(null);
+    try {
+      const tables = await api.getAvailableDineInTables(branchId);
+      if (requestId !== dineInTablesRequestId.current) return;
+      setAvailableDineInTables(tables);
+      setTablesLoadedForBranchId(branchId);
+    } catch (error) {
+      if (requestId !== dineInTablesRequestId.current) return;
+      setAvailableDineInTables([]);
+      setTablesError(
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      if (requestId === dineInTablesRequestId.current) {
+        setTablesLoading(false);
+      }
+    }
+  }, [selectedBranchId]);
   const branchCategories = useMemo(
     () =>
       categories.filter(
@@ -343,9 +402,12 @@ export default function HomeScreen() {
 
     void checkSession();
     const interval = setInterval(() => void checkSession(), 10_000);
-    const appStateSubscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") void checkSession();
-    });
+    const appStateSubscription = AppState.addEventListener(
+      "change",
+      (state) => {
+        if (state === "active") void checkSession();
+      },
+    );
 
     return () => {
       isCurrent = false;
@@ -385,16 +447,6 @@ export default function HomeScreen() {
             placeholder.text,
         ) || [],
     [activeBranch?.storefrontDisplay?.searchPlaceholders],
-  );
-  const emptyState = useMemo(
-    () =>
-      activeBranch?.storefrontDisplay?.emptyStates?.find(
-        (state: { title: string; description: string; isActive: boolean }) =>
-          state.isActive &&
-          (state.title.trim().length > 0 ||
-            state.description.trim().length > 0),
-      ),
-    [activeBranch?.storefrontDisplay?.emptyStates],
   );
   const isOrderLocked =
     confirmedOrders.length > 0 || dineInCartState === "waiting";
@@ -437,12 +489,11 @@ export default function HomeScreen() {
       const session = await api.getDineInSession();
 
       if (session) {
-        const sessionBranch =
-          branches.find(
-            (candidate: { id: string; _id?: string }) =>
-              candidate.id === session.branchId ||
-              candidate._id === session.branchId,
-          );
+        const sessionBranch = branches.find(
+          (candidate: { id: string; _id?: string }) =>
+            candidate.id === session.branchId ||
+            candidate._id === session.branchId,
+        );
         if (!sessionBranch) {
           throw new Error(
             "The active table session belongs to a branch that is unavailable.",
@@ -465,6 +516,7 @@ export default function HomeScreen() {
       setDineInSession(null);
       setActiveTable(null);
       setTableNumber("");
+      void loadAvailableDineInTables(branch.id);
       setShowDineInCheckInModal(true);
     } catch (error) {
       Alert.alert(
@@ -510,6 +562,28 @@ export default function HomeScreen() {
       Alert.alert("Invalid Table Number", "Enter a valid table number.");
       return;
     }
+    if (tablesLoadedForBranchId === activeBranch.id) {
+      const table = availableDineInTables.find(
+        (availableTable) =>
+          availableTable.tableNumber === parsedTableNumber,
+      );
+      if (!table?.isAvailable) {
+        Alert.alert(
+          "Table Not Available",
+          availableDineInTables.length === 0
+            ? "There are no available tables at this restaurant right now."
+            : `Table ${parsedTableNumber} is not available at this restaurant. Choose one of the listed tables.`,
+        );
+        setTableNumber(String(parsedTableNumber));
+        if (showCameraScannerModal) {
+          setShowCameraScannerModal(false);
+          setShowDineInCheckInModal(true);
+          setScanned(false);
+        }
+        return;
+      }
+    }
+    setCheckingInTableNumber(parsedTableNumber);
     try {
       const session = isChangingDineInTable
         ? await api.changeDineInTable(activeBranch.id, parsedTableNumber)
@@ -539,6 +613,8 @@ export default function HomeScreen() {
         isChangingDineInTable ? "Unable to Change Table" : "Unable to Check In",
         error instanceof Error ? error.message : "Please try again.",
       );
+    } finally {
+      setCheckingInTableNumber(null);
     }
   };
 
@@ -546,17 +622,59 @@ export default function HomeScreen() {
     if (tableNumber.trim()) void checkInAtTable(tableNumber.trim());
   };
 
-  const handleQRScan = (scannedValue: string) => {
-    const scannedTableNumber = parseScannedTableNumber(scannedValue);
-    if (!scannedTableNumber) {
+  const handleQRScan = async (scannedValue: string) => {
+    const payload = parseScannedTablePayload(scannedValue);
+    if (!payload) {
       setScanned(false);
       Alert.alert(
         "Invalid Table QR",
-        "This QR code does not contain a valid table number.",
+        "This QR code does not contain a valid table ID or table number.",
       );
       return;
     }
-    void checkInAtTable(scannedTableNumber);
+
+    if (payload.branchId && payload.branchId !== activeBranch?.id) {
+      setScanned(false);
+      Alert.alert(
+        "Different Restaurant",
+        "This QR code belongs to a different restaurant branch. Select that branch and scan again.",
+      );
+      return;
+    }
+
+    if (!payload.tableId) {
+      if (payload.tableNumber) void checkInAtTable(payload.tableNumber);
+      return;
+    }
+
+    if (!activeBranch?.id) {
+      setScanned(false);
+      Alert.alert("Choose a Restaurant", "Select a branch before scanning a table QR code.");
+      return;
+    }
+
+    try {
+      const tables = await api.getAvailableDineInTables(activeBranch.id);
+      const table = tables.find((entry) => entry.id === payload.tableId);
+      if (!table || !table.isAvailable) {
+        setScanned(false);
+        Alert.alert(
+          "Table Not Available",
+          "This table is not currently available at the selected restaurant.",
+        );
+        return;
+      }
+
+      setAvailableDineInTables(tables);
+      setTablesLoadedForBranchId(activeBranch.id);
+      void checkInAtTable(table.tableNumber);
+    } catch (error) {
+      setScanned(false);
+      Alert.alert(
+        "Unable to Verify Table QR",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    }
   };
 
   const cancelCameraModal = () => {
@@ -608,6 +726,7 @@ export default function HomeScreen() {
   ) => {
     if (!activeTable || !dineInSession?._id) {
       setTableNumber("");
+      void loadAvailableDineInTables();
       setShowDineInCheckInModal(true);
       return;
     }
@@ -782,11 +901,6 @@ export default function HomeScreen() {
       if (!speechRecognitionModule.isRecognitionAvailable()) {
         throw new Error("Speech recognition is not available on this device.");
       }
-      if (!speechRecognitionModule.supportsOnDeviceRecognition()) {
-        throw new Error(
-          "On-device speech recognition is not available. Enable an offline speech recognition language in your device settings and try again.",
-        );
-      }
 
       const permission =
         await speechRecognitionModule.requestPermissionsAsync();
@@ -807,7 +921,6 @@ export default function HomeScreen() {
         lang: "en-IN",
         interimResults: false,
         continuous: false,
-        requiresOnDeviceRecognition: true,
         iosTaskHint: "search",
       });
     } catch (error) {
@@ -963,25 +1076,21 @@ export default function HomeScreen() {
     ) : null;
 
   const renderEmptyState = () => {
-    if (!searchQuery || !branchesLoaded || !emptyState) return null;
+    if (!searchQuery || !branchesLoaded) return null;
     return (
       <View className="items-center justify-center py-16 px-6">
-        {emptyState.title.trim().length > 0 && (
-          <Text
-            className="text-2xl font-black mb-2 text-center"
-            style={{ color: theme.text }}
-          >
-            {emptyState.title}
-          </Text>
-        )}
-        {emptyState.description.trim().length > 0 && (
-          <Text
-            className="text-sm font-semibold text-center leading-5"
-            style={{ color: theme.muted }}
-          >
-            {emptyState.description.replace("{query}", searchQuery)}
-          </Text>
-        )}
+        <Text
+          className="text-2xl font-black mb-2 text-center"
+          style={{ color: theme.text }}
+        >
+          No Items found
+        </Text>
+        <Text
+          className="text-sm font-semibold text-center leading-5"
+          style={{ color: theme.muted }}
+        >
+          Try changing your search or location.
+        </Text>
       </View>
     );
   };
@@ -1038,7 +1147,10 @@ export default function HomeScreen() {
             {isDeliveryAddress ? item.type : item.name}
           </Text>
           {!isDeliveryAddress && !branchIsOnline ? (
-            <Text className="mt-1 text-xs font-bold" style={{ color: theme.danger }}>
+            <Text
+              className="mt-1 text-xs font-bold"
+              style={{ color: theme.danger }}
+            >
               BRANCH IS OFFLINE
             </Text>
           ) : null}
@@ -1201,7 +1313,10 @@ export default function HomeScreen() {
               isOrderLocked={isOrderLocked}
               onOpenScanner={() => {
                 setTableNumber("");
-                setIsChangingDineInTable(Boolean(activeTable && dineInSession?._id));
+                setIsChangingDineInTable(
+                  Boolean(activeTable && dineInSession?._id),
+                );
+                void loadAvailableDineInTables();
                 setShowDineInCheckInModal(true);
               }}
               onLeaveTable={() => void handleLeaveTable()}
@@ -1272,9 +1387,9 @@ export default function HomeScreen() {
             >
               {orderMode === "Delivery" && addressModalSelection === "address"
                 ? "Choose Delivery Address"
-                    : isCheckingDineInSession
-                      ? "Checking Dine-in Session..."
-                      : "Choose Branch"}
+                : isCheckingDineInSession
+                  ? "Checking Dine-in Session..."
+                  : "Choose Branch"}
             </Text>
             <Pressable
               onPress={handleCancelAddressModal}
@@ -1346,146 +1461,256 @@ export default function HomeScreen() {
 
       <Modal
         visible={showDineInCheckInModal}
-        transparent
-        animationType="slide"
+        transparent={Platform.OS !== "android"}
+        animationType={Platform.OS === "android" ? "slide" : "fade"}
+        statusBarTranslucent
+        navigationBarTranslucent
         onRequestClose={cancelCheckInModal}
       >
-        <TouchableWithoutFeedback onPress={cancelCheckInModal}>
-          <View className="flex-1 justify-end bg-black/60">
-            <KeyboardAvoidingView
-              behavior={Platform.OS === "ios" ? "padding" : undefined}
+        <View
+          className="flex-1"
+          style={{
+            backgroundColor:
+              Platform.OS === "android" ? theme.bg : "transparent",
+          }}
+        >
+          {Platform.OS !== "android" && (
+            <Pressable
+              className="absolute inset-0 bg-black/60"
+              onPress={cancelCheckInModal}
+            />
+          )}
+          <KeyboardAvoidingView
+            className="flex-1"
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
+            <Animated.View
+              entering={SlideInDown.duration(300)}
+              className="absolute inset-0 p-6"
+              style={{
+                backgroundColor: theme.bg,
+                paddingTop: insets.top + 24,
+                paddingBottom: insets.bottom + 12,
+              }}
             >
-              <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-                <View
-                  className="rounded-t-[32px] p-6 pb-10"
-                  style={{ backgroundColor: theme.bg }}
-                >
-                  <View className="flex-row items-center justify-between mb-6">
-                    <Text
-                      className="text-2xl font-black"
-                      style={{ color: theme.text }}
-                    >
-                      Table Check-In
-                    </Text>
-                    <Pressable
-                      onPress={cancelCheckInModal}
-                      className="p-2 bg-gray-500/10 rounded-full"
-                    >
-                      <X size={20} color={theme.text} />
-                    </Pressable>
+              <ScrollView
+                className="flex-1"
+                contentContainerStyle={{ flexGrow: 1, paddingBottom: 16 }}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                <View className="flex-row items-center justify-between mb-6">
+                  <Text
+                    className="text-2xl font-black"
+                    style={{ color: theme.text }}
+                  >
+                    Table Check-In
+                  </Text>
+                  <Pressable
+                    onPress={cancelCheckInModal}
+                    className="p-2 bg-gray-500/10 rounded-full"
+                  >
+                    <X size={20} color={theme.text} />
+                  </Pressable>
+                </View>
+
+                <View className="items-center px-4">
+                  <View
+                    className="w-24 h-24 rounded-[28px] items-center justify-center mb-4"
+                    style={{ backgroundColor: "rgba(234, 88, 12, 0.15)" }}
+                  >
+                    <QrCode size={48} color="#EA580C" strokeWidth={1.5} />
                   </View>
 
-                  <View className="items-center px-4">
-                    <View
-                      className="w-24 h-24 rounded-[28px] items-center justify-center mb-4"
-                      style={{ backgroundColor: "rgba(234, 88, 12, 0.15)" }}
-                    >
-                      <QrCode size={48} color="#EA580C" strokeWidth={1.5} />
-                    </View>
+                  <Text
+                    className="text-xl font-black text-center mb-1"
+                    style={{ color: theme.text }}
+                  >
+                    Scan Table QR
+                  </Text>
 
-                    <Text
-                      className="text-xl font-black text-center mb-1"
-                      style={{ color: theme.text }}
-                    >
-                      Scan Table QR
+                  <Text
+                    className="text-xs font-semibold text-center mb-6 px-4"
+                    style={{ color: theme.muted }}
+                  >
+                    Scan the QR sticker on your table or type your table number
+                    manually.
+                  </Text>
+
+                  <Pressable
+                    onPress={async () => {
+                      if (!permission?.granted) {
+                        await requestPermission();
+                      }
+                      setShowDineInCheckInModal(false);
+                      setTimeout(() => {
+                        setScanned(false);
+                        setShowCameraScannerModal(true);
+                      }, 400);
+                    }}
+                    className="w-full h-13 py-3.5 rounded-2xl items-center justify-center mb-4 shadow-sm flex-row"
+                    style={{ backgroundColor: theme.primary }}
+                  >
+                    <ScanLine
+                      size={20}
+                      color="#fff"
+                      style={{ marginRight: 8 }}
+                    />
+                    <Text className="text-white font-black text-base tracking-wide">
+                      Open Scanner
                     </Text>
+                  </Pressable>
 
+                  <View className="flex-row items-center justify-center w-full mb-4">
+                    <View
+                      className="flex-1 h-[1px]"
+                      style={{ backgroundColor: theme.border }}
+                    />
                     <Text
-                      className="text-xs font-semibold text-center mb-6 px-4"
+                      className="px-4 font-bold text-xs"
                       style={{ color: theme.muted }}
                     >
-                      Scan the QR sticker on your table or type your table
-                      number manually.
+                      OR
                     </Text>
+                    <View
+                      className="flex-1 h-[1px]"
+                      style={{ backgroundColor: theme.border }}
+                    />
+                  </View>
 
-                    <Pressable
-                      onPress={async () => {
-                        if (!permission?.granted) {
-                          await requestPermission();
-                        }
-                        setShowDineInCheckInModal(false);
-                        setTimeout(() => {
-                          setScanned(false);
-                          setShowCameraScannerModal(true);
-                        }, 400);
-                      }}
-                      className="w-full h-13 py-3.5 rounded-2xl items-center justify-center mb-4 shadow-sm flex-row"
-                      style={{ backgroundColor: theme.primary }}
+                  <View
+                    className="w-full h-14 rounded-2xl items-center flex-row border px-4"
+                    style={{
+                      backgroundColor: theme.card,
+                      borderColor:
+                        tableNumber.length > 0 ? theme.primary : theme.border,
+                    }}
+                  >
+                    <KeyboardIcon
+                      size={22}
+                      color={
+                        tableNumber.length > 0 ? theme.primary : theme.muted
+                      }
+                      style={{ marginRight: 16 }}
+                    />
+
+                    <TextInput
+                      placeholder="Enter Table Number (e.g. 12)"
+                      placeholderTextColor={theme.muted}
+                      value={tableNumber}
+                      onChangeText={setTableNumber}
+                      keyboardType="number-pad"
+                      className="flex-1 font-black text-base"
+                      style={{ color: theme.text, height: "100%" }}
+                      maxLength={4}
+                      returnKeyType="done"
+                      onSubmitEditing={handleManualTableSubmit}
+                    />
+
+                    {tableNumber.trim().length > 0 && (
+                      <Pressable
+                        onPress={handleManualTableSubmit}
+                        className="px-4 py-2 rounded-xl items-center justify-center"
+                        style={{ backgroundColor: theme.primary }}
+                      >
+                        <Text className="text-white font-black text-xs uppercase tracking-wider">
+                          Go
+                        </Text>
+                      </Pressable>
+                    )}
+                  </View>
+
+                  <View className="w-full mt-6">
+                    <Text
+                      className="text-base font-black mb-3"
+                      style={{ color: theme.text }}
                     >
-                      <ScanLine
-                        size={20}
-                        color="#fff"
-                        style={{ marginRight: 8 }}
-                      />
-                      <Text className="text-white font-black text-base tracking-wide">
-                        Open Scanner
-                      </Text>
-                    </Pressable>
-
-                    <View className="flex-row items-center justify-center w-full mb-4">
-                      <View
-                        className="flex-1 h-[1px]"
-                        style={{ backgroundColor: theme.border }}
-                      />
+                      Select a table
+                    </Text>
+                    {tablesLoading ? (
                       <Text
-                        className="px-4 font-bold text-xs"
+                        className="text-sm font-semibold"
                         style={{ color: theme.muted }}
                       >
-                        OR
+                        Loading tables for {activeBranch?.name || "this branch"}...
                       </Text>
-                      <View
-                        className="flex-1 h-[1px]"
-                        style={{ backgroundColor: theme.border }}
-                      />
-                    </View>
-
-                    <View
-                      className="w-full h-14 rounded-2xl items-center flex-row border px-4"
-                      style={{
-                        backgroundColor: theme.card,
-                        borderColor:
-                          tableNumber.length > 0 ? theme.primary : theme.border,
-                      }}
-                    >
-                      <KeyboardIcon
-                        size={22}
-                        color={
-                          tableNumber.length > 0 ? theme.primary : theme.muted
-                        }
-                        style={{ marginRight: 16 }}
-                      />
-
-                      <TextInput
-                        placeholder="Enter Table Number (e.g. 12)"
-                        placeholderTextColor={theme.muted}
-                        value={tableNumber}
-                        onChangeText={setTableNumber}
-                        keyboardType="number-pad"
-                        className="flex-1 font-black text-base"
-                        style={{ color: theme.text, height: "100%" }}
-                        maxLength={4}
-                        returnKeyType="done"
-                        onSubmitEditing={handleManualTableSubmit}
-                      />
-
-                      {tableNumber.trim().length > 0 && (
+                    ) : tablesError ? (
+                      <View>
+                        <Text
+                          className="text-sm font-semibold mb-3"
+                          style={{ color: theme.danger }}
+                        >
+                          {tablesError}
+                        </Text>
                         <Pressable
-                          onPress={handleManualTableSubmit}
-                          className="px-4 py-2 rounded-xl items-center justify-center"
+                          onPress={() => void loadAvailableDineInTables()}
+                          className="self-start px-4 py-2 rounded-xl"
                           style={{ backgroundColor: theme.primary }}
                         >
-                          <Text className="text-white font-black text-xs uppercase tracking-wider">
-                            Go
-                          </Text>
+                          <Text className="text-white font-bold">Retry</Text>
                         </Pressable>
-                      )}
-                    </View>
+                      </View>
+                    ) : availableDineInTables.length === 0 ? (
+                      <Text
+                        className="text-sm font-semibold"
+                        style={{ color: theme.muted }}
+                      >
+                        No tables are currently available at this restaurant.
+                      </Text>
+                    ) : (
+                      <View className="flex-row flex-wrap justify-between">
+                        {availableDineInTables.map((table) => (
+                          <Pressable
+                            key={table.id}
+                            disabled={
+                              !table.isAvailable ||
+                              checkingInTableNumber !== null
+                            }
+                            onPress={() => {
+                              setTableNumber(String(table.tableNumber));
+                              void checkInAtTable(table.tableNumber);
+                            }}
+                            className="w-[48%] p-4 mb-3 rounded-2xl border"
+                            style={{
+                              backgroundColor: theme.card,
+                              borderColor: table.isAvailable
+                                ? theme.border
+                                : theme.muted,
+                              opacity:
+                                checkingInTableNumber === table.tableNumber
+                                  ? 0.65
+                                  : table.isAvailable
+                                    ? 1
+                                    : 0.55,
+                            }}
+                          >
+                            <Text
+                              className="text-lg font-black"
+                              style={{ color: theme.text }}
+                            >
+                              {checkingInTableNumber === table.tableNumber
+                                ? "Checking in..."
+                                : `Table ${table.tableNumber}`}
+                            </Text>
+                            <Text
+                              className="text-xs font-semibold mt-1"
+                              style={{ color: theme.muted }}
+                            >
+                              Seats {table.capacity} ·{" "}
+                              {table.isAvailable
+                                ? "Available"
+                                : table.operationalStatus || table.status}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                    )}
                   </View>
                 </View>
-              </TouchableWithoutFeedback>
-            </KeyboardAvoidingView>
-          </View>
-        </TouchableWithoutFeedback>
+              </ScrollView>
+            </Animated.View>
+          </KeyboardAvoidingView>
+        </View>
       </Modal>
 
       <Modal
@@ -1505,6 +1730,7 @@ export default function HomeScreen() {
                 bottom: 0,
               }}
               facing="back"
+              barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
               onBarcodeScanned={
                 scanned
                   ? undefined
@@ -1570,9 +1796,12 @@ export default function HomeScreen() {
         visible={activeServiceModal !== null}
         transparent
         animationType="fade"
+        statusBarTranslucent
+        navigationBarTranslucent
       >
         <Pressable
-          className="flex-1 justify-center items-center bg-black/60 px-6"
+          className="flex-1 justify-center items-center px-6"
+          style={{ backgroundColor: theme.bg }}
           onPress={() => setActiveServiceModal(null)}
         >
           <Pressable
@@ -1822,9 +2051,7 @@ export default function HomeScreen() {
                         className="text-center italic"
                         style={{ color: theme.muted }}
                       >
-                        {serviceLoading
-                          ? ""
-                          : "No items are on this bill yet."}
+                        {serviceLoading ? "" : "No items are on this bill yet."}
                       </Text>
                     }
                   />
@@ -1988,7 +2215,10 @@ export default function HomeScreen() {
                   onPress={() => setActiveServiceModal(null)}
                   disabled={serviceLoading}
                   className="w-full h-14 mt-4 rounded-2xl items-center justify-center shadow-sm"
-                  style={{ backgroundColor: theme.primary, opacity: serviceLoading ? 0.6 : 1 }}
+                  style={{
+                    backgroundColor: theme.primary,
+                    opacity: serviceLoading ? 0.6 : 1,
+                  }}
                 >
                   <Text className="text-white font-black text-lg tracking-wide">
                     Close

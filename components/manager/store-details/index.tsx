@@ -20,6 +20,15 @@ import { managerProfileApi } from "../../../services/api/manager-profile";
 import { Card } from "../../ui/Card";
 import { mapAdminStoreDetails } from "../adminProfileSections";
 
+const adminStoreDetailKeys = [
+  "restaurantNames",
+  "addresses",
+  "taxDetails",
+  "restaurantCharges",
+  "wifiConnections",
+  "deliveryOptions",
+] as const;
+
 export default function StoreDetailsIndexComponent() {
   const router = useRouter();
   const segments = useSegments();
@@ -36,9 +45,18 @@ export default function StoreDetailsIndexComponent() {
     async (isRefresh = false) => {
       if (isRefresh) setRefreshing(true);
       try {
-        const data = await (isAdmin
-        ? adminProfileApi.getStoreDetails()
-        : managerProfileApi.getStoreDetails());
+        let data: Record<string, unknown>;
+        if (isAdmin) {
+          const sections = await Promise.all(
+            adminStoreDetailKeys.map(async (key) => [
+              key,
+              await adminProfileApi.getStoreDetailSection(key, isRefresh),
+            ] as const),
+          );
+          data = Object.fromEntries(sections);
+        } else {
+          data = await managerProfileApi.getStoreDetails();
+        }
         setStoreDetails(mapAdminStoreDetails(data));
         if (!isAdmin) hasLoadedManagerData.current = true;
       } catch (error: unknown) {
@@ -55,7 +73,11 @@ export default function StoreDetailsIndexComponent() {
 
   useFocusEffect(
     useCallback(() => {
-      if (isAdmin || !hasLoadedManagerData.current) void loadStoreDetails();
+      if (isAdmin) {
+        void loadStoreDetails(true);
+      } else if (!hasLoadedManagerData.current) {
+        void loadStoreDetails();
+      }
     }, [isAdmin, loadStoreDetails]),
   );
 
@@ -83,14 +105,12 @@ export default function StoreDetailsIndexComponent() {
       <ScrollView
         contentContainerStyle={{ padding: 20, paddingBottom: 100 }}
         refreshControl={
-          !isAdmin ? (
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => void loadStoreDetails(true)}
-              tintColor={theme.primary}
-              colors={[theme.primary]}
-            />
-          ) : undefined
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void loadStoreDetails(true)}
+            tintColor={theme.primary}
+            colors={[theme.primary]}
+          />
         }
       >
         {storeDetails.map((section) => {

@@ -126,6 +126,7 @@ export default function AddAdminModal() {
   const [editedLastName, setEditedLastName] = useState("");
   const [editedPhone, setEditedPhone] = useState("");
   const [editedIsActive, setEditedIsActive] = useState(true);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [adminsList, setAdminsList] = useState<AdminPerson[]>([]);
   const [adminNumbersById, setAdminNumbersById] = useState<Map<string, number>>(
     () => new Map(),
@@ -190,6 +191,7 @@ export default function AddAdminModal() {
       first.id.localeCompare(second.id)
     );
   });
+  const adminSearchTerm = adminSearch.trim();
   const filteredAdmins = sortedAdmins.filter(
     (admin) =>
       (adminStatusFilter === "all" ||
@@ -198,31 +200,40 @@ export default function AddAdminModal() {
           : admin.isActive === false)) &&
       JSON.stringify(admin)
         .toLowerCase()
-        .includes(adminSearch.trim().toLowerCase()),
+        .includes(adminSearchTerm.toLowerCase()),
   );
+  const noAdminsMessage = adminSearchTerm
+    ? `No admins match “${adminSearchTerm}”${
+        adminStatusFilter === "all"
+          ? "."
+          : ` with the ${adminStatusFilter} filter.`
+      }`
+    : adminStatusFilter === "all"
+      ? "No admins found."
+      : `No ${adminStatusFilter} admins found.`;
 
   const handleSaveAdmin = async () => {
+    const errors: Record<string, string> = {};
     if (!adminFirstName.trim()) {
-      Alert.alert("Error", "First name is mandatory.");
-      return;
+      errors.adminFirstName = "First Name is required.";
     }
 
     if (!phoneNumber.trim()) {
-      Alert.alert("Error", "Phone Number is mandatory!");
-      return;
+      errors.phoneNumber = "Phone Number is required.";
     }
 
     const cleanedNumber = phoneNumber.replace(/\D/g, "");
-    if (
+    if (phoneNumber.trim() && (
       cleanedNumber.length < selectedCountry.minLen ||
       cleanedNumber.length > selectedCountry.maxLen
-    ) {
-      Alert.alert(
-        "Invalid Number",
-        `Phone number for ${selectedCountry.name} must be exactly ${selectedCountry.minLen} digits.`,
-      );
+    )) {
+      errors.phoneNumber = `Enter a valid ${selectedCountry.name} phone number (${selectedCountry.minLen} digits).`;
+    }
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
       return;
     }
+    setFieldErrors({});
 
     setSaving(true);
     try {
@@ -253,6 +264,7 @@ export default function AddAdminModal() {
   };
 
   const handleStartEdit = (adm: AdminPerson) => {
+    setFieldErrors({});
     setEditingId(adm.id);
     const [fallbackFirstName = "", ...fallbackLastName] = String(
       adm.name || "",
@@ -264,15 +276,19 @@ export default function AddAdminModal() {
   };
 
   const handleSaveEdit = async (admId: string) => {
+    const errors: Record<string, string> = {};
     if (!editedFirstName.trim()) {
-      Alert.alert("Error", "First name cannot be empty.");
-      return;
+      errors.editedFirstName = "First Name is required.";
     }
 
     if (!editedPhone.trim()) {
-      Alert.alert("Error", "Phone number cannot be empty.");
+      errors.editedPhone = "Phone Number is required.";
+    }
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
       return;
     }
+    setFieldErrors({});
 
     const adm = adminsList.find((admin) => admin.id === admId);
     const isSelf = Boolean(
@@ -290,7 +306,7 @@ export default function AddAdminModal() {
         firstName,
         lastName,
         name: [firstName, lastName].filter(Boolean).join(" "),
-        isActive: editedIsActive,
+        ...(!isSelf ? { isActive: editedIsActive } : {}),
         ...(!isSelf ? { phone: editedPhone.trim() } : {}),
       });
       await loadAdmins();
@@ -496,16 +512,31 @@ export default function AddAdminModal() {
                 placeholder="e.g. Siva"
                 placeholderTextColor={theme.muted + "44"}
                 value={adminFirstName}
-                onChangeText={setAdminFirstName}
+                onChangeText={(value) => {
+                  setAdminFirstName(value);
+                  if (fieldErrors.adminFirstName) {
+                    setFieldErrors((current) => ({ ...current, adminFirstName: "" }));
+                  }
+                }}
+                onBlur={() => setAdminFirstName(adminFirstName.trim())}
                 autoCapitalize="words"
                 className="px-4 rounded-xl mb-4 font-bold"
                 style={{
+                  borderColor: fieldErrors.adminFirstName
+                    ? theme.danger
+                    : theme.border,
+                  borderWidth: fieldErrors.adminFirstName ? 2 : 1,
                   backgroundColor: theme.bg,
                   color: theme.text,
                   fontSize: 16,
                   height: 52,
                 }}
               />
+              {fieldErrors.adminFirstName ? (
+                <Text className="mb-3 text-xs font-semibold" style={{ color: theme.danger }}>
+                  {fieldErrors.adminFirstName}
+                </Text>
+              ) : null}
               <Text
                 className="text-xs font-bold mb-1 uppercase"
                 style={{ color: theme.muted }}
@@ -517,6 +548,7 @@ export default function AddAdminModal() {
                 placeholderTextColor={theme.muted + "44"}
                 value={adminLastName}
                 onChangeText={setAdminLastName}
+                onBlur={() => setAdminLastName(adminLastName.trim())}
                 autoCapitalize="words"
                 className="px-4 rounded-xl mb-4 font-bold"
                 style={{
@@ -533,7 +565,7 @@ export default function AddAdminModal() {
               >
                 Phone Number *
               </Text>
-              <View className="flex-row gap-2 mb-6">
+              <View className="flex-row gap-2">
                 <Pressable
                   onPress={() => setIsModalVisible(true)}
                   className="flex-row items-center px-3 rounded-xl border justify-between"
@@ -557,11 +589,21 @@ export default function AddAdminModal() {
                   placeholder="9876543210"
                   placeholderTextColor={theme.muted + "44"}
                   value={phoneNumber}
-                  onChangeText={setPhoneNumber}
+                  onChangeText={(value) => {
+                    setPhoneNumber(value);
+                    if (fieldErrors.phoneNumber) {
+                      setFieldErrors((current) => ({ ...current, phoneNumber: "" }));
+                    }
+                  }}
+                  onBlur={() => setPhoneNumber(phoneNumber.trim())}
                   keyboardType="phone-pad"
                   maxLength={selectedCountry.maxLen}
                   className="flex-1 px-4 rounded-xl font-bold"
                   style={{
+                    borderColor: fieldErrors.phoneNumber
+                      ? theme.danger
+                      : theme.border,
+                    borderWidth: fieldErrors.phoneNumber ? 2 : 1,
                     backgroundColor: theme.bg,
                     color: theme.text,
                     fontSize: 16,
@@ -569,6 +611,13 @@ export default function AddAdminModal() {
                   }}
                 />
               </View>
+              {fieldErrors.phoneNumber ? (
+                <Text className="mb-6 text-xs font-semibold" style={{ color: theme.danger }}>
+                  {fieldErrors.phoneNumber}
+                </Text>
+              ) : (
+                <View className="mb-6" />
+              )}
 
               <Text
                 className="text-xs font-bold mb-2 uppercase"
@@ -649,7 +698,7 @@ export default function AddAdminModal() {
                   className="text-base text-center py-8"
                   style={{ color: theme.muted }}
                 >
-                  No admins match “{adminSearch.trim()}”.
+                  {noAdminsMessage}
                 </Text>
               ) : (
                 filteredAdmins.map((adm) => {
@@ -763,11 +812,20 @@ export default function AddAdminModal() {
                             </Text>
                             <TextInput
                               value={editedFirstName}
-                              onChangeText={setEditedFirstName}
+                              onChangeText={(value) => {
+                                setEditedFirstName(value);
+                                if (fieldErrors.editedFirstName) {
+                                  setFieldErrors((current) => ({ ...current, editedFirstName: "" }));
+                                }
+                              }}
+                              onBlur={() => setEditedFirstName(editedFirstName.trim())}
                               autoCapitalize="words"
                               style={{
                                 backgroundColor: theme.bg,
-                                borderColor: theme.primary,
+                                borderColor: fieldErrors.editedFirstName
+                                  ? theme.danger
+                                  : theme.primary,
+                                borderWidth: fieldErrors.editedFirstName ? 2 : 1,
                                 color: theme.text,
                                 paddingVertical: 8,
                                 paddingHorizontal: 10,
@@ -777,6 +835,11 @@ export default function AddAdminModal() {
                               className="rounded-xl border"
                               autoFocus={true}
                             />
+                            {fieldErrors.editedFirstName ? (
+                              <Text className="mt-1 text-xs font-semibold" style={{ color: theme.danger }}>
+                                {fieldErrors.editedFirstName}
+                              </Text>
+                            ) : null}
                           </View>
                           <View>
                             <Text
@@ -788,6 +851,7 @@ export default function AddAdminModal() {
                             <TextInput
                               value={editedLastName}
                               onChangeText={setEditedLastName}
+                              onBlur={() => setEditedLastName(editedLastName.trim())}
                               autoCapitalize="words"
                               style={{
                                 backgroundColor: theme.bg,
@@ -835,11 +899,20 @@ export default function AddAdminModal() {
                             ) : (
                               <TextInput
                                 value={editedPhone}
-                                onChangeText={setEditedPhone}
+                                onChangeText={(value) => {
+                                  setEditedPhone(value);
+                                  if (fieldErrors.editedPhone) {
+                                    setFieldErrors((current) => ({ ...current, editedPhone: "" }));
+                                  }
+                                }}
+                                onBlur={() => setEditedPhone(editedPhone.trim())}
                                 keyboardType="phone-pad"
                                 style={{
                                   backgroundColor: theme.bg,
-                                  borderColor: theme.primary,
+                                  borderColor: fieldErrors.editedPhone
+                                    ? theme.danger
+                                    : theme.primary,
+                                  borderWidth: fieldErrors.editedPhone ? 2 : 1,
                                   color: theme.text,
                                   paddingVertical: 8,
                                   paddingHorizontal: 10,
@@ -849,54 +922,61 @@ export default function AddAdminModal() {
                                 className="rounded-xl border"
                               />
                             )}
+                            {fieldErrors.editedPhone ? (
+                              <Text className="mt-1 text-xs font-semibold" style={{ color: theme.danger }}>
+                                {fieldErrors.editedPhone}
+                              </Text>
+                            ) : null}
                           </View>
-                          <View>
-                            <Text
-                              className="text-xs font-bold mb-2"
-                              style={{ color: theme.muted }}
-                            >
-                              Admin Status
-                            </Text>
-                            <View className="flex-row gap-3">
-                              {[true, false].map((active) => (
-                                <Pressable
-                                  key={String(active)}
-                                  onPress={() => setEditedIsActive(active)}
-                                  accessibilityRole="button"
-                                  accessibilityState={{
-                                    selected: editedIsActive === active,
-                                  }}
-                                  className="flex-1 items-center rounded-xl border py-3"
-                                  style={{
-                                    borderColor:
-                                      editedIsActive === active
-                                        ? active
-                                          ? theme.primary
-                                          : theme.danger
-                                        : theme.border,
-                                    backgroundColor:
-                                      editedIsActive === active
-                                        ? active
-                                          ? theme.primary
-                                          : theme.danger
-                                        : theme.bg,
-                                  }}
-                                >
-                                  <Text
-                                    className="font-bold"
+                          {!isSelf && (
+                            <View>
+                              <Text
+                                className="text-xs font-bold mb-2"
+                                style={{ color: theme.muted }}
+                              >
+                                Admin Status
+                              </Text>
+                              <View className="flex-row gap-3">
+                                {[true, false].map((active) => (
+                                  <Pressable
+                                    key={String(active)}
+                                    onPress={() => setEditedIsActive(active)}
+                                    accessibilityRole="button"
+                                    accessibilityState={{
+                                      selected: editedIsActive === active,
+                                    }}
+                                    className="flex-1 items-center rounded-xl border py-3"
                                     style={{
-                                      color:
+                                      borderColor:
                                         editedIsActive === active
-                                          ? "#fff"
-                                          : theme.muted,
+                                          ? active
+                                            ? theme.primary
+                                            : theme.danger
+                                          : theme.border,
+                                      backgroundColor:
+                                        editedIsActive === active
+                                          ? active
+                                            ? theme.primary
+                                            : theme.danger
+                                          : theme.bg,
                                     }}
                                   >
-                                    {active ? "Active" : "Inactive"}
-                                  </Text>
-                                </Pressable>
-                              ))}
+                                    <Text
+                                      className="font-bold"
+                                      style={{
+                                        color:
+                                          editedIsActive === active
+                                            ? "#fff"
+                                            : theme.muted,
+                                      }}
+                                    >
+                                      {active ? "Active" : "Inactive"}
+                                    </Text>
+                                  </Pressable>
+                                ))}
+                              </View>
                             </View>
-                          </View>
+                          )}
                         </View>
                       ) : (
                         <View className="gap-1 mt-0.5">

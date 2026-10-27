@@ -27,6 +27,7 @@ import {
   getLocalAdminAvatarUri,
   setLocalAdminAvatarUri,
 } from "../../services/api/admin-profile";
+import { profileApi } from "../../services/api/profile";
 
 interface PersonalInfoModalProps {
   role?: "admin" | "manager";
@@ -56,6 +57,7 @@ export default function PersonalInfoModal({
   const [managerAvatarUri, setManagerAvatarUri] = useState<string | null>(null);
   const [loading, setLoading] = useState(isAdmin);
   const [saving, setSaving] = useState(false);
+  const [nameValidationAttempted, setNameValidationAttempted] = useState(false);
   const [managerFirstNameEdit, setManagerFirstNameEdit] = useState<
     string | null
   >(null);
@@ -66,8 +68,11 @@ export default function PersonalInfoModal({
     managerFirstNameEdit ?? currentManager?.firstName ?? "";
   const managerLastName = managerLastNameEdit ?? currentManager?.lastName ?? "";
   const managerAvatar =
+    currentManager?.avatarUrl ||
     managerAvatarUri ||
     (currentManager ? getLocalManagerAvatarUri(currentManager.id) : null);
+  const adminAvatar =
+    currentManager?.avatarUrl || adminAvatarUri || adminProfile?.avatarUrl || "";
 
   const displayPhone = isAdmin
     ? adminProfile?.phone || ""
@@ -115,14 +120,14 @@ export default function PersonalInfoModal({
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ["images"],
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.85,
       });
 
       if (!result.canceled && result.assets[0]) {
-        const uri = result.assets[0].uri;
+        const asset = result.assets[0];
         if (isAdmin && !adminProfile?.id) {
           Alert.alert(
             "Profile unavailable",
@@ -130,17 +135,46 @@ export default function PersonalInfoModal({
           );
           return;
         }
-        if (isAdmin && adminProfile) {
-          setLocalAdminAvatarUri(adminProfile.id, uri);
-          setAdminAvatarUri(uri);
-        } else if (!isAdmin && currentManager) {
-          setLocalManagerAvatarUri(currentManager.id, uri);
-          setManagerAvatarUri(uri);
-        } else {
+        if (!isAdmin && !currentManager) {
           Alert.alert(
             "Profile unavailable",
             "Load your manager profile before choosing a picture.",
           );
+          return;
+        }
+
+        const mimeType = asset.mimeType || "image/jpeg";
+        const extension = mimeType.split("/")[1] || "jpg";
+        const fileName =
+          asset.fileName || `avatar-${Date.now()}.${extension}`;
+
+        setSaving(true);
+        try {
+          const avatarUrl = await profileApi.uploadMyAvatar(
+            asset.uri,
+            fileName,
+            mimeType,
+          );
+          if (isAdmin && adminProfile) {
+            setLocalAdminAvatarUri(adminProfile.id, avatarUrl);
+            setAdminAvatarUri(avatarUrl);
+            setAdminProfile((profile) =>
+              profile ? { ...profile, avatarUrl } : profile,
+            );
+            await refreshCurrentManager();
+          } else if (currentManager) {
+            setLocalManagerAvatarUri(currentManager.id, avatarUrl);
+            setManagerAvatarUri(avatarUrl);
+            await refreshCurrentManager();
+          }
+          Alert.alert("Success", "Profile picture updated successfully.");
+        } catch (error) {
+          Alert.alert(
+            "Unable to update profile picture",
+            error instanceof Error ? error.message : "Please try again.",
+          );
+        } finally {
+          setSaving(false);
         }
       }
     } catch (error) {
@@ -152,17 +186,22 @@ export default function PersonalInfoModal({
   };
 
   const handleSave = async () => {
-    if (isAdmin) {
-      if (!adminFirstName.trim()) {
-        Alert.alert("Error", "First name cannot be empty.");
-        return;
-      }
+    const firstName = (isAdmin ? adminFirstName : managerFirstName).trim();
+    const lastName = (isAdmin ? adminLastName : managerLastName).trim();
+    setNameValidationAttempted(true);
 
+    if (!firstName) {
+      return;
+    }
+
+    if (isAdmin) {
+      setAdminFirstName(firstName);
+      setAdminLastName(lastName);
       setSaving(true);
       try {
         const updatedProfile = await adminProfileApi.updatePersonalInfo(
-          adminFirstName.trim(),
-          adminLastName.trim(),
+          firstName,
+          lastName,
         );
         setAdminProfile(updatedProfile);
         setAdminFirstName(updatedProfile.firstName || "");
@@ -179,16 +218,21 @@ export default function PersonalInfoModal({
       return;
     }
 
-    if (!managerFirstName.trim() || !currentManager) {
-      Alert.alert("Error", "First name cannot be empty.");
+    if (!currentManager) {
+      Alert.alert(
+        "Profile unavailable",
+        "Load your manager profile before saving changes.",
+      );
       return;
     }
 
+    setManagerFirstNameEdit(firstName);
+    setManagerLastNameEdit(lastName);
     setSaving(true);
     try {
       const updatedManager = await managerProfileApi.updatePersonalInfo(
-        managerFirstName.trim(),
-        managerLastName.trim(),
+        firstName,
+        lastName,
       );
       setManagerFirstNameEdit(updatedManager.firstName || "");
       setManagerLastNameEdit(updatedManager.lastName || "");
@@ -212,6 +256,12 @@ export default function PersonalInfoModal({
     fontSize: 17,
     fontWeight: "600" as const,
   };
+  const getNameInputStyle = (value: string) => [
+    inputStyle,
+    nameValidationAttempted && !value.trim()
+      ? { borderColor: theme.danger, borderWidth: 2 }
+      : undefined,
+  ];
 
   return (
     <SafeAreaView
@@ -242,7 +292,7 @@ export default function PersonalInfoModal({
           <>
             <Pressable
               onPress={handlePickAvatar}
-              disabled={loading || !adminProfile?.id}
+              disabled={loading || saving || !adminProfile?.id}
               className="self-center mb-7"
               accessibilityRole="button"
               accessibilityLabel="Choose admin profile picture"
@@ -251,9 +301,9 @@ export default function PersonalInfoModal({
                 className="w-28 h-28 rounded-full items-center justify-center border-2 overflow-hidden"
                 style={{ backgroundColor: theme.bg, borderColor: theme.primary }}
               >
-                {adminAvatarUri || adminProfile?.avatarUrl ? (
+                {adminAvatar ? (
                   <Image
-                    source={{ uri: adminAvatarUri || adminProfile?.avatarUrl }}
+                    source={{ uri: adminAvatar }}
                     className="w-full h-full"
                     resizeMode="cover"
                   />
@@ -278,17 +328,23 @@ export default function PersonalInfoModal({
                     className="text-sm font-bold mb-2 ml-1"
                     style={{ color: theme.muted }}
                   >
-                    First Name
+                    First Name *
                   </Text>
                   <TextInput
                     value={adminFirstName}
                     onChangeText={setAdminFirstName}
-                    style={inputStyle}
+                    onBlur={() => setAdminFirstName(adminFirstName.trim())}
+                    style={getNameInputStyle(adminFirstName)}
                     className="px-4 rounded-2xl border"
                     placeholderTextColor={theme.muted}
                     placeholder="Enter first name"
                     autoCapitalize="words"
                   />
+                  {nameValidationAttempted && !adminFirstName.trim() ? (
+                    <Text className="mt-1 text-xs" style={{ color: theme.danger }}>
+                      First name is required.
+                    </Text>
+                  ) : null}
                 </View>
                 <View className="mb-5">
                   <Text
@@ -301,6 +357,7 @@ export default function PersonalInfoModal({
                     value={adminLastName}
                     onChangeText={setAdminLastName}
                     style={inputStyle}
+                    onBlur={() => setAdminLastName(adminLastName.trim())}
                     className="px-4 rounded-2xl border"
                     placeholderTextColor={theme.muted}
                     placeholder="Enter last name"
@@ -353,17 +410,25 @@ export default function PersonalInfoModal({
                 className="text-sm font-bold mb-2 ml-1"
                 style={{ color: theme.muted }}
               >
-                First Name
+                First Name *
               </Text>
               <TextInput
                 value={managerFirstName}
                 onChangeText={setManagerFirstNameEdit}
-                style={inputStyle}
+                onBlur={() =>
+                  setManagerFirstNameEdit(managerFirstName.trim())
+                }
+                style={getNameInputStyle(managerFirstName)}
                 className="px-4 rounded-2xl border"
                 placeholderTextColor={theme.muted}
                 placeholder="Enter first name"
                 autoCapitalize="words"
               />
+              {nameValidationAttempted && !managerFirstName.trim() ? (
+                <Text className="mt-1 text-xs" style={{ color: theme.danger }}>
+                  First name is required.
+                </Text>
+              ) : null}
             </View>
             <View className="mb-5">
               <Text
@@ -376,6 +441,7 @@ export default function PersonalInfoModal({
                 value={managerLastName}
                 onChangeText={setManagerLastNameEdit}
                 style={inputStyle}
+                onBlur={() => setManagerLastNameEdit(managerLastName.trim())}
                 className="px-4 rounded-2xl border"
                 placeholderTextColor={theme.muted}
                 placeholder="Enter last name"

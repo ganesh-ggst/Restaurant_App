@@ -19,7 +19,6 @@ const storefrontDefinitions = [
   { id: "sf_search", key: "searchPlaceholders", title: "Search Placeholders", selectionType: "multiple" },
   { id: "sf_featured", key: "featuredContents", title: "Featured Content", selectionType: "single" },
   { id: "sf_empty", key: "emptyStates", title: "Empty States", selectionType: "single" },
-  { id: "sf_celebrations", key: "celebrationEmojis", title: "Celebration Emojis", selectionType: "multiple" },
 ] as const;
 
 const record = (value: unknown): DataRecord =>
@@ -64,10 +63,14 @@ function formatAddress(item: DataRecord): { value: string; subValue: string } {
   const longitude = location.lng;
   return {
     value: address,
-    subValue:
+    subValue: [
+      text(item.phone) ? `Phone: ${text(item.phone)}` : "",
       latitude !== undefined && longitude !== undefined
         ? `GPS: ${latitude}, ${longitude}`
         : "",
+    ]
+      .filter(Boolean)
+      .join(" • "),
   };
 }
 
@@ -127,7 +130,15 @@ function toStoreDetailOption(
     }
   }
 
-  return { id: idOf(item, index), value, subValue, isActive: activeOf(item) };
+  return {
+    id: idOf(item, index),
+    value,
+    subValue,
+    isActive: activeOf(item),
+    ...(key === "addresses"
+      ? { area: text(item.area), phone: text(item.phone) }
+      : {}),
+  };
 }
 
 export function getStoreDetailDefinition(id: string) {
@@ -189,10 +200,6 @@ function toStorefrontOption(
       break;
     case "emptyStates":
       value = text(item.title);
-      subValue = text(item.description);
-      break;
-    case "celebrationEmojis":
-      value = text(item.emoji);
       subValue = text(item.description);
       break;
   }

@@ -18,6 +18,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import {
@@ -81,6 +82,15 @@ const getNumericPrice = (price: any) => {
 
 const formatPrice = (price: number) => {
   return Number.isInteger(price) ? price : price.toFixed(2);
+};
+
+const formatCountdown = (seconds: number | null) => {
+  if (seconds === null) return "";
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes.toString().padStart(2, "0")}:${remainingSeconds
+    .toString()
+    .padStart(2, "0")}`;
 };
 
 function toMenuCardItem(
@@ -554,6 +564,16 @@ export default function HomeLayout() {
     "idle" | "waiting" | "approved" | "rejected"
   >("idle");
   const [pendingOrderSnapshot, setPendingOrderSnapshot] = useState<any[]>([]);
+  const [dineInSubmissionPhase, setDineInSubmissionPhase] = useState<
+    "preparing" | "sending" | "submitting" | null
+  >(null);
+  const [dineInSubmissionSecondsLeft, setDineInSubmissionSecondsLeft] =
+    useState<number | null>(null);
+  const isDineInSubmissionInProgress = useRef(false);
+  const dineInSubmissionId = useRef(0);
+  const dineInSubmissionPhaseRef = useRef<
+    "preparing" | "sending" | "submitting" | null
+  >(null);
   const [showDineInCartModal, setShowDineInCartModal] = useState(false);
 
   const activeCart =
@@ -1259,6 +1279,7 @@ export default function HomeLayout() {
   }, [activeTable, dineInSession, timeLeft]);
 
   const handleConfirmOrder = async () => {
+    if (isDineInSubmissionInProgress.current) return;
     if (!dineInSession?._id || !activeBranch?.id || activeCart.length === 0) {
       Alert.alert(
         "Unable to Submit Order",
@@ -1267,31 +1288,78 @@ export default function HomeLayout() {
       return;
     }
 
+    isDineInSubmissionInProgress.current = true;
+    const submissionId = ++dineInSubmissionId.current;
     const orderSnapshot = [...activeCart];
+    const branchId = activeBranch.id;
+    const orderPricing = cartPricing;
     setPendingOrderSnapshot(orderSnapshot);
     setDineInCartState("waiting");
     setCarts((prev) => ({ ...prev, [mode]: [] }));
 
     try {
+      const waitForMinute = async (
+        phase: "preparing" | "sending",
+      ): Promise<boolean> => {
+        const deadline = Date.now() + 60_000;
+        dineInSubmissionPhaseRef.current = phase;
+        setDineInSubmissionPhase(phase);
+        setDineInSubmissionSecondsLeft(60);
+
+        while (Date.now() < deadline) {
+          if (dineInSubmissionId.current !== submissionId) return false;
+          const remainingSeconds = Math.max(
+            1,
+            Math.ceil((deadline - Date.now()) / 1000),
+          );
+          setDineInSubmissionSecondsLeft((current) =>
+            current === remainingSeconds ? current : remainingSeconds,
+          );
+          await new Promise<void>((resolve) => {
+            setTimeout(
+              resolve,
+              Math.min(1000, Math.max(1, deadline - Date.now())),
+            );
+          });
+        }
+
+        if (dineInSubmissionId.current !== submissionId) return false;
+        setDineInSubmissionSecondsLeft(0);
+        return true;
+      };
+
+      if (!(await waitForMinute("preparing"))) return;
+      if (!(await waitForMinute("sending"))) return;
+      dineInSubmissionPhaseRef.current = "submitting";
+      setDineInSubmissionPhase("submitting");
+      setDineInSubmissionSecondsLeft(null);
+
       await createCustomerOrder(
         "pending",
         0,
         "",
-        cartPricing?.taxableAmount,
-        cartPricing?.tax,
-        cartPricing?.total,
+        orderPricing?.taxableAmount,
+        orderPricing?.tax,
+        orderPricing?.total,
       );
+      dineInSubmissionPhaseRef.current = null;
+      setDineInSubmissionPhase(null);
       setDineInCartState("approved");
       setConfirmedOrders((prev) => [...prev, ...orderSnapshot]);
       try {
-        await reloadCart(activeBranch.id);
+        await reloadCart(branchId);
       } catch (error) {
         Alert.alert(
           "Order Submitted",
           `Your order was sent, but the cart could not be refreshed. ${error instanceof Error ? error.message : "Please refresh and try again."}`,
         );
       }
+      isDineInSubmissionInProgress.current = false;
     } catch (error) {
+      if (dineInSubmissionId.current !== submissionId) return;
+      dineInSubmissionPhaseRef.current = null;
+      setDineInSubmissionPhase(null);
+      setDineInSubmissionSecondsLeft(null);
       setCarts((prev) => {
         const restoredCart = [...(prev[mode] || [])];
         orderSnapshot.forEach((snapshotItem) => {
@@ -1312,7 +1380,29 @@ export default function HomeLayout() {
         "Unable to Submit Order",
         error instanceof Error ? error.message : "Please try again.",
       );
+      isDineInSubmissionInProgress.current = false;
     }
+  };
+
+  const handleCancelDineInSubmission = () => {
+    if (
+      !isDineInSubmissionInProgress.current ||
+      dineInSubmissionPhaseRef.current !== "preparing"
+    ) {
+      return;
+    }
+
+    dineInSubmissionId.current += 1;
+    dineInSubmissionPhaseRef.current = null;
+    isDineInSubmissionInProgress.current = false;
+    setCarts((prev) => ({
+      ...prev,
+      [mode]: [...(prev[mode] || []), ...pendingOrderSnapshot],
+    }));
+    setPendingOrderSnapshot([]);
+    setDineInCartState("idle");
+    setDineInSubmissionPhase(null);
+    setDineInSubmissionSecondsLeft(null);
   };
 
   const shouldShowGlobalCartButton =
@@ -1393,6 +1483,10 @@ export default function HomeLayout() {
                 orderMode={mode}
                 activeCartTotalItems={activeCartTotalItems}
                 dineInCartState={dineInCartState}
+                submissionPhase={dineInSubmissionPhase}
+                submissionCountdown={formatCountdown(
+                  dineInSubmissionSecondsLeft,
+                )}
                 theme={theme}
                 bottomOffset={tabBarBottom + TAB_BAR_HEIGHT}
                 onPress={() => {
@@ -1408,24 +1502,32 @@ export default function HomeLayout() {
           {/* DINE-IN MODAL (Now Global, supports minus/plus functionality) */}
           <Modal
             visible={showDineInCartModal}
-            transparent
-            animationType="fade"
+            transparent={Platform.OS !== "android"}
+            animationType={Platform.OS === "android" ? "slide" : "fade"}
+            statusBarTranslucent
+            navigationBarTranslucent
             onRequestClose={() => setShowDineInCartModal(false)}
           >
-            <Pressable
-              className="flex-1 justify-end bg-black/60"
-              onPress={() => setShowDineInCartModal(false)}
+            <View
+              className="flex-1"
+              style={{
+                backgroundColor:
+                  Platform.OS === "android" ? theme.bg : "transparent",
+              }}
             >
-              <Pressable
-                className="rounded-t-[32px] p-6"
+              {Platform.OS !== "android" && (
+                <Pressable
+                  className="absolute inset-0 bg-black/60"
+                  onPress={() => setShowDineInCartModal(false)}
+                />
+              )}
+              <View
+                className="absolute inset-0 p-6"
                 style={{
                   backgroundColor: theme.bg,
-                  minHeight: "50%",
-                  maxHeight: "85%",
-                  flexShrink: 1,
-                  paddingBottom: Math.max(insets.bottom, 16),
+                  paddingTop: insets.top + 24,
+                  paddingBottom: insets.bottom + 12,
                 }}
-                onPress={(e) => e.stopPropagation()}
               >
                 <View className="flex-row items-center justify-between mb-6">
                   <Text
@@ -1443,9 +1545,11 @@ export default function HomeLayout() {
                 </View>
 
                 <ScrollView
-                  style={{ flexShrink: 1 }}
+                  style={{ flex: 1 }}
                   showsVerticalScrollIndicator={false}
                   contentContainerStyle={{ paddingBottom: 12 }}
+                  nestedScrollEnabled
+                  keyboardShouldPersistTaps="handled"
                 >
                   {/* --- 1. KITCHEN TRACKING STATUS CARD --- */}
                   {(dineInCartState !== "idle" || isDineInCartPending) && (
@@ -1500,7 +1604,9 @@ export default function HomeLayout() {
                         {dineInCartState === "waiting" && (
                           <View className="bg-orange-200 px-3 py-1 rounded-full">
                             <Text className="font-black text-orange-700">
-                              Please wait
+                              {dineInSubmissionPhase === "preparing"
+                                ? "Cancel available"
+                                : "Please wait"}
                             </Text>
                           </View>
                         )}
@@ -1510,7 +1616,11 @@ export default function HomeLayout() {
                         {isDineInCartAccepted
                           ? "Order submitted to the kitchen."
                           : dineInCartState === "waiting"
-                            ? "Sending your order to the kitchen..."
+                            ? dineInSubmissionPhase === "sending"
+                              ? `Your order will be sent to the kitchen in ${formatCountdown(dineInSubmissionSecondsLeft)}.`
+                              : dineInSubmissionPhase === "submitting"
+                                ? "Submitting your order to the kitchen..."
+                              : `Preparing your order. Sending starts in ${formatCountdown(dineInSubmissionSecondsLeft)}.`
                             : "Items added to your cart. Submit the order to send them to the kitchen."}
                       </Text>
 
@@ -1537,14 +1647,30 @@ export default function HomeLayout() {
                         ))}
                       </View>
 
+                      {dineInCartState === "waiting" &&
+                        dineInSubmissionPhase === "preparing" && (
+                          <Pressable
+                            onPress={handleCancelDineInSubmission}
+                            className="w-full py-3 rounded-xl items-center justify-center mb-3 border"
+                            style={{
+                              borderColor: theme.border,
+                              backgroundColor: theme.card,
+                            }}
+                          >
+                            <Text
+                              className="font-black text-xs uppercase tracking-wider"
+                              style={{ color: theme.danger }}
+                            >
+                              Cancel Order
+                            </Text>
+                          </Pressable>
+                        )}
+
                       {(dineInCartState === "rejected" ||
                         (dineInCartState === "approved" &&
                           !isDineInCartPending)) && (
                         <Pressable
-                          onPress={() => {
-                            setDineInCartState("idle");
-                            setPendingOrderSnapshot([]);
-                          }}
+                          onPress={() => setShowDineInCartModal(false)}
                           className="w-full py-3 rounded-xl items-center justify-center shadow-sm"
                           style={{ backgroundColor: "#1F2937" }}
                         >
@@ -1734,8 +1860,8 @@ export default function HomeLayout() {
                     </Pressable>
                   </>
                 )}
-              </Pressable>
-            </Pressable>
+              </View>
+            </View>
           </Modal>
         </View>
       </OrderContext.Provider>

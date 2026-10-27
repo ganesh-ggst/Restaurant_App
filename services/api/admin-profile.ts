@@ -1,4 +1,5 @@
 import axios, { isAxiosError } from "axios";
+import * as FileSystem from "expo-file-system/legacy";
 
 import { authApi } from "./auth";
 
@@ -38,11 +39,14 @@ export interface AdminPerson {
   managerType?: string;
   branchId?: string;
   isActive?: boolean;
+  isCheckIn?: boolean;
   avatarUrl?: string;
   isProfileCompleted?: boolean;
   assignmentId?: string;
   assignedTables?: AdminTable[];
+  availableTables?: AdminTable[];
   relatedWaiters?: AdminWaiter[];
+  availableWaiters?: AdminWaiter[];
   [key: string]: unknown;
 }
 
@@ -70,6 +74,7 @@ export interface AdminWaiter {
   isActive?: boolean;
   branchId?: string;
   managerId?: string | null;
+  isAssignedToManager?: boolean;
   manager?: { id: string; name: string; managerType: string } | null;
   assignedTableId?: string | null;
   waiterStatus?: {
@@ -396,7 +401,12 @@ async function request<T>(
       },
     });
 
-    if (!response.data?.success) {
+    const isEmptySuccessfulDelete =
+      method === "DELETE" &&
+      response.status >= 200 &&
+      response.status < 300 &&
+      (response.data === undefined || response.data === null);
+    if (!response.data?.success && !isEmptySuccessfulDelete) {
       throw new Error(response.data?.message || "The API request failed.");
     }
 
@@ -444,10 +454,39 @@ function requireArray<T>(data: T[] | undefined, message: string): T[] {
 }
 
 const encode = (value: string) => encodeURIComponent(value);
-const sectionPath = (section: string) => `/${encode(section)}`;
+const storeDetailSectionSlugs: Record<string, string> = {
+  restaurantNames: "restaurant-names",
+  addresses: "addresses",
+  taxDetails: "tax-details",
+  restaurantCharges: "restaurant-charges",
+  wifiConnections: "wifi-connections",
+  deliveryOptions: "delivery-options",
+};
+const storeDetailSectionSlug = (section: string) => {
+  const slug = storeDetailSectionSlugs[section];
+  if (!slug) throw new Error(`Unsupported store-detail section: ${section}`);
+  return slug;
+};
+const storeDetailSectionPath = (section: string) =>
+  `/${storeDetailSectionSlug(section)}`;
+const storefrontSectionSlugs: Record<string, string> = {
+  greetings: "greetings",
+  searchPlaceholders: "search-placeholders",
+  featuredContents: "featured-content",
+  emptyStates: "empty-states",
+  celebrationEmojis: "celebration-emojis",
+};
+const storefrontSectionSlug = (section: string) => {
+  const slug = storefrontSectionSlugs[section];
+  if (!slug) throw new Error(`Unsupported storefront section: ${section}`);
+  return slug;
+};
+const storefrontSectionPath = (section: string) =>
+  `/${storefrontSectionSlug(section)}`;
 
 export const adminProfileApi = {
-  async getProfile(): Promise<AdminProfileResponse> {
+  async getProfile(forceRefresh = false): Promise<AdminProfileResponse> {
+    if (forceRefresh) invalidate("profile");
     const data = requireData(
       await readCached("profile", () =>
         request<AdminProfileResponse>("GET", ""),
@@ -473,7 +512,8 @@ export const adminProfileApi = {
     return (await adminProfileApi.getProfile()).admin;
   },
 
-  async getStoreDetails(): Promise<Record<string, unknown>> {
+  async getStoreDetails(forceRefresh = false): Promise<Record<string, unknown>> {
+    if (forceRefresh) invalidate("store-details");
     return requireData(
       await readCached("store-details", () =>
         request<Record<string, unknown>>("GET", "/store-details"),
@@ -484,10 +524,13 @@ export const adminProfileApi = {
 
   async getStoreDetailSection<T = Record<string, unknown>>(
     section: string,
+    forceRefresh = false,
   ): Promise<T> {
+    const cacheKey = `store-detail:${section}`;
+    if (forceRefresh) invalidate("store-details", cacheKey);
     return requireData(
-      await readCached(`store-detail:${section}`, () =>
-        request<T>("GET", `/store-details${sectionPath(section)}`),
+      await readCached(cacheKey, () =>
+        request<T>("GET", `/store-details${storeDetailSectionPath(section)}`),
       ),
       "The server did not return this store-detail section.",
     );
@@ -495,9 +538,12 @@ export const adminProfileApi = {
 
   async createStoreDetail(
     section: string,
-    body: Record<string, unknown>,
+    data: Record<string, unknown>,
   ): Promise<void> {
-    await request("POST", "/store-details", { section, ...body });
+    await request("POST", "/store-details", {
+      section: storeDetailSectionSlug(section),
+      data,
+    });
     invalidate("store-details", `store-detail:${section}`);
   },
 
@@ -508,8 +554,8 @@ export const adminProfileApi = {
   ): Promise<void> {
     await request(
       "PATCH",
-      `/store-details${sectionPath(section)}/${encode(id)}`,
-      body,
+      `/store-details${storeDetailSectionPath(section)}/${encode(id)}`,
+      { ...body, section: storeDetailSectionSlug(section) },
     );
     invalidate("store-details", `store-detail:${section}`);
   },
@@ -517,7 +563,7 @@ export const adminProfileApi = {
   async deleteStoreDetail(section: string, id: string): Promise<void> {
     await request(
       "DELETE",
-      `/store-details${sectionPath(section)}/${encode(id)}`,
+      `/store-details${storeDetailSectionPath(section)}/${encode(id)}`,
     );
     invalidate("store-details", `store-detail:${section}`);
   },
@@ -527,14 +573,13 @@ export const adminProfileApi = {
     id: string,
     isActive: boolean,
   ): Promise<void> {
-    await request(
-      "PATCH",
-      `/store-details${sectionPath(section)}/${encode(id)}/${isActive ? "activate" : "deactivate"}`,
-    );
-    invalidate("store-details", `store-detail:${section}`);
+    await adminProfileApi.updateStoreDetail(section, id, { isActive });
   },
 
-  async getStorefrontDisplay(): Promise<Record<string, unknown>> {
+  async getStorefrontDisplay(
+    forceRefresh = false,
+  ): Promise<Record<string, unknown>> {
+    if (forceRefresh) invalidate("storefront-display");
     return requireData(
       await readCached("storefront-display", () =>
         request<Record<string, unknown>>("GET", "/storefront-display"),
@@ -545,10 +590,13 @@ export const adminProfileApi = {
 
   async getStorefrontSection<T = Record<string, unknown>>(
     section: string,
+    forceRefresh = false,
   ): Promise<T> {
+    const cacheKey = `storefront-section:${section}`;
+    if (forceRefresh) invalidate("storefront-display", cacheKey);
     return requireData(
-      await readCached(`storefront-section:${section}`, () =>
-        request<T>("GET", `/storefront-display${sectionPath(section)}`),
+      await readCached(cacheKey, () =>
+        request<T>("GET", `/storefront-display${storefrontSectionPath(section)}`),
       ),
       "The server did not return this storefront section.",
     );
@@ -556,9 +604,12 @@ export const adminProfileApi = {
 
   async createStorefrontItem(
     section: string,
-    body: Record<string, unknown>,
+    data: Record<string, unknown>,
   ): Promise<void> {
-    await request("POST", "/storefront-display", { section, ...body });
+    await request("POST", "/storefront-display", {
+      section: storefrontSectionSlug(section),
+      data,
+    });
     invalidate("storefront-display", `storefront-section:${section}`);
   },
 
@@ -569,8 +620,8 @@ export const adminProfileApi = {
   ): Promise<void> {
     await request(
       "PATCH",
-      `/storefront-display${sectionPath(section)}/${encode(id)}`,
-      body,
+      `/storefront-display${storefrontSectionPath(section)}/${encode(id)}`,
+      { ...body, section: storefrontSectionSlug(section) },
     );
     invalidate("storefront-display", `storefront-section:${section}`);
   },
@@ -578,7 +629,7 @@ export const adminProfileApi = {
   async deleteStorefrontItem(section: string, id: string): Promise<void> {
     await request(
       "DELETE",
-      `/storefront-display${sectionPath(section)}/${encode(id)}`,
+      `/storefront-display${storefrontSectionPath(section)}/${encode(id)}`,
     );
     invalidate("storefront-display", `storefront-section:${section}`);
   },
@@ -588,11 +639,7 @@ export const adminProfileApi = {
     id: string,
     isActive: boolean,
   ): Promise<void> {
-    await request(
-      "PATCH",
-      `/storefront-display${sectionPath(section)}/${encode(id)}/${isActive ? "activate" : "deactivate"}`,
-    );
-    invalidate("storefront-display", `storefront-section:${section}`);
+    await adminProfileApi.updateStorefrontItem(section, id, { isActive });
   },
 
   async getAdmins(): Promise<AdminPerson[]> {
@@ -673,10 +720,17 @@ export const adminProfileApi = {
 
   async updateManager(
     id: string,
-    body: Record<string, unknown>,
+    body: {
+      name: string;
+      phone: string;
+      managerType: string;
+      isActive: boolean;
+      tableIds: string[];
+      waiterIds: string[];
+    },
   ): Promise<void> {
     await request("PATCH", `/managers/${encode(id)}`, body);
-    invalidate("managers", "admin-dashboard", "tables");
+    invalidate("managers", "admin-dashboard", "tables", "waiters");
   },
 
   async deleteManager(id: string): Promise<void> {
@@ -750,6 +804,27 @@ export const adminProfileApi = {
   async deleteTable(id: string): Promise<void> {
     await request("DELETE", `/tables/${encode(id)}`);
     invalidate("tables");
+  },
+
+  async downloadTableQr(id: string): Promise<string> {
+    const accessToken = await authApi.getAccessToken();
+    if (!accessToken) {
+      throw new Error("Your login session is missing. Please sign in again.");
+    }
+
+    const path = `${FileSystem.documentDirectory ?? "file://"}table-qr-${encodeURIComponent(id)}.png`;
+    const url = `${API_BASE_URL}/api/admin/profile/tables/${encode(id)}/qr`;
+
+    const { uri } = await FileSystem.downloadAsync(url, path, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    if (!uri) {
+      throw new Error("The QR image could not be downloaded.");
+    }
+    return uri;
   },
 
   async getAvailableTables(): Promise<AdminTable[]> {

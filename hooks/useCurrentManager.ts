@@ -87,7 +87,7 @@ async function loadCurrentManager(forceRefresh = false): Promise<void> {
   let request = Promise.resolve();
   request = (async () => {
     try {
-      const profile = await profileApi.getMyProfile();
+      const profile = await profileApi.getMyProfile(forceRefresh);
       let currentProfile: CurrentManager;
       if (profile.role.toLowerCase() !== "manager") {
         currentProfile = {
@@ -112,7 +112,7 @@ async function loadCurrentManager(forceRefresh = false): Promise<void> {
             : manager.managerType,
           branchId: manager.branchId,
           isActive: manager.isActive,
-          avatarUrl: manager.avatarUrl,
+          avatarUrl: profile.avatarUrl,
           assignedTables: manager.assignedTables,
           assignedWaiters: manager.assignedWaiters,
         };

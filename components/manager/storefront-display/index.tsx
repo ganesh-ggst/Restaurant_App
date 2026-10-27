@@ -37,7 +37,7 @@ export default function StorefrontDisplayIndexComponent() {
       if (isRefresh) setRefreshing(true);
       try {
         const data = await (isAdmin
-        ? adminProfileApi.getStorefrontDisplay()
+        ? adminProfileApi.getStorefrontDisplay(isRefresh)
         : managerProfileApi.getStorefrontDisplay());
         setDisplayItems(mapAdminStorefrontDisplay(data));
         if (!isAdmin) hasLoadedManagerData.current = true;
@@ -55,7 +55,9 @@ export default function StorefrontDisplayIndexComponent() {
 
   useFocusEffect(
     useCallback(() => {
-      if (isAdmin || !hasLoadedManagerData.current) {
+      if (isAdmin) {
+        void loadStorefrontDisplay(true);
+      } else if (!hasLoadedManagerData.current) {
         void loadStorefrontDisplay();
       }
     }, [isAdmin, loadStorefrontDisplay]),
@@ -84,14 +86,12 @@ export default function StorefrontDisplayIndexComponent() {
       <ScrollView
         contentContainerStyle={{ padding: 20, paddingBottom: 100 }}
         refreshControl={
-          !isAdmin ? (
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => void loadStorefrontDisplay(true)}
-              tintColor={theme.primary}
-              colors={[theme.primary]}
-            />
-          ) : undefined
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void loadStorefrontDisplay(true)}
+            tintColor={theme.primary}
+            colors={[theme.primary]}
+          />
         }
       >
         {displayItems.map((section) => {

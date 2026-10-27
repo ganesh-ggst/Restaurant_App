@@ -6,6 +6,7 @@ import {
   Alert,
   Animated,
   ActivityIndicator,
+  Image,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -21,6 +22,7 @@ import { useCurrentManager } from "../../hooks/useCurrentManager";
 import {
   adminDashboardApi,
   adminNotificationsApi,
+  getLocalAdminAvatarUri,
   type AdminDashboardData,
 } from "../../services/api/admin-profile";
 import { getAuthDestination } from "../../services/authRouting";
@@ -37,6 +39,8 @@ export default function AdminDashboard() {
   } = useCurrentManager();
 
   const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
+  const [failedAvatarUri, setFailedAvatarUri] = useState("");
+  const [profileAvatarUri, setProfileAvatarUri] = useState("");
   const [pulseAnim] = useState(() => new Animated.Value(1));
   const dashboardLoaded = useRef(false);
   const [dashboard, setDashboard] = useState<AdminDashboardData | null>(null);
@@ -60,6 +64,18 @@ export default function AdminDashboard() {
     dashboard?.salesDistribution.items.find(
       (item) => item.fulfillmentType === type,
     ) || { label: "", percentage: 0, revenue: 0, orderCount: 0 };
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!currentManager) return;
+      setFailedAvatarUri("");
+      setProfileAvatarUri(
+        currentManager.avatarUrl ||
+          getLocalAdminAvatarUri(currentManager.id) ||
+          "",
+      );
+    }, [currentManager]),
+  );
 
   useEffect(() => {
     if (hasUnreadNotifications) {
@@ -389,10 +405,21 @@ export default function AdminDashboard() {
 
             <Pressable
               onPress={() => router.push(`/(admin)/profile` as any)}
-              className="p-2.5 rounded-full"
+              accessibilityRole="button"
+              accessibilityLabel="Open admin profile"
+              className="h-11 w-11 items-center justify-center overflow-hidden rounded-full"
               style={{ backgroundColor: theme.card }}
             >
-              <Text className="text-base">👤</Text>
+              {profileAvatarUri && profileAvatarUri !== failedAvatarUri ? (
+                <Image
+                  source={{ uri: profileAvatarUri }}
+                  className="h-full w-full"
+                  resizeMode="cover"
+                  onError={() => setFailedAvatarUri(profileAvatarUri)}
+                />
+              ) : (
+                <Feather name="user" size={20} color={theme.text} />
+              )}
             </Pressable>
           </View>
         </View>
