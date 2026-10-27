@@ -1,9 +1,7 @@
-import {
-  useFocusEffect,
-  useRouter,
-} from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import {
   Bell,
+  BadgeCheck,
   CheckCircle2,
   ChevronRight,
   FileText,
@@ -18,9 +16,11 @@ import {
   Sparkles,
   Store,
   Sun,
+  TableProperties,
   UserPlus,
   UserRound,
   UserRoundPen,
+  UsersRound,
   X,
 } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
@@ -44,6 +44,7 @@ import {
   adminProfileApi,
   getLocalAdminAvatarUri,
 } from "../../services/api/admin-profile";
+import { getLocalManagerAvatarUri } from "../../services/api/manager-profile";
 import { Card } from "../ui/Card";
 
 interface ManagerProfileViewProps {
@@ -154,13 +155,43 @@ export default function ManagerProfileView({
   const displayPhone = isAdmin
     ? adminProfile?.phone || phone
     : matchedManager?.phone || phone;
-  const displayedAvatar = adminAvatarUri || adminProfile?.avatarUrl;
+  const displayedAvatar = isAdmin
+    ? currentManager?.avatarUrl ||
+      adminAvatarUri ||
+      adminProfile?.avatarUrl ||
+      ""
+    : currentManager
+      ? currentManager.avatarUrl || getLocalManagerAvatarUri(currentManager.id) || ""
+      : "";
   const [refreshing, setRefreshing] = useState(false);
 
   const refreshProfile = async () => {
     setRefreshing(true);
     try {
-      await refreshCurrentManager();
+      if (isAdmin) {
+        const [, { admin }] = await Promise.all([
+          refreshCurrentManager(),
+          adminProfileApi.getProfile(true),
+        ]);
+        setAdminProfile(admin);
+        setAdminAvatarUri(getLocalAdminAvatarUri(admin.id));
+        setProfileError("");
+      } else {
+        await refreshCurrentManager();
+      }
+    } catch (error) {
+      if (isAdmin) {
+        setProfileError(
+          error instanceof Error
+            ? error.message
+            : "Unable to refresh the admin profile.",
+        );
+      } else {
+        Alert.alert(
+          "Unable to refresh profile",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      }
     } finally {
       setRefreshing(false);
     }
@@ -188,14 +219,12 @@ export default function ManagerProfileView({
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
       <ScrollView
         refreshControl={
-          !isAdmin ? (
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => void refreshProfile()}
-              tintColor={theme.primary}
-              colors={[theme.primary]}
-            />
-          ) : undefined
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void refreshProfile()}
+            tintColor={theme.primary}
+            colors={[theme.primary]}
+          />
         }
         contentContainerStyle={{
           flexGrow: 1,
@@ -209,7 +238,7 @@ export default function ManagerProfileView({
             className="w-24 h-24 rounded-full items-center justify-center mb-5 border-[2px]"
             style={{ backgroundColor: theme.bg, borderColor: theme.primary }}
           >
-            {isAdmin && displayedAvatar ? (
+            {displayedAvatar ? (
               <Image
                 source={{ uri: displayedAvatar }}
                 className="w-full h-full rounded-full"
@@ -282,39 +311,41 @@ export default function ManagerProfileView({
                     : phone
                       ? `?phone=${encodeURIComponent(phone)}`
                       : "";
-                  router.push(
-                    `/(admin)/profile/personal${targetQuery}` as any,
-                  );
+                  router.push(`/(admin)/profile/personal${targetQuery}` as any);
                 }}
                 theme={theme}
               />
             )}
 
-            <SettingsRow
-              icon={Store}
-              label="Store Details"
-              onPress={() =>
-                router.push(
-                  (isAdmin
-                    ? "/(admin)/profile/store-details"
-                    : `${managerProfilePath}/store-details`) as any,
-                )
-              }
-              theme={theme}
-            />
+            {role === "admin" ? (
+              <SettingsRow
+                icon={Store}
+                label="Store Details"
+                onPress={() =>
+                  router.push(
+                    (isAdmin
+                      ? "/(admin)/profile/store-details"
+                      : `${managerProfilePath}/store-details`) as any,
+                  )
+                }
+                theme={theme}
+              />
+            ) : null}
 
-            <SettingsRow
-              icon={Sparkles}
-              label="Storefront Display"
-              onPress={() =>
-                router.push(
-                  (isAdmin
-                    ? "/(admin)/profile/storefront-display"
-                    : `${managerProfilePath}/storefront-display`) as any,
-                )
-              }
-              theme={theme}
-            />
+            {role === "admin" ? (
+              <SettingsRow
+                icon={Sparkles}
+                label="Storefront Display"
+                onPress={() =>
+                  router.push(
+                    (isAdmin
+                      ? "/(admin)/profile/storefront-display"
+                      : `${managerProfilePath}/storefront-display`) as any,
+                  )
+                }
+                theme={theme}
+              />
+            ) : null}
 
             <SettingsRow
               icon={Shield}
@@ -336,8 +367,8 @@ export default function ManagerProfileView({
 
             {isAdmin && (
               <SettingsRow
-                icon={Shield}
-                label="Add Admin"
+                icon={BadgeCheck}
+                label="Manage Admin"
                 onPress={() => {
                   const targetQuery = displayPhone
                     ? `?phone=${encodeURIComponent(displayPhone)}`
@@ -352,53 +383,57 @@ export default function ManagerProfileView({
               />
             )}
 
-            <SettingsRow
-              icon={UserPlus}
-              label="Add New Manager"
-              onPress={() => {
-                const targetQuery = displayPhone
-                  ? `?phone=${encodeURIComponent(displayPhone)}`
-                  : phone
-                    ? `?phone=${encodeURIComponent(phone)}`
-                    : "";
-                if (isAdmin) {
-                  router.push(
-                    `/(admin)/profile/add-manager${targetQuery}` as any,
-                  );
-                } else {
-                  router.push(
-                    `${managerProfilePath}/add-manager${targetQuery}` as any,
-                  );
-                }
-              }}
-              theme={theme}
-            />
+            {role === "admin" ? (
+              <SettingsRow
+                icon={UsersRound}
+                label="Manage Managers"
+                onPress={() => {
+                  const targetQuery = displayPhone
+                    ? `?phone=${encodeURIComponent(displayPhone)}`
+                    : phone
+                      ? `?phone=${encodeURIComponent(phone)}`
+                      : "";
+                  if (isAdmin) {
+                    router.push(
+                      `/(admin)/profile/add-manager${targetQuery}` as any,
+                    );
+                  } else {
+                    router.push(
+                      `${managerProfilePath}/add-manager${targetQuery}` as any,
+                    );
+                  }
+                }}
+                theme={theme}
+              />
+            ) : null}
 
-            <SettingsRow
-              icon={UserPlus}
-              label="Add Waiter"
-              onPress={() => {
-                const targetQuery = displayPhone
-                  ? `?phone=${encodeURIComponent(displayPhone)}`
-                  : phone
-                    ? `?phone=${encodeURIComponent(phone)}`
-                    : "";
-                if (isAdmin) {
-                  router.push(
-                    `/(admin)/profile/add-waiter${targetQuery}` as any,
-                  );
-                } else {
-                  router.push(
-                    `${managerProfilePath}/add-waiter${targetQuery}` as any,
-                  );
-                }
-              }}
-              theme={theme}
-            />
+            {role === "admin" ? (
+              <SettingsRow
+                icon={UserPlus}
+                label="Manage Waiter"
+                onPress={() => {
+                  const targetQuery = displayPhone
+                    ? `?phone=${encodeURIComponent(displayPhone)}`
+                    : phone
+                      ? `?phone=${encodeURIComponent(phone)}`
+                      : "";
+                  if (isAdmin) {
+                    router.push(
+                      `/(admin)/profile/add-waiter${targetQuery}` as any,
+                    );
+                  } else {
+                    router.push(
+                      `${managerProfilePath}/add-waiter${targetQuery}` as any,
+                    );
+                  }
+                }}
+                theme={theme}
+              />
+            ) : null}
 
             {isAdmin && (
               <SettingsRow
-                icon={Store}
+                icon={TableProperties}
                 label="Manage Tables"
                 onPress={() => router.push("/(admin)/profile/tables" as any)}
                 theme={theme}

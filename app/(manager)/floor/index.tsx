@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Animated,
+  Image,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -18,11 +19,14 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Card } from "../../../components/ui/Card";
 import {
   FloorTable,
-  INITIAL_FLOOR_NOTIFICATIONS,
 } from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { useCurrentManager } from "../../../hooks/useCurrentManager";
 import { getManagerDestination } from "../../../services/authRouting";
+import {
+  getLocalManagerAvatarUri,
+  managerProfileApi,
+} from "../../../services/api/manager-profile";
 import {
   FloorManagerDashboard,
   FloorManagerLiveState,
@@ -87,6 +91,8 @@ export default function FloorDashboard() {
   const theme = useAppTheme();
   const router = useRouter();
   const { currentManager, normalizedPhone } = useCurrentManager();
+  const [failedAvatarUri, setFailedAvatarUri] = useState("");
+  const [profileAvatarUri, setProfileAvatarUri] = useState("");
   const [dashboard, setDashboard] = useState<FloorManagerDashboard | null>(null);
   const [liveState, setLiveState] = useState<FloorManagerLiveState | null>(null);
   const [sessions, setSessions] = useState<Record<string, unknown>[]>([]);
@@ -104,6 +110,18 @@ export default function FloorDashboard() {
   const [isUpdatingCheckIn, setIsUpdatingCheckIn] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [branchIsOffline, setBranchIsOffline] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!currentManager) return;
+      setFailedAvatarUri("");
+      setProfileAvatarUri(
+        currentManager.avatarUrl ||
+          getLocalManagerAvatarUri(currentManager.id) ||
+          "",
+      );
+    }, [currentManager]),
+  );
 
   const fetchFloorData = useCallback(async () => {
     const [nextDashboard, nextLiveState] = await Promise.all([
@@ -146,8 +164,21 @@ export default function FloorDashboard() {
     [],
   );
 
+  const refreshNotificationStatus = useCallback(async () => {
+    try {
+      const page = await managerProfileApi.getNotifications(1, 20, true);
+      setHasUnreadNotifications(page.unreadCount > 0);
+    } catch (error) {
+      console.error(
+        "Unable to load floor manager notification status",
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }, []);
+
   const refreshFloorData = useCallback(async () => {
     setIsRefreshing(true);
+    void refreshNotificationStatus();
     try {
       applyFloorData(await fetchFloorData());
     } catch (error) {
@@ -171,11 +202,11 @@ export default function FloorDashboard() {
     } finally {
       setIsRefreshing(false);
     }
-  }, [applyFloorData, fetchFloorData]);
+  }, [applyFloorData, fetchFloorData, refreshNotificationStatus]);
 
   useEffect(() => {
     if (hasUnreadNotifications) {
-      Animated.loop(
+      const animation = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
             toValue: 1.35,
@@ -188,34 +219,13 @@ export default function FloorDashboard() {
             useNativeDriver: true,
           }),
         ]),
-      ).start();
-    }
-  }, [hasUnreadNotifications, pulseAnim]);
-
-  useFocusEffect(
-    useCallback(() => {
-      const refreshedAssignedTables = currentManager?.assignedTables || [];
-      const refreshedNums = new Set(
-        refreshedAssignedTables.map((val: string) => getTableNumber(val)),
       );
-
-      const managerUnread = INITIAL_FLOOR_NOTIFICATIONS.some((n) => {
-        if (n.isRead) return false;
-        let tNum = "";
-        if (n.tableId) {
-          tNum = getTableNumber(n.tableId);
-        } else if (n.message) {
-          const match = n.message.match(/Table\s+(\d+)/i);
-          if (match) {
-            tNum = match[1];
-          }
-        }
-        return tNum ? refreshedNums.has(tNum) : false;
-      });
-
-      setHasUnreadNotifications(managerUnread);
-    }, [currentManager]),
-  );
+      animation.start();
+      return () => animation.stop();
+    }
+    pulseAnim.setValue(1);
+    return undefined;
+  }, [hasUnreadNotifications, pulseAnim]);
 
   useFocusEffect(
     useCallback(() => {
@@ -256,12 +266,16 @@ export default function FloorDashboard() {
       };
 
       void refresh();
-      const interval = setInterval(() => void refresh(), 30_000);
+      void refreshNotificationStatus();
+      const interval = setInterval(() => {
+        void refresh();
+        void refreshNotificationStatus();
+      }, 30_000);
       return () => {
         isFocused = false;
         clearInterval(interval);
       };
-    }, [applyFloorData, currentManager, fetchFloorData]),
+    }, [applyFloorData, currentManager, fetchFloorData, refreshNotificationStatus]),
   );
 
   const handleToggleCheckIn = (newValue: boolean) => {
@@ -452,7 +466,6 @@ export default function FloorDashboard() {
           <View className="flex-row items-center gap-2">
             <Pressable
               onPress={() => {
-                setHasUnreadNotifications(false);
                 router.push(
                   `/(manager)/floor/profile/notifications?phone=${encodeURIComponent(normalizedPhone)}` as any,
                 );
@@ -484,10 +497,21 @@ export default function FloorDashboard() {
                   `/(manager)/floor/profile?phone=${encodeURIComponent(normalizedPhone)}` as any,
                 )
               }
-              className="p-3 rounded-full"
+              accessibilityRole="button"
+              accessibilityLabel="Manager profile"
+              className="h-11 w-11 items-center justify-center overflow-hidden rounded-full"
               style={{ backgroundColor: theme.card }}
             >
-              <Text className="text-lg">👤</Text>
+              {profileAvatarUri && profileAvatarUri !== failedAvatarUri ? (
+                <Image
+                  source={{ uri: profileAvatarUri }}
+                  className="h-full w-full"
+                  resizeMode="cover"
+                  onError={() => setFailedAvatarUri(profileAvatarUri)}
+                />
+              ) : (
+                <Feather name="user" size={20} color={theme.text} />
+              )}
             </Pressable>
           </View>
         </View>

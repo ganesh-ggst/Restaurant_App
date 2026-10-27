@@ -14,6 +14,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Image,
   KeyboardAvoidingView,
   Keyboard,
   Modal,
@@ -44,7 +45,10 @@ import {
   operationsApi,
 } from "../../../services/api/operations";
 import { operationsCache } from "../../../services/api/operations-cache";
-import { managerProfileApi } from "../../../services/api/manager-profile";
+import {
+  getLocalManagerAvatarUri,
+  managerProfileApi,
+} from "../../../services/api/manager-profile";
 import { getManagerDestination } from "../../../services/authRouting";
 
 const LIVE_ORDER_STATUSES = new Set([
@@ -311,6 +315,8 @@ export default function OperationsDashboardScreen() {
   );
   const { currentManager, loading: managerLoading, error: managerError } =
     useCurrentManager();
+  const [failedAvatarUri, setFailedAvatarUri] = useState("");
+  const [profileAvatarUri, setProfileAvatarUri] = useState("");
   const [dashboard, setDashboard] = useState<OperationsDashboard | null>(null);
   const [liveOrderCount, setLiveOrderCount] = useState(0);
   const [categories, setCategories] = useState<OperationsCategory[]>([]);
@@ -371,8 +377,21 @@ export default function OperationsDashboardScreen() {
   const applicableItemsOffset = useRef(0);
   const shouldScrollToApplicableItems = useRef(false);
   const dashboardScrollRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
+  const initialDashboardLoadManagerId = useRef<string | null>(null);
   const quickInventoryOffset = useRef(0);
   const shouldScrollToQuickInventory = useRef(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!currentManager) return;
+      setFailedAvatarUri("");
+      setProfileAvatarUri(
+        currentManager.avatarUrl ||
+          getLocalManagerAvatarUri(currentManager.id) ||
+          "",
+      );
+    }, [currentManager]),
+  );
 
   const scrollToApplicableItems = () => {
     offerFormScrollRef.current?.scrollTo({
@@ -453,7 +472,7 @@ export default function OperationsDashboardScreen() {
         await Promise.allSettled([
           operationsApi.getInventory(),
           operationsApi.getInventoryCandidates(),
-          managerProfileApi.getNotifications(),
+          managerProfileApi.getNotifications(1, 20, true),
           operationsApi.getManagerOffers(),
           operationsApi.getAllOrders(),
         ]);
@@ -535,11 +554,37 @@ export default function OperationsDashboardScreen() {
     }
   }, [currentManager]);
 
+  const refreshNotificationStatus = useCallback(async () => {
+    try {
+      const page = await managerProfileApi.getNotifications(1, 20, true);
+      setUnreadCount(page.unreadCount);
+    } catch (error) {
+      console.error(
+        "Unable to load operations manager notification status",
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       if (managerLoading || !currentManager) return;
+      if (initialDashboardLoadManagerId.current === currentManager.id) return;
+      initialDashboardLoadManagerId.current = currentManager.id;
       void loadDashboard();
     }, [currentManager, loadDashboard, managerLoading]),
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (managerLoading || !currentManager) return;
+      void refreshNotificationStatus();
+      const interval = setInterval(
+        () => void refreshNotificationStatus(),
+        30_000,
+      );
+      return () => clearInterval(interval);
+    }, [currentManager, managerLoading, refreshNotificationStatus]),
   );
 
   useEffect(() => {
@@ -935,7 +980,7 @@ export default function OperationsDashboardScreen() {
             onPress: () => {
               setIsCheckingOut(true);
               void operationsApi
-                .setManagerCheckInStatus(true, currentManager?.branchId)
+                .setManagerCheckInStatus(true)
                 .then(() => setIsCheckedIn(true))
                 .catch((checkInError: unknown) => {
                   Alert.alert(
@@ -998,10 +1043,7 @@ export default function OperationsDashboardScreen() {
                   return;
                 }
 
-                await operationsApi.setManagerCheckInStatus(
-                  false,
-                  currentManager?.branchId,
-                );
+                await operationsApi.setManagerCheckInStatus(false);
                 setIsCheckedIn(false);
               } catch (checkOutError) {
                 Alert.alert(
@@ -1193,10 +1235,19 @@ export default function OperationsDashboardScreen() {
               }
               accessibilityRole="button"
               accessibilityLabel="Manager profile"
-              className="rounded-full p-3"
+              className="h-11 w-11 items-center justify-center overflow-hidden rounded-full"
               style={{ backgroundColor: theme.card }}
             >
-              <Feather name="user" size={20} color={theme.text} />
+              {profileAvatarUri && profileAvatarUri !== failedAvatarUri ? (
+                <Image
+                  source={{ uri: profileAvatarUri }}
+                  className="h-full w-full"
+                  resizeMode="cover"
+                  onError={() => setFailedAvatarUri(profileAvatarUri)}
+                />
+              ) : (
+                <Feather name="user" size={20} color={theme.text} />
+              )}
             </Pressable>
           </View>
         </View>

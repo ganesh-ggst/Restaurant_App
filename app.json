@@ -19,8 +19,8 @@
       "icon": "./assets/images/android-apk-icon.png",
       "adaptiveIcon": {
         "backgroundColor": "#FCF5E9",
-        "foregroundImage": "./assets/images/android-apk-icon.png",
-        "monochromeImage": "./assets/images/android-apk-icon-monochrome.png"
+        "foregroundImage": "./assets/images/android-apk-icon-foreground.png",
+        "monochromeImage": "./assets/images/android-apk-icon-monochrome-padded.png"
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.siva.ggstinnovations.restaurantapp"
@@ -40,11 +40,19 @@
       ],
       "expo-router",
       [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow Restaurant_App to access photos.",
+          "savePhotosPermission": "Allow Restaurant_App to save table QR codes.",
+          "granularPermissions": ["photo"]
+        }
+      ],
+      [
         "expo-image-picker",
         {
-          "photosPermission": "Allow Restaurant_App to attach menu item photos.",
-          "cameraPermission": "Allow Restaurant_App to take menu item photos.",
-          "microphonePermission": false
+          "photosPermission": "Allow Restaurant_App to attach restaurant images.",
+          "cameraPermission": "Allow Restaurant_App to take restaurant photos.",
+          "microphonePermission": "Allow Restaurant_App to use the microphone for voice search."
         }
       ],
       [

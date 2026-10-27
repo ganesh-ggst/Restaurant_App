@@ -310,6 +310,16 @@ export interface CustomerDineInSession {
   assignedWaiterName?: string;
 }
 
+export interface CustomerDineInTable {
+  id: string;
+  branchId: string;
+  tableNumber: number;
+  capacity: number;
+  status: string;
+  operationalStatus: string;
+  isAvailable: boolean;
+}
+
 export interface CustomerDineInWaiter {
   tableNumber: number;
   waiterName: string;
@@ -456,6 +466,28 @@ function requireArray<T>(data: T[] | undefined, message: string): T[] {
 const encode = (value: string) => encodeURIComponent(value);
 
 export const customerApi = {
+  async getAvailableDineInTables(
+    branchId: string,
+  ): Promise<CustomerDineInTable[]> {
+    const result = requireData(
+      await request<{
+        branchId: string;
+        total: number;
+        tables: CustomerDineInTable[];
+      }>(
+        "GET",
+        `/dine-in/available-tables?branchId=${encode(branchId)}`,
+        undefined,
+        true,
+      ),
+      "The server did not return available dine-in tables.",
+    );
+    if (!Array.isArray(result.tables)) {
+      throw new Error("The server returned an invalid available-tables response.");
+    }
+    return result.tables;
+  },
+
   async takeDineInTable(
     branchId: string,
     tableNumber: number,

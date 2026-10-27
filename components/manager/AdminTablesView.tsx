@@ -1,4 +1,5 @@
 import { Feather } from "@expo/vector-icons";
+import * as MediaLibrary from "expo-media-library/legacy";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import {
@@ -54,6 +55,15 @@ export default function AdminTablesView() {
   const [editingTable, setEditingTable] = useState<AdminTable | null>(null);
   const [tableNumber, setTableNumber] = useState("");
   const [capacity, setCapacity] = useState("");
+  const [downloadingQrId, setDownloadingQrId] = useState<string | null>(null);
+  const [addTableErrors, setAddTableErrors] = useState<{
+    tableNumber?: string;
+    capacity?: string;
+  }>({});
+  const [editTableErrors, setEditTableErrors] = useState<{
+    tableNumber?: string;
+    capacity?: string;
+  }>({});
 
   const loadTables = useCallback(
     async (background = false, forceRefresh = false): Promise<boolean> => {
@@ -63,9 +73,7 @@ export default function AdminTablesView() {
       try {
         const nextTables = await adminProfileApi.getTables(forceRefresh);
         hasLoadedTables.current = true;
-        setTables((current) =>
-          current === nextTables ? current : nextTables,
-        );
+        setTables((current) => (current === nextTables ? current : nextTables));
         return true;
       } catch (error) {
         const message = errorMessage(error);
@@ -92,19 +100,31 @@ export default function AdminTablesView() {
   );
 
   const addTable = async () => {
+    const nextErrors: { tableNumber?: string; capacity?: string } = {};
     const parsedTableNumber = Number(newTableNumber.trim());
     const parsedCapacity = Number(newCapacity.trim());
-    if (!Number.isSafeInteger(parsedTableNumber) || parsedTableNumber < 1) {
-      Alert.alert(
-        "Invalid table number",
-        "Enter a whole number greater than zero.",
-      );
-      return;
+
+    if (!newTableNumber.trim()) {
+      nextErrors.tableNumber = "Table number is required.";
+    } else if (
+      !Number.isSafeInteger(parsedTableNumber) ||
+      parsedTableNumber < 1
+    ) {
+      nextErrors.tableNumber = "Enter a whole number greater than zero.";
     }
-    if (!Number.isSafeInteger(parsedCapacity) || parsedCapacity < 1) {
+
+    if (!newCapacity.trim()) {
+      nextErrors.capacity = "Capacity is required.";
+    } else if (!Number.isSafeInteger(parsedCapacity) || parsedCapacity < 1) {
+      nextErrors.capacity = "Enter a whole number greater than zero.";
+    }
+
+    setAddTableErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) {
+      const firstErrorMessage = nextErrors.tableNumber || nextErrors.capacity;
       Alert.alert(
-        "Invalid capacity",
-        "Enter a whole number greater than zero.",
+        "Missing required fields",
+        firstErrorMessage || "Please fill in the required table details.",
       );
       return;
     }
@@ -153,29 +173,40 @@ export default function AdminTablesView() {
     setEditingTable(table);
     setTableNumber(String(table.tableNumber ?? fallbackNumber));
     setCapacity(table.capacity === undefined ? "" : String(table.capacity));
+    setEditTableErrors({});
   };
 
   const saveTable = async () => {
     if (!editingTable) return;
 
+    const nextErrors: { tableNumber?: string; capacity?: string } = {};
     const parsedTableNumber = Number(tableNumber.trim());
     const parsedCapacity = capacity.trim()
       ? Number(capacity.trim())
       : undefined;
-    if (!Number.isSafeInteger(parsedTableNumber) || parsedTableNumber < 1) {
-      Alert.alert(
-        "Invalid table number",
-        "Enter a whole number greater than zero.",
-      );
-      return;
-    }
-    if (
-      parsedCapacity !== undefined &&
-      (!Number.isSafeInteger(parsedCapacity) || parsedCapacity < 1)
+
+    if (!tableNumber.trim()) {
+      nextErrors.tableNumber = "Table number is required.";
+    } else if (
+      !Number.isSafeInteger(parsedTableNumber) ||
+      parsedTableNumber < 1
     ) {
+      nextErrors.tableNumber = "Enter a whole number greater than zero.";
+    }
+
+    if (
+      capacity.trim() &&
+      (!Number.isSafeInteger(parsedCapacity) || (parsedCapacity ?? 0) < 1)
+    ) {
+      nextErrors.capacity = "Enter a whole number greater than zero.";
+    }
+
+    setEditTableErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) {
+      const firstErrorMessage = nextErrors.tableNumber || nextErrors.capacity;
       Alert.alert(
-        "Invalid capacity",
-        "Enter a whole number greater than zero.",
+        "Missing required fields",
+        firstErrorMessage || "Please fill in the required table details.",
       );
       return;
     }
@@ -260,6 +291,43 @@ export default function AdminTablesView() {
     );
   };
 
+  const downloadTableQr = async (table: AdminTable) => {
+    const tableNumber = table.tableNumber ?? "this table";
+    setDownloadingQrId(table.id);
+
+    try {
+      const permission = await MediaLibrary.requestPermissionsAsync(true, [
+        "photo",
+      ]);
+      if (!permission.granted) {
+        Alert.alert(
+          "Permission needed",
+          "Allow access to your photo library to save the QR code image.",
+        );
+        return;
+      }
+
+      const downloadedUri = await adminProfileApi.downloadTableQr(table.id);
+      const asset = await MediaLibrary.createAssetAsync(downloadedUri);
+      const albumName = "Restaurant QR Codes";
+      const album = await MediaLibrary.getAlbumAsync(albumName);
+      if (album) {
+        await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
+      } else {
+        await MediaLibrary.createAlbumAsync(albumName, asset, false);
+      }
+
+      Alert.alert(
+        "QR saved",
+        `Table ${tableNumber} QR code was saved to your device.`,
+      );
+    } catch (error) {
+      Alert.alert("Unable to download QR", errorMessage(error));
+    } finally {
+      setDownloadingQrId(null);
+    }
+  };
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
       <View
@@ -282,13 +350,6 @@ export default function AdminTablesView() {
             Create tables and manage their details and availability.
           </Text>
         </View>
-        <Pressable
-          onPress={() => void loadTables(false, true)}
-          hitSlop={12}
-          accessibilityLabel="Refresh tables"
-        >
-          <Feather name="refresh-cw" size={20} color={theme.primary} />
-        </Pressable>
       </View>
 
       <View
@@ -347,7 +408,7 @@ export default function AdminTablesView() {
             <TextInput
               value={search}
               onChangeText={setSearch}
-              placeholder="Search by table number, capacity, or status"
+              placeholder="Search by table, capacity, status"
               placeholderTextColor={theme.muted}
               autoCapitalize="none"
               autoCorrect={false}
@@ -440,19 +501,34 @@ export default function AdminTablesView() {
               </Text>
               <TextInput
                 value={newTableNumber}
-                onChangeText={setNewTableNumber}
+                onChangeText={(value) => {
+                  setNewTableNumber(value);
+                  if (addTableErrors.tableNumber) {
+                    setAddTableErrors((current) => ({
+                      ...current,
+                      tableNumber: undefined,
+                    }));
+                  }
+                }}
                 keyboardType="number-pad"
                 placeholder="Enter table number"
                 placeholderTextColor={theme.muted}
                 style={{
                   backgroundColor: theme.bg,
-                  borderColor: theme.border,
+                  borderColor: addTableErrors.tableNumber
+                    ? theme.danger
+                    : theme.border,
                   color: theme.text,
                   paddingVertical: 14,
                   fontSize: 16,
                 }}
-                className="mb-4 rounded-xl border px-4"
+                className="mb-1 rounded-xl border px-4"
               />
+              {addTableErrors.tableNumber ? (
+                <Text className="mb-3 text-sm" style={{ color: theme.danger }}>
+                  {addTableErrors.tableNumber}
+                </Text>
+              ) : null}
               <Text
                 className="mb-2 text-sm font-bold"
                 style={{ color: theme.muted }}
@@ -461,19 +537,34 @@ export default function AdminTablesView() {
               </Text>
               <TextInput
                 value={newCapacity}
-                onChangeText={setNewCapacity}
+                onChangeText={(value) => {
+                  setNewCapacity(value);
+                  if (addTableErrors.capacity) {
+                    setAddTableErrors((current) => ({
+                      ...current,
+                      capacity: undefined,
+                    }));
+                  }
+                }}
                 keyboardType="number-pad"
                 placeholder="Enter number of guests"
                 placeholderTextColor={theme.muted}
                 style={{
                   backgroundColor: theme.bg,
-                  borderColor: theme.border,
+                  borderColor: addTableErrors.capacity
+                    ? theme.danger
+                    : theme.border,
                   color: theme.text,
                   paddingVertical: 14,
                   fontSize: 16,
                 }}
-                className="mb-2 rounded-xl border px-4"
+                className="mb-1 rounded-xl border px-4"
               />
+              {addTableErrors.capacity ? (
+                <Text className="mb-2 text-sm" style={{ color: theme.danger }}>
+                  {addTableErrors.capacity}
+                </Text>
+              ) : null}
               <Button
                 title="Add New Table"
                 onPress={() => void addTable()}
@@ -612,6 +703,17 @@ export default function AdminTablesView() {
                       />
                     </View>
 
+                    <View className="mb-3 flex-row gap-3">
+                      <Button
+                        title="Download QR"
+                        variant="secondary"
+                        onPress={() => void downloadTableQr(table)}
+                        disabled={disabled || downloadingQrId === table.id}
+                        loading={downloadingQrId === table.id}
+                        className="flex-1"
+                      />
+                    </View>
+
                     <View className="flex-row gap-3">
                       <Button
                         title="Edit"
@@ -676,16 +778,34 @@ export default function AdminTablesView() {
                 <Input
                   label="Table number"
                   value={tableNumber}
-                  onChangeText={setTableNumber}
+                  onChangeText={(value) => {
+                    setTableNumber(value);
+                    if (editTableErrors.tableNumber) {
+                      setEditTableErrors((current) => ({
+                        ...current,
+                        tableNumber: undefined,
+                      }));
+                    }
+                  }}
                   keyboardType="numeric"
                   placeholder="Enter table number"
+                  error={editTableErrors.tableNumber}
                 />
                 <Input
                   label="Capacity (guests)"
                   value={capacity}
-                  onChangeText={setCapacity}
+                  onChangeText={(value) => {
+                    setCapacity(value);
+                    if (editTableErrors.capacity) {
+                      setEditTableErrors((current) => ({
+                        ...current,
+                        capacity: undefined,
+                      }));
+                    }
+                  }}
                   keyboardType="numeric"
                   placeholder="Enter capacity"
+                  error={editTableErrors.capacity}
                 />
                 <View className="mt-2 flex-row gap-3">
                   <Button

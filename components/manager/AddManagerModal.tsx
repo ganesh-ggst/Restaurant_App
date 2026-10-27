@@ -19,6 +19,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   Text,
   TextInput,
@@ -159,12 +160,22 @@ export default function AddManagerModal() {
   );
   const [selectedTables, setSelectedTables] = useState<string[]>([]);
   const [selectedWaiters, setSelectedWaiters] = useState<string[]>([]);
+  const [requiredFieldErrors, setRequiredFieldErrors] = useState({
+    firstName: false,
+    phone: false,
+    tables: false,
+    waiters: false,
+  });
+  const [editValidationErrors, setEditValidationErrors] = useState<
+    Record<string, string>
+  >({});
   const [isModalVisible, setIsModalVisible] = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editedFirstName, setEditedFirstName] = useState("");
   const [editedLastName, setEditedLastName] = useState("");
   const [editedPhone, setEditedPhone] = useState("");
+  const [editedIsActive, setEditedIsActive] = useState(true);
   const [editedRole, setEditedRole] = useState<
     "operations" | "floor" | "admin"
   >("operations");
@@ -181,17 +192,19 @@ export default function AddManagerModal() {
   >([]);
   const hasLoadedAdminStaff = useRef(false);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [assignmentLoading, setAssignmentLoading] = useState(false);
 
-  const loadAdminStaff = useCallback(async () => {
+  const loadAdminStaff = useCallback(async (forceRefresh = false) => {
     if (!isAdmin) return;
     if (!hasLoadedAdminStaff.current) setLoading(true);
+    if (forceRefresh) setRefreshing(true);
     try {
       const [managers, waiters, tables] = await Promise.all([
-        adminProfileApi.getManagers(),
-        adminProfileApi.getWaiters(),
-        adminProfileApi.getTables(),
+        adminProfileApi.getManagers(forceRefresh),
+        adminProfileApi.getWaiters(forceRefresh),
+        adminProfileApi.getTables(forceRefresh),
       ]);
       const numbers = await getStableManagerNumbers(managers);
       setManagerNumbersById(numbers);
@@ -206,6 +219,7 @@ export default function AddManagerModal() {
       );
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [isAdmin]);
 
@@ -255,6 +269,13 @@ export default function AddManagerModal() {
     }
     return "";
   };
+
+  const getManagerAssignedWaiters = (manager: AdminPerson) =>
+    (manager.relatedWaiters || []).filter((waiter) =>
+      typeof waiter.isAssignedToManager === "boolean"
+        ? waiter.isAssignedToManager
+        : waiter.managerId === undefined || waiter.managerId !== null,
+    );
 
   const tableAssignmentStatus = (table: AdminTable | undefined) =>
     table?.tableStatus !== undefined
@@ -357,24 +378,23 @@ export default function AddManagerModal() {
         (manager: any) => manager.id === editingId,
       );
   const currentAssignedTables = isAdmin && managerBeingEdited
-    ? adminTables
-        .filter(
-          (table) =>
-            tableAssignedManagerId(table) === managerBeingEdited.id,
-        )
-        .map((table) => table.id)
+    ? (managerBeingEdited.assignedTables || []).map((table: unknown) =>
+        getAssignmentId(table),
+      )
     : (managerBeingEdited?.assignedTables || []).map((table: unknown) =>
         getAssignmentId(table),
       );
-  const assignedActiveTables = adminTables.filter(
-    (table) =>
-      Boolean(editingId) &&
-      table.isActive !== false &&
-      tableAssignedManagerId(table) === editingId,
-  );
+  const assignedActiveTables = isAdmin && managerBeingEdited
+    ? managerBeingEdited.assignedTables || []
+    : adminTables.filter(
+        (table) =>
+          Boolean(editingId) &&
+          table.isActive !== false &&
+          tableAssignedManagerId(table) === editingId,
+      );
   const tableOptions = isAdmin
     ? [
-        ...adminAvailableTables,
+        ...(managerBeingEdited?.availableTables ?? adminAvailableTables),
         ...assignedActiveTables,
       ].filter(
         (table: AdminTable, index: number, all: AdminTable[]) =>
@@ -409,14 +429,19 @@ export default function AddManagerModal() {
       );
   const waiterOptions = isAdmin
     ? [
-        ...availableWaiters,
-        ...adminWaiters.filter(
-          (waiter) =>
-            Boolean(editingId) &&
-            waiter.isActive !== false &&
-            waiterAssignedManagerId(waiter) === editingId,
-        ),
-      ]
+        ...(managerBeingEdited?.availableWaiters ?? availableWaiters),
+        ...(managerBeingEdited
+          ? getManagerAssignedWaiters(managerBeingEdited)
+          : adminWaiters.filter(
+              (waiter) =>
+                Boolean(editingId) &&
+                waiter.isActive !== false &&
+                waiterAssignedManagerId(waiter) === editingId,
+            )),
+      ].filter(
+        (waiter: AdminWaiter, index: number, all: AdminWaiter[]) =>
+          all.findIndex((candidate) => candidate.id === waiter.id) === index,
+      )
     : availableWaiters;
 
   const isTableFree = (status: string | undefined) =>
@@ -479,6 +504,11 @@ export default function AddManagerModal() {
         await refreshAssignmentResources();
         setSelectedTables([]);
         setSelectedWaiters([]);
+        setRequiredFieldErrors((current) => ({
+          ...current,
+          tables: false,
+          waiters: false,
+        }));
         setManagerRole(role);
       } catch (error) {
         Alert.alert(
@@ -492,6 +522,11 @@ export default function AddManagerModal() {
     }
     setSelectedTables([]);
     setSelectedWaiters([]);
+    setRequiredFieldErrors((current) => ({
+      ...current,
+      tables: false,
+      waiters: false,
+    }));
     setManagerRole(role);
   };
 
@@ -587,6 +622,11 @@ export default function AddManagerModal() {
       ? selectedTables.filter((id) => id !== tableId)
       : [...selectedTables, tableId];
     setSelectedTables(nextTables);
+    setRequiredFieldErrors((current) => ({
+      ...current,
+      tables: false,
+      waiters: false,
+    }));
     if (nextTables.length === 0) setSelectedWaiters([]);
   };
 
@@ -618,47 +658,30 @@ export default function AddManagerModal() {
         ? current.filter((id) => id !== waiterId)
         : [...current, waiterId],
     );
+    if (!selectedWaiters.includes(waiterId)) {
+      setRequiredFieldErrors((current) => ({ ...current, waiters: false }));
+    }
   };
 
   const toggleEditedTableSelection = async (tableId: string) => {
     const removing = editedTables.includes(tableId);
     if (isAdmin) {
-      setAssignmentLoading(true);
-      try {
-        const tables = await adminProfileApi.getTables();
-        const liveTable = tables.find((table) => table.id === tableId);
-        if (removing) {
-          const canUnassign =
-            liveTable &&
-            liveTable.isActive !== false &&
-            (isTableUnassigned(liveTable) ||
-              (tableAssignedManagerId(liveTable) === editingId &&
-                isTableFree(tableAssignmentStatus(liveTable))));
-          if (!canUnassign) {
-            Alert.alert(
-              "Table in use",
-              "This table can only be unassigned when its status is available.",
-            );
-            return;
-          }
-        } else if (
-          !liveTable ||
-          !isTableUnassigned(liveTable)
-        ) {
-          Alert.alert(
-            "Table unavailable",
-            "Only active, unassigned tables can be assigned.",
-          );
-          return;
-        }
-      } catch (error) {
+      const manager = adminManagers.find((entry) => entry.id === editingId);
+      const liveTable = removing
+        ? manager?.assignedTables?.find((table) => table.id === tableId)
+        : manager?.availableTables?.find((table) => table.id === tableId);
+      if (
+        !liveTable ||
+        liveTable.isActive === false ||
+        !isTableFree(tableAssignmentStatus(liveTable))
+      ) {
         Alert.alert(
-          "Unable to verify table availability",
-          error instanceof Error ? error.message : "Please try again.",
+          removing ? "Table in use" : "Table unavailable",
+          removing
+            ? "This table can only be unassigned when its status is available."
+            : "Only active, available tables from the manager response can be assigned.",
         );
         return;
-      } finally {
-        setAssignmentLoading(false);
       }
     }
     setEditedTables((current) =>
@@ -668,52 +691,25 @@ export default function AddManagerModal() {
 
   const toggleEditedWaiterSelection = async (waiterId: string) => {
     if (isAdmin) {
-      setAssignmentLoading(true);
-      try {
-        const waiters = await adminProfileApi.getWaiters(true);
-        const waiter = waiters.find((entry) => entry.id === waiterId);
-        if (!waiter || waiter.isActive === false) {
-          Alert.alert("Waiter unavailable", "This waiter is no longer active.");
-          return;
-        }
-        if (editedWaiters.includes(waiterId)) {
-          const assignedToThisManager =
-            waiterAssignedManagerId(waiter) === editingId;
-          if (
-            assignedToThisManager &&
-            waiterAssignmentStatus(waiter)?.toLowerCase() !== "available"
-          ) {
-            Alert.alert(
-              "Waiter in use",
-              "This waiter can only be unassigned when their status is available.",
-            );
-            return;
-          }
-          if (
-            !assignedToThisManager &&
-            !isWaiterUnassigned(waiter)
-          ) {
-            Alert.alert(
-              "Waiter unavailable",
-              "This waiter can no longer be unassigned.",
-            );
-            return;
-          }
-        } else if (!isWaiterUnassigned(waiter)) {
-          Alert.alert(
-            "Waiter unavailable",
-            "Only active, unassigned waiters can be assigned.",
-          );
-          return;
-        }
-      } catch (error) {
+      const removing = editedWaiters.includes(waiterId);
+      const manager = adminManagers.find((entry) => entry.id === editingId);
+      const waiter = removing
+        ? manager && getManagerAssignedWaiters(manager).find(
+            (entry) => entry.id === waiterId,
+          )
+        : manager?.availableWaiters?.find((entry) => entry.id === waiterId);
+      if (
+        !waiter ||
+        waiter.isActive === false ||
+        waiterAssignmentStatus(waiter)?.toLowerCase() !== "available"
+      ) {
         Alert.alert(
-          "Unable to verify waiter availability",
-          error instanceof Error ? error.message : "Please try again.",
+          removing ? "Waiter in use" : "Waiter unavailable",
+          removing
+            ? "A related waiter can only be unassigned when their status is available."
+            : "Only active, available waiters from the manager response can be assigned.",
         );
         return;
-      } finally {
-        setAssignmentLoading(false);
       }
     }
     setEditedWaiters((current) =>
@@ -724,41 +720,23 @@ export default function AddManagerModal() {
   };
 
   const handleSaveManager = async () => {
-    if (!managerFirstName.trim()) {
-      Alert.alert("Error", "Manager first name is mandatory.");
-      return;
-    }
-
-    if (!phoneNumber.trim()) {
-      Alert.alert("Error", "Phone Number is mandatory!");
-      return;
-    }
-
-    if (managerRole === "floor" && selectedTables.length === 0) {
-      Alert.alert(
-        "Error",
-        "Please assign at least one table for the Floor Manager!",
-      );
-      return;
-    }
-
-    if (managerRole === "floor" && selectedWaiters.length === 0) {
-      Alert.alert(
-        "Error",
-        "Please assign at least one waiter for the Floor Manager!",
-      );
-      return;
-    }
-
     const cleanedNumber = phoneNumber.replace(/\D/g, "");
-    if (
+    const firstNameMissing = !managerFirstName.trim();
+    const phoneInvalid =
       cleanedNumber.length < selectedCountry.minLen ||
-      cleanedNumber.length > selectedCountry.maxLen
-    ) {
-      Alert.alert(
-        "Invalid Number",
-        `Phone number for ${selectedCountry.name} must be exactly ${selectedCountry.minLen} digits.`,
-      );
+      cleanedNumber.length > selectedCountry.maxLen;
+    const tablesMissing =
+      managerRole === "floor" && selectedTables.length === 0;
+    const waitersMissing =
+      managerRole === "floor" && selectedWaiters.length === 0;
+    setRequiredFieldErrors({
+      firstName: firstNameMissing,
+      phone: phoneInvalid,
+      tables: tablesMissing,
+      waiters: waitersMissing,
+    });
+
+    if (firstNameMissing || phoneInvalid || tablesMissing || waitersMissing) {
       return;
     }
 
@@ -807,8 +785,8 @@ export default function AddManagerModal() {
           lastName,
           phone: cleanedNumber,
           managerType: managerRole,
-          assignedTables: managerRole === "floor" ? selectedTables : [],
-          relatedWaiters: managerRole === "floor" ? selectedWaiters : [],
+          tableIds: managerRole === "floor" ? selectedTables : [],
+          waiterIds: managerRole === "floor" ? selectedWaiters : [],
         });
         await loadAdminStaff();
         setManagerFirstName("");
@@ -816,6 +794,12 @@ export default function AddManagerModal() {
         setPhoneNumber("");
         setSelectedTables([]);
         setSelectedWaiters([]);
+        setRequiredFieldErrors({
+          firstName: false,
+          phone: false,
+          tables: false,
+          waiters: false,
+        });
         setActiveTab("showAll");
         Alert.alert(
           "Success",
@@ -888,6 +872,7 @@ export default function AddManagerModal() {
   };
 
   const handleStartEdit = async (mgr: any) => {
+    setEditValidationErrors({});
     let manager = mgr;
     let initialTables: string[] = (mgr.assignedTables || []).map(
       (assignment: unknown) => getAssignmentId(assignment),
@@ -899,7 +884,7 @@ export default function AddManagerModal() {
     if (isAdmin) {
       setAssignmentLoading(true);
       try {
-        const { managers, tables, waiters } =
+        const { managers, waiters, tables, availableTables } =
           await refreshAssignmentResources();
         const freshManager = managers.find((entry) => entry.id === mgr.id);
         if (!freshManager) {
@@ -907,30 +892,53 @@ export default function AddManagerModal() {
             "This manager is no longer available. Refresh the list and try again.",
           );
         }
-        manager = freshManager;
-        initialTables = tables
-          .filter(
-            (table) =>
-              table.isActive !== false &&
-              tableAssignedManagerId(table) === freshManager.id,
-          )
-          .map((table) => table.id);
-        initialWaiters = waiters
-          .filter(
-            (waiter) =>
-              waiter.isActive !== false &&
-              waiterAssignedManagerId(waiter) === freshManager.id,
-          )
-          .map((waiter) => waiter.id);
+        const assignedTables =
+          freshManager.assignedTables?.length
+            ? freshManager.assignedTables
+            : tables.filter(
+                (table) => tableAssignedManagerId(table) === freshManager.id,
+              );
+        const assignedWaiters = getManagerAssignedWaiters(freshManager);
+        const relatedWaiters =
+          assignedWaiters.length > 0
+            ? assignedWaiters
+            : waiters
+                .filter(
+                  (waiter) =>
+                    waiterAssignedManagerId(waiter) === freshManager.id,
+                )
+                .map((waiter) => ({ ...waiter, isAssignedToManager: true }));
+        const managerAvailableTables =
+          freshManager.availableTables?.length
+            ? freshManager.availableTables
+            : availableTables;
+        const managerAvailableWaiters =
+          freshManager.availableWaiters?.length
+            ? freshManager.availableWaiters
+            : waiters.filter(isWaiterUnassigned);
+
+        manager = {
+          ...freshManager,
+          assignedTables,
+          availableTables: managerAvailableTables,
+          relatedWaiters,
+          availableWaiters: managerAvailableWaiters,
+        };
+        setAdminManagers((current) =>
+          current.map((entry) =>
+            entry.id === freshManager.id ? manager : entry,
+          ),
+        );
+        initialTables = assignedTables.map((table) =>
+          getAssignmentId(table),
+        );
+        initialWaiters = relatedWaiters.map(
+          (waiter) => waiter.id,
+        );
 
         if (
           freshManager.isActive === false &&
-          (tables.some(
-            (table) => tableAssignedManagerId(table) === freshManager.id,
-          ) ||
-            waiters.some(
-              (waiter) => waiterAssignedManagerId(waiter) === freshManager.id,
-            ))
+          (initialTables.length > 0 || initialWaiters.length > 0)
         ) {
           Alert.alert(
             "Unassign before editing",
@@ -955,6 +963,7 @@ export default function AddManagerModal() {
     setEditedFirstName(manager.firstName || fallbackFirstName);
     setEditedLastName(manager.lastName || fallbackLastName.join(" "));
     setEditedPhone(manager.phone || "");
+    setEditedIsActive(manager.isActive !== false);
 
     let resolvedRole = "operations";
     if (manager.managerType === "floor" || manager.role === "floor") {
@@ -975,16 +984,36 @@ export default function AddManagerModal() {
     );
   };
 
-  const handleSaveEdit = async (mgrId: string) => {
-    if (!editedFirstName.trim()) {
-      Alert.alert("Error", "Manager first name cannot be empty.");
+  const handleEditedActiveChange = (
+    manager: AdminPerson,
+    isActive: boolean,
+  ) => {
+    if (!isActive && manager.isCheckIn !== false) {
+      Alert.alert(
+        manager.isCheckIn ? "Manager is checked in" : "Check-in status unavailable",
+        manager.isCheckIn
+          ? "Check the manager out before changing their status to inactive."
+          : "Refresh the manager list to verify check-in status before changing them to inactive.",
+      );
       return;
+    }
+    setEditedIsActive(isActive);
+  };
+
+  const handleSaveEdit = async (mgrId: string) => {
+    const errors: Record<string, string> = {};
+    if (!editedFirstName.trim()) {
+      errors.editedFirstName = "First Name is required.";
     }
 
     if (!editedPhone.trim()) {
-      Alert.alert("Error", "Phone number cannot be empty.");
+      errors.editedPhone = "Phone Number is required.";
+    }
+    if (Object.keys(errors).length > 0) {
+      setEditValidationErrors(errors);
       return;
     }
+    setEditValidationErrors({});
 
     const mgr = isAdmin
       ? adminManagers.find((manager) => manager.id === mgrId)
@@ -992,7 +1021,7 @@ export default function AddManagerModal() {
     if (mgr) {
       if (
         editedRole === "floor" &&
-        mgr.isActive !== false &&
+        (editedIsActive || mgr.isActive !== false) &&
         editedTables.length === 0
       ) {
         Alert.alert(
@@ -1004,7 +1033,7 @@ export default function AddManagerModal() {
 
       if (
         editedRole === "floor" &&
-        mgr.isActive !== false &&
+        (editedIsActive || mgr.isActive !== false) &&
         editedWaiters.length === 0
       ) {
         Alert.alert(
@@ -1019,46 +1048,71 @@ export default function AddManagerModal() {
         const lastName = editedLastName.trim();
         setSaving(true);
         try {
-          const { managers, waiters, tables, availableTables } =
-            await refreshAssignmentResources();
+          const managers = await adminProfileApi.getManagers(true);
+          const numbers = await getStableManagerNumbers(managers);
+          setManagerNumbersById(numbers);
+          setAdminManagers(managers);
           const freshManager = managers.find((manager) => manager.id === mgrId);
           if (!freshManager) {
             throw new Error(
               "This manager is no longer available. Refresh the list and try again.",
             );
           }
-          const originalTableIds = tables
-            .filter(
-              (table) =>
-                tableAssignedManagerId(table) === mgrId,
-            )
-            .map((table) => table.id);
-          const originalWaiterIds = waiters
-            .filter(
-              (waiter) =>
-                waiterAssignedManagerId(waiter) === mgrId,
-            )
-            .map((waiter) => waiter.id);
-          if (
-            freshManager.isActive === false &&
-            (editedTables.length > 0 || editedWaiters.length > 0)
-          ) {
+          if (!editedIsActive && freshManager.isCheckIn !== false) {
             Alert.alert(
-              "Unassign before editing",
-              "Unassign all tables and related waiters, then save. You can edit manager details afterward.",
+              freshManager.isCheckIn
+                ? "Manager is checked in"
+                : "Check-in status unavailable",
+              freshManager.isCheckIn
+                ? "Check the manager out before changing their status to inactive."
+                : "Refresh the manager list to verify check-in status before changing them to inactive.",
             );
             return;
           }
+          const assignedTables = freshManager.assignedTables || [];
+          const availableTables = freshManager.availableTables || [];
+          const relatedWaiters = getManagerAssignedWaiters(freshManager);
+          const availableWaiters = freshManager.availableWaiters || [];
+          const originalTableIds = assignedTables.map((table) => table.id);
+          const originalWaiterIds = relatedWaiters.map((waiter) => waiter.id);
           const removedTableIds = originalTableIds.filter(
             (id: string) =>
               editedRole !== "floor" || !editedTables.includes(id),
           );
-          if (!(await verifyTablesCanBeReleased(removedTableIds))) return;
+          const unavailableTablesToRelease = removedTableIds.filter((id) => {
+            const table = assignedTables.find((entry) => entry.id === id);
+            return (
+              !table ||
+              table.isActive === false ||
+              !isTableFree(table.status)
+            );
+          });
+          if (unavailableTablesToRelease.length > 0) {
+            Alert.alert(
+              "Cannot change table assignments",
+              "Assigned tables must be active and available before they can be unassigned.",
+            );
+            return;
+          }
           const removedWaiterIds = originalWaiterIds.filter(
             (id: string) =>
               editedRole !== "floor" || !editedWaiters.includes(id),
           );
-          if (!(await verifyWaitersCanBeReleased(removedWaiterIds))) return;
+          const unavailableWaitersToRelease = removedWaiterIds.filter((id) => {
+            const waiter = relatedWaiters.find((entry) => entry.id === id);
+            return (
+              !waiter ||
+              waiter.isActive === false ||
+              waiter.status?.toLowerCase() !== "available"
+            );
+          });
+          if (unavailableWaitersToRelease.length > 0) {
+            Alert.alert(
+              "Cannot change waiter assignments",
+              "Related waiters must be active and available before they can be unassigned.",
+            );
+            return;
+          }
 
           if (editedRole === "floor") {
             const newlySelectedTableIds = editedTables.filter(
@@ -1067,11 +1121,13 @@ export default function AddManagerModal() {
             if (
               newlySelectedTableIds.some(
                 (id) => {
-                  const table = tables.find((entry) => entry.id === id);
+                  const table = availableTables.find(
+                    (entry) => entry.id === id,
+                  );
                   return (
-                    !availableTables.some((entry) => entry.id === id) ||
                     !table ||
-                    !isTableUnassigned(table)
+                    table.isActive === false ||
+                    !isTableFree(table.status)
                   );
                 },
               )
@@ -1085,11 +1141,13 @@ export default function AddManagerModal() {
             );
             if (
               newlySelectedWaiterIds.some((id) => {
-                const waiter = waiters.find((entry) => entry.id === id);
+                const waiter = availableWaiters.find(
+                  (entry) => entry.id === id,
+                );
                 return (
                   !waiter ||
                   waiter.isActive === false ||
-                  !isWaiterUnassigned(waiter)
+                  waiter.status?.toLowerCase() !== "available"
                 );
               })
             ) {
@@ -1099,19 +1157,14 @@ export default function AddManagerModal() {
             }
           }
 
-          const canChangePhone =
-            isAdmin &&
-            !isLoggedInManager(freshManager) &&
-            freshManager.isActive === false;
-          const updateBody: Record<string, unknown> = {
+          const updateBody = {
             name: [firstName, lastName].filter(Boolean).join(" "),
-            firstName,
-            lastName,
+            phone: cleanPhone(editedPhone),
             managerType: editedRole,
-            assignedTables: editedRole === "floor" ? editedTables : [],
-            relatedWaiters: editedRole === "floor" ? editedWaiters : [],
+            isActive: editedIsActive,
+            tableIds: editedRole === "floor" ? editedTables : [],
+            waiterIds: editedRole === "floor" ? editedWaiters : [],
           };
-          if (canChangePhone) updateBody.phone = cleanPhone(editedPhone);
           await adminProfileApi.updateManager(mgrId, updateBody);
           await loadAdminStaff();
           setEditingId(null);
@@ -1121,15 +1174,6 @@ export default function AddManagerModal() {
           setEditedRole("operations");
           setEditedTables([]);
           setEditedWaiters([]);
-          if (
-            freshManager.isActive === false &&
-            (originalTableIds.length > 0 || originalWaiterIds.length > 0)
-          ) {
-            Alert.alert(
-              "Assignments cleared",
-              "All tables and related waiters were unassigned. Tap Edit again to update the manager details.",
-            );
-          }
         } catch (error) {
           Alert.alert(
             "Unable to update manager",
@@ -1194,7 +1238,7 @@ export default function AddManagerModal() {
                 await loadAdminStaff();
               } catch (error) {
                 Alert.alert(
-                  "Unable to deactivate manager",
+                  "Unable to delete manager",
                   error instanceof Error ? error.message : "Please try again.",
                 );
               }
@@ -1214,32 +1258,29 @@ export default function AddManagerModal() {
 
   const rawManagersList: any[] = isAdmin
     ? adminManagers.map((manager) => {
-        const relatedTables = adminTables.filter(
+        const tablesFromAssignments = adminTables.filter(
           (table) =>
             table.isActive !== false &&
             tableAssignedManagerId(table) === manager.id,
         );
-        const relatedWaiters = adminWaiters.filter(
+        const waitersFromAssignments = adminWaiters.filter(
           (waiter) =>
             waiter.isActive !== false &&
             waiterAssignedManagerId(waiter) === manager.id,
         );
-        const assignedTableIds = relatedTables.map((table) => table.id);
-        const assignedWaiterIds = relatedWaiters.map((waiter) => waiter.id);
+        const assignedTables = manager.assignedTables ?? tablesFromAssignments;
+        const relatedWaiters =
+          manager.relatedWaiters !== undefined
+            ? getManagerAssignedWaiters(manager)
+            : waitersFromAssignments;
 
         return {
           ...manager,
           role: "manager",
-          assignedTableLabels: assignedTableIds.map((id) => {
-            const table = adminTables.find((entry) => entry.id === id);
-            return table ? formatTableLabel(table) : formatTableLabel(id);
-          }),
-          assignedTables: assignedTableIds,
-          assignedWaiters: assignedWaiterIds,
-          assignedWaiterLabels: assignedWaiterIds.map(
-            (id) =>
-              adminWaiters.find((waiter) => waiter.id === id)?.name || id,
-          ),
+          assignedTableLabels: assignedTables.map(formatTableLabel),
+          assignedTables,
+          assignedWaiters: relatedWaiters.map((waiter) => waiter.id),
+          assignedWaiterLabels: relatedWaiters.map((waiter) => waiter.name),
         };
       })
     : (MANAGER_MOCK_DATA.managers || [])
@@ -1469,6 +1510,16 @@ export default function AddManagerModal() {
           }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            isAdmin && activeTab === "showAll" ? (
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={() => void loadAdminStaff(true)}
+                tintColor={theme.primary}
+                colors={[theme.primary]}
+              />
+            ) : undefined
+          }
         >
           {activeTab === "add" ? (
             <Card
@@ -1477,7 +1528,11 @@ export default function AddManagerModal() {
             >
               <Text
                 className="text-xs font-bold mb-1 uppercase"
-                style={{ color: theme.muted }}
+                style={{
+                  color: requiredFieldErrors.firstName
+                    ? theme.danger
+                    : theme.muted,
+                }}
               >
                 First Name *
               </Text>
@@ -1485,16 +1540,37 @@ export default function AddManagerModal() {
                 placeholder="e.g. Rahul"
                 placeholderTextColor={theme.muted + "44"}
                 value={managerFirstName}
-                onChangeText={setManagerFirstName}
+                onChangeText={(value) => {
+                  setManagerFirstName(value);
+                  if (value.trim()) {
+                    setRequiredFieldErrors((current) => ({
+                      ...current,
+                      firstName: false,
+                    }));
+                  }
+                }}
+                onBlur={() => setManagerFirstName(managerFirstName.trim())}
                 autoCapitalize="words"
                 className="px-4 rounded-xl mb-4 font-bold"
                 style={{
                   backgroundColor: theme.bg,
                   color: theme.text,
+                  borderWidth: 1,
+                  borderColor: requiredFieldErrors.firstName
+                    ? theme.danger
+                    : "transparent",
                   fontSize: 16,
                   height: 52,
                 }}
               />
+              {requiredFieldErrors.firstName && (
+                <Text
+                  className="text-xs mb-3"
+                  style={{ color: theme.danger }}
+                >
+                  First name is required.
+                </Text>
+              )}
               <Text
                 className="text-xs font-bold mb-1 uppercase"
                 style={{ color: theme.muted }}
@@ -1506,6 +1582,7 @@ export default function AddManagerModal() {
                 placeholderTextColor={theme.muted + "44"}
                 value={managerLastName}
                 onChangeText={setManagerLastName}
+                onBlur={() => setManagerLastName(managerLastName.trim())}
                 autoCapitalize="words"
                 className="px-4 rounded-xl mb-4 font-bold"
                 style={{
@@ -1518,7 +1595,11 @@ export default function AddManagerModal() {
 
               <Text
                 className="text-xs font-bold mb-1 uppercase"
-                style={{ color: theme.muted }}
+                style={{
+                  color: requiredFieldErrors.phone
+                    ? theme.danger
+                    : theme.muted,
+                }}
               >
                 Phone Number *
               </Text>
@@ -1528,7 +1609,10 @@ export default function AddManagerModal() {
                   className="flex-row items-center px-3 rounded-xl border justify-between"
                   style={{
                     backgroundColor: theme.bg,
-                    borderColor: theme.border,
+                    borderColor: requiredFieldErrors.phone
+                      ? theme.danger
+                      : theme.border,
+                    borderWidth: requiredFieldErrors.phone ? 2 : 1,
                     height: 52,
                     width: 110,
                   }}
@@ -1546,18 +1630,43 @@ export default function AddManagerModal() {
                   placeholder="9876543210"
                   placeholderTextColor={theme.muted + "44"}
                   value={phoneNumber}
-                  onChangeText={setPhoneNumber}
+                  onChangeText={(value) => {
+                    setPhoneNumber(value);
+                    const cleanedValue = value.replace(/\D/g, "");
+                    if (
+                      cleanedValue.length >= selectedCountry.minLen &&
+                      cleanedValue.length <= selectedCountry.maxLen
+                    ) {
+                      setRequiredFieldErrors((current) => ({
+                        ...current,
+                        phone: false,
+                      }));
+                    }
+                  }}
+                  onBlur={() => setPhoneNumber(phoneNumber.trim())}
                   keyboardType="phone-pad"
                   maxLength={selectedCountry.maxLen}
                   className="flex-1 px-4 rounded-xl font-bold"
                   style={{
                     backgroundColor: theme.bg,
                     color: theme.text,
+                    borderWidth: 1,
+                    borderColor: requiredFieldErrors.phone
+                      ? theme.danger
+                      : "transparent",
                     fontSize: 16,
                     height: 52,
                   }}
                 />
               </View>
+              {requiredFieldErrors.phone && (
+                <Text
+                  className="text-xs mb-4"
+                  style={{ color: theme.danger }}
+                >
+                  Enter a valid {selectedCountry.minLen}-digit phone number.
+                </Text>
+              )}
 
               <Text
                 className="text-xs font-bold mb-2 uppercase"
@@ -1616,10 +1725,26 @@ export default function AddManagerModal() {
               {managerRole === "floor" && (
                 <View className="mb-6 gap-6">
                   {/* Tables Selection */}
-                  <View>
+                  <View
+                    className="gap-2"
+                    style={
+                      requiredFieldErrors.tables
+                        ? {
+                            borderColor: theme.danger,
+                            borderWidth: 1,
+                            borderRadius: 12,
+                            padding: 8,
+                          }
+                        : undefined
+                    }
+                  >
                     <Text
                       className="text-xs font-bold mb-2 uppercase"
-                      style={{ color: theme.muted }}
+                      style={{
+                        color: requiredFieldErrors.tables
+                          ? theme.danger
+                          : theme.muted,
+                      }}
                     >
                       Assign Unassigned Tables *
                     </Text>
@@ -1669,23 +1794,61 @@ export default function AddManagerModal() {
                     ) : (
                       <Text
                         className="text-xs italic"
-                        style={{ color: theme.muted }}
+                        style={{
+                          color: requiredFieldErrors.tables
+                            ? theme.danger
+                            : theme.muted,
+                        }}
                       >
                         No free and unassigned tables are available.
+                      </Text>
+                    )}
+                    {requiredFieldErrors.tables && (
+                      <Text
+                        className="text-xs"
+                        style={{ color: theme.danger }}
+                      >
+                        Select at least one table.
                       </Text>
                     )}
                   </View>
 
                   {/* Waiter Selection */}
-                  {selectedTables.length > 0 && (
-                    <View>
+                  <View
+                    className="gap-2"
+                    style={
+                      requiredFieldErrors.waiters
+                        ? {
+                            borderColor: theme.danger,
+                            borderWidth: 1,
+                            borderRadius: 12,
+                            padding: 8,
+                          }
+                        : undefined
+                    }
+                  >
                       <Text
                         className="text-xs font-bold mb-2 uppercase"
-                        style={{ color: theme.muted }}
+                        style={{
+                          color: requiredFieldErrors.waiters
+                            ? theme.danger
+                            : theme.muted,
+                        }}
                       >
                         Assign Available Waiters *
                       </Text>
-                      {waiterOptions.length > 0 ? (
+                      {selectedTables.length === 0 ? (
+                        <Text
+                          className="text-xs italic"
+                          style={{
+                            color: requiredFieldErrors.waiters
+                              ? theme.danger
+                              : theme.muted,
+                          }}
+                        >
+                          Select a table before assigning waiters.
+                        </Text>
+                      ) : waiterOptions.length > 0 ? (
                         <View className="flex-row flex-wrap gap-2">
                           {waiterOptions.map((waiter: any) => {
                             const isSelected = selectedWaiters.includes(
@@ -1730,14 +1893,25 @@ export default function AddManagerModal() {
                       ) : (
                         <Text
                           className="text-xs italic"
-                          style={{ color: theme.muted }}
+                          style={{
+                            color: requiredFieldErrors.waiters
+                              ? theme.danger
+                              : theme.muted,
+                          }}
                         >
                           No active, available, unassigned waiters are
                           available.
                         </Text>
                       )}
-                    </View>
-                  )}
+                      {requiredFieldErrors.waiters && (
+                        <Text
+                          className="text-xs"
+                          style={{ color: theme.danger }}
+                        >
+                          Select at least one waiter.
+                        </Text>
+                      )}
+                  </View>
                 </View>
               )}
 
@@ -1784,7 +1958,9 @@ export default function AddManagerModal() {
                   const isSelf = isLoggedInManager(mgr);
                   const hasLiveAssignments =
                     isAdmin &&
-                    (adminTables.some(
+                    ((mgr.assignedTables?.length || 0) > 0 ||
+                      getManagerAssignedWaiters(mgr).length > 0 ||
+                      adminTables.some(
                       (table) => tableAssignedManagerId(table) === mgr.id,
                     ) ||
                       adminWaiters.some(
@@ -1910,12 +2086,26 @@ export default function AddManagerModal() {
                             </Text>
                             <TextInput
                               value={editedFirstName}
-                              onChangeText={setEditedFirstName}
+                              onChangeText={(value) => {
+                                setEditedFirstName(value);
+                                if (editValidationErrors.editedFirstName) {
+                                  setEditValidationErrors((current) => ({
+                                    ...current,
+                                    editedFirstName: "",
+                                  }));
+                                }
+                              }}
+                              onBlur={() => setEditedFirstName(editedFirstName.trim())}
                               editable={!assignmentsMustBeCleared}
                               autoCapitalize="words"
                               style={{
                                 backgroundColor: theme.bg,
-                                borderColor: theme.primary,
+                                borderColor: editValidationErrors.editedFirstName
+                                  ? theme.danger
+                                  : theme.primary,
+                                borderWidth: editValidationErrors.editedFirstName
+                                  ? 2
+                                  : 1,
                                 color: theme.text,
                                 paddingVertical: 8,
                                 paddingHorizontal: 10,
@@ -1925,6 +2115,11 @@ export default function AddManagerModal() {
                               className="rounded-xl border"
                               autoFocus={true}
                             />
+                            {editValidationErrors.editedFirstName ? (
+                              <Text className="mt-1 text-xs font-semibold" style={{ color: theme.danger }}>
+                                {editValidationErrors.editedFirstName}
+                              </Text>
+                            ) : null}
                           </View>
                           <View>
                             <Text
@@ -1936,6 +2131,7 @@ export default function AddManagerModal() {
                             <TextInput
                               value={editedLastName}
                               onChangeText={setEditedLastName}
+                              onBlur={() => setEditedLastName(editedLastName.trim())}
                               editable={!assignmentsMustBeCleared}
                               autoCapitalize="words"
                               style={{
@@ -1986,11 +2182,25 @@ export default function AddManagerModal() {
                             ) : (
                               <TextInput
                                 value={editedPhone}
-                                onChangeText={setEditedPhone}
+                                onChangeText={(value) => {
+                                  setEditedPhone(value);
+                                  if (editValidationErrors.editedPhone) {
+                                    setEditValidationErrors((current) => ({
+                                      ...current,
+                                      editedPhone: "",
+                                    }));
+                                  }
+                                }}
+                                onBlur={() => setEditedPhone(editedPhone.trim())}
                                 keyboardType="phone-pad"
                                 style={{
                                   backgroundColor: theme.bg,
-                                  borderColor: theme.primary,
+                                  borderColor: editValidationErrors.editedPhone
+                                    ? theme.danger
+                                    : theme.primary,
+                                  borderWidth: editValidationErrors.editedPhone
+                                    ? 2
+                                    : 1,
                                   color: theme.text,
                                   paddingVertical: 8,
                                   paddingHorizontal: 10,
@@ -2000,7 +2210,86 @@ export default function AddManagerModal() {
                                 className="rounded-xl border"
                               />
                             )}
+                            {editValidationErrors.editedPhone ? (
+                              <Text className="mt-1 text-xs font-semibold" style={{ color: theme.danger }}>
+                                {editValidationErrors.editedPhone}
+                              </Text>
+                            ) : null}
                           </View>
+
+                          {isAdmin && (
+                            <View>
+                              <Text
+                                className="text-xs font-bold mb-2 uppercase"
+                                style={{ color: theme.muted }}
+                              >
+                                Manager Status
+                              </Text>
+                              <Text
+                                className="text-xs mb-2"
+                                style={{
+                                  color:
+                                    mgr.isCheckIn === true
+                                      ? theme.primary
+                                      : theme.muted,
+                                }}
+                              >
+                                Check-in:{" "}
+                                {mgr.isCheckIn === true
+                                  ? "Checked in"
+                                  : mgr.isCheckIn === false
+                                    ? "Checked out"
+                                    : "Status unavailable"}
+                              </Text>
+                              <View className="flex-row gap-3">
+                                {[true, false].map((isActive) => {
+                                  const selected =
+                                    editedIsActive === isActive;
+                                  return (
+                                    <Pressable
+                                      key={String(isActive)}
+                                      onPress={() =>
+                                        handleEditedActiveChange(mgr, isActive)
+                                      }
+                                      accessibilityRole="button"
+                                      accessibilityState={{ selected }}
+                                      className="flex-1 py-2.5 rounded-xl items-center justify-center border"
+                                      style={{
+                                        backgroundColor: selected
+                                          ? isActive
+                                            ? theme.primary
+                                            : theme.danger
+                                          : theme.bg,
+                                        borderColor: selected
+                                          ? isActive
+                                            ? theme.primary
+                                            : theme.danger
+                                          : theme.border,
+                                      }}
+                                    >
+                                      <Text
+                                        className="text-xs font-black uppercase"
+                                        style={{
+                                          color: selected
+                                            ? "#ffffff"
+                                            : theme.text,
+                                        }}
+                                      >
+                                        {isActive ? "Active" : "Inactive"}
+                                      </Text>
+                                    </Pressable>
+                                  );
+                                })}
+                              </View>
+                              <Text
+                                className="text-xs mt-2"
+                                style={{ color: theme.muted }}
+                              >
+                                A manager must be checked out before being
+                                marked inactive.
+                              </Text>
+                            </View>
+                          )}
 
                           <View>
                             <Text
@@ -2086,7 +2375,13 @@ export default function AddManagerModal() {
                                 className="text-xs font-bold uppercase"
                                 style={{ color: theme.muted }}
                               >
-                                Assigned Tables & Related Waiters
+                                Assigned & Available Tables
+                              </Text>
+                              <Text
+                                className="text-xs"
+                                style={{ color: theme.muted }}
+                              >
+                                Selected tables and waiters are currently assigned.
                               </Text>
 
                               {tableOptions.length > 0 ? (
@@ -2135,67 +2430,64 @@ export default function AddManagerModal() {
                                   className="text-xs italic"
                                   style={{ color: theme.muted }}
                                 >
-                                  No free and unassigned tables are available.
+                                  No assigned or available tables were returned.
                                 </Text>
                               )}
 
-                              {editedTables.length > 0 && (
-                                <View className="gap-2">
-                                  <Text
-                                    className="text-xs font-bold uppercase mt-2"
-                                    style={{ color: theme.muted }}
-                                  >
-                                    Related Waiters
-                                  </Text>
-                                  {waiterOptions.length > 0 ? (
-                                    <View className="flex-row flex-wrap gap-1.5">
-                                      {waiterOptions.map((w: any) => {
-                                        const isSelected =
-                                          editedWaiters.includes(w.id);
-                                        return (
-                                          <Pressable
-                                            key={w.id}
-                                            onPress={() =>
-                                              void toggleEditedWaiterSelection(
-                                                w.id,
-                                              )
-                                            }
-                                            disabled={assignmentLoading}
-                                            className="px-3 py-2 rounded-lg border flex-row items-center gap-1"
+                              <View className="gap-2">
+                                <Text
+                                  className="text-xs font-bold uppercase mt-2"
+                                  style={{ color: theme.muted }}
+                                >
+                                  Assigned & Available Waiters
+                                </Text>
+                                {waiterOptions.length > 0 ? (
+                                  <View className="flex-row flex-wrap gap-1.5">
+                                    {waiterOptions.map((w: any) => {
+                                      const isSelected =
+                                        editedWaiters.includes(w.id);
+                                      return (
+                                        <Pressable
+                                          key={w.id}
+                                          onPress={() =>
+                                            void toggleEditedWaiterSelection(
+                                              w.id,
+                                            )
+                                          }
+                                          disabled={assignmentLoading}
+                                          className="px-3 py-2 rounded-lg border flex-row items-center gap-1"
+                                          style={{
+                                            backgroundColor: isSelected
+                                              ? theme.primary
+                                              : theme.bg,
+                                            borderColor: isSelected
+                                              ? theme.primary
+                                              : theme.border,
+                                          }}
+                                        >
+                                          <Text
+                                            className="text-xs font-bold"
                                             style={{
-                                              backgroundColor: isSelected
-                                                ? theme.primary
-                                                : theme.bg,
-                                              borderColor: isSelected
-                                                ? theme.primary
-                                                : theme.border,
+                                              color: isSelected
+                                                ? "#fff"
+                                                : theme.text,
                                             }}
                                           >
-                                            <Text
-                                              className="text-xs font-bold"
-                                              style={{
-                                                color: isSelected
-                                                  ? "#fff"
-                                                  : theme.text,
-                                              }}
-                                            >
-                                              👤 {w.name}
-                                            </Text>
-                                          </Pressable>
-                                        );
-                                      })}
-                                    </View>
-                                  ) : (
-                                    <Text
-                                      className="text-xs italic"
-                                      style={{ color: theme.muted }}
-                                    >
-                                      No active, available, unassigned waiters
-                                      are available.
-                                    </Text>
-                                  )}
-                                </View>
-                              )}
+                                            👤 {w.name}
+                                          </Text>
+                                        </Pressable>
+                                      );
+                                    })}
+                                  </View>
+                                ) : (
+                                  <Text
+                                    className="text-xs italic"
+                                    style={{ color: theme.muted }}
+                                  >
+                                    No assigned or available waiters were returned.
+                                  </Text>
+                                )}
+                              </View>
                             </View>
                           )}
                         </View>

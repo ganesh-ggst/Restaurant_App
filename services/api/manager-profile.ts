@@ -357,11 +357,15 @@ export const managerProfileApi = {
     );
   },
 
-  async getNotifications(page = 1, limit = 20): Promise<ManagerNotificationPage> {
+  async getNotifications(
+    page = 1,
+    limit = 20,
+    unreadOnly = false,
+  ): Promise<ManagerNotificationPage> {
     const data = requireData(
       await request<ManagerNotificationPage>(
         "GET",
-        `/operations/notifications?page=${page}&limit=${limit}`,
+        `/notifications?unreadOnly=${unreadOnly}&page=${page}&limit=${limit}`,
       ),
       "The server did not return manager notifications.",
     );
@@ -372,14 +376,14 @@ export const managerProfileApi = {
   },
 
   async markNotificationRead(id: string): Promise<void> {
-    await request("PATCH", `/operations/notifications/${encode(id)}/read`);
+    await request("PATCH", `/notifications/${encode(id)}/read`);
   },
 
   async markAllNotificationsRead(): Promise<void> {
-    await request("PATCH", "/operations/notifications/read-all");
+    await request("PATCH", "/notifications/read-all");
   },
 
   async deleteNotification(id: string): Promise<void> {
-    await request("DELETE", `/operations/notifications/${encode(id)}`);
+    await request("DELETE", `/notifications/${encode(id)}`);
   },
 };

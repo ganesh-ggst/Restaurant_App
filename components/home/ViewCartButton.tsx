@@ -5,6 +5,8 @@ export default function ViewCartButton({
   orderMode,
   activeCartTotalItems,
   dineInCartState = "idle",
+  submissionPhase,
+  submissionCountdown,
   onPress,
   theme,
   bottomOffset,
@@ -36,10 +38,16 @@ export default function ViewCartButton({
         {isWaiting ? (
           <>
             <Text className="text-white font-black text-[17px]">
-              Submitting order...
+              {submissionPhase === "submitting"
+                ? "Submitting to kitchen..."
+                : submissionPhase === "sending"
+                  ? "Sending to kitchen..."
+                  : "Preparing order..."}
             </Text>
             <Text className="text-white font-black text-[17px]">
-              Please wait
+              {submissionPhase === "submitting"
+                ? "Please wait"
+                : submissionCountdown || "Please wait"}
             </Text>
           </>
         ) : isApproved ? (

@@ -1,0 +1,41 @@
+diff --git a/node_modules/react-native-css-interop/dist/runtime/components.js b/node_modules/react-native-css-interop/dist/runtime/components.js
+index 7bb1ae4..81d43d4 100644
+--- a/node_modules/react-native-css-interop/dist/runtime/components.js
++++ b/node_modules/react-native-css-interop/dist/runtime/components.js
+@@ -3,6 +3,7 @@
+ Object.defineProperty(exports, "__esModule", { value: true });
+ const react_native_1 = require("react-native");
+ const api_1 = require("./api");
++const ImageBackground_1 = require("react-native/Libraries/Image/ImageBackground");
+ (0, api_1.cssInterop)(react_native_1.Image, { className: "style" });
+ (0, api_1.cssInterop)(react_native_1.Pressable, { className: "style" });
+ (0, api_1.cssInterop)(react_native_1.Switch, { className: "style" });
+@@ -31,7 +32,7 @@ const api_1 = require("./api");
+     columnWrapperClassName: "columnWrapperStyle",
+     contentContainerClassName: "contentContainerStyle",
+ });
+-(0, api_1.remapProps)(react_native_1.ImageBackground, {
++(0, api_1.remapProps)(ImageBackground_1.default, {
+     className: "style",
+     imageClassName: "imageStyle",
+ });
+diff --git a/node_modules/react-native-css-interop/src/runtime/components.ts b/node_modules/react-native-css-interop/src/runtime/components.ts
+index aaf822d..e2edaf7 100644
+--- a/node_modules/react-native-css-interop/src/runtime/components.ts
++++ b/node_modules/react-native-css-interop/src/runtime/components.ts
+@@ -4,7 +4,6 @@ import {
+   ActivityIndicator,
+   FlatList,
+   Image,
+-  ImageBackground,
+   KeyboardAvoidingView,
+   Pressable,
+   ScrollView,
+@@ -19,6 +18,7 @@ import {
+   VirtualizedList,
+ } from "react-native";
+ 
++import ImageBackground from "react-native/Libraries/Image/ImageBackground";
+ import { cssInterop, remapProps } from "./api";
+ 
+ cssInterop(Image, { className: "style" });

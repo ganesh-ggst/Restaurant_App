@@ -5,7 +5,7 @@ import {
   useRouter,
   useSegments,
 } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -52,11 +52,26 @@ export default function StoreDetailDetailComponent() {
     null,
   );
   const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const deliveryDescriptionRef =
+    useRef<React.ElementRef<typeof TextInput>>(null);
 
   const [addressLine, setAddressLine] = useState("");
   const [gpsCoordinates, setGpsCoordinates] = useState("");
   const [thirdVal, setThirdVal] = useState("");
   const [fourthVal, setFourthVal] = useState("");
+  const [fieldError, setFieldError] = useState("");
+  const [chargeErrors, setChargeErrors] = useState<
+    Partial<Record<"packaging" | "platform" | "delivery", string>>
+  >({});
+  const [deliveryErrors, setDeliveryErrors] = useState<
+    Partial<Record<"name" | "price" | "description" | "time", string>>
+  >({});
+  const [wifiErrors, setWifiErrors] = useState<
+    Partial<Record<"name" | "password", string>>
+  >({});
+  const [taxErrors, setTaxErrors] = useState<
+    Partial<Record<"first" | "second", string>>
+  >({});
   const section = isAdmin ? adminSection : managerSection;
 
   useEffect(() => {
@@ -66,7 +81,7 @@ export default function StoreDetailDetailComponent() {
 
     let isCurrent = true;
     (isAdmin
-      ? adminProfileApi.getStoreDetailSection(definition.key)
+      ? adminProfileApi.getStoreDetailSection(definition.key, true)
       : managerProfileApi.getStoreDetailSection(definition.key))
       .then((data) => {
         if (!isCurrent) return;
@@ -131,6 +146,30 @@ export default function StoreDetailDetailComponent() {
     id === "sd_delivery" || section.title.toLowerCase().includes("delivery");
   const isAddressSection =
     id === "sd_address" || section.title.toLowerCase().includes("address");
+  const addressFieldLabel =
+    isAddressSection
+      ? "Address"
+      : isWifiSection
+        ? "Network name"
+        : isTaxSection
+          ? isAdmin
+            ? "CGST percentage"
+            : "GST percentage"
+          : section.title;
+  const updateAddressLine = (value: string) => {
+    setAddressLine(value);
+    if (fieldError) setFieldError("");
+  };
+  const updateChargeValue = (
+    field: "packaging" | "platform" | "delivery",
+    value: string,
+    setter: (nextValue: string) => void,
+  ) => {
+    setter(value);
+    if (chargeErrors[field]) {
+      setChargeErrors((current) => ({ ...current, [field]: undefined }));
+    }
+  };
 
   const fetchCurrentLocation = async () => {
     try {
@@ -187,7 +226,7 @@ export default function StoreDetailDetailComponent() {
     const definition = getStoreDetailDefinition(id);
     if (!definition) return;
     const data = isAdmin
-      ? await adminProfileApi.getStoreDetailSection(definition.key)
+      ? await adminProfileApi.getStoreDetailSection(definition.key, true)
       : await managerProfileApi.getStoreDetailSection(definition.key);
     const nextSection = mapAdminStoreDetailSection(id, data);
     if (nextSection) {
@@ -239,6 +278,11 @@ export default function StoreDetailDetailComponent() {
   };
 
   const openEditor = (opt?: StoreDetailOption) => {
+    setFieldError("");
+    setChargeErrors({});
+    setDeliveryErrors({});
+    setWifiErrors({});
+    setTaxErrors({});
     setEditingOption(opt || null);
     if (isTaxSection && opt) {
       const cgstMatch = opt.subValue
@@ -279,9 +323,9 @@ export default function StoreDetailDetailComponent() {
       setThirdVal(subParts[0] ? subParts[0].trim() : "");
       setFourthVal(subParts[1] ? subParts[1].trim() : "");
     } else if (isAddressSection && opt) {
-      setAddressLine(opt.value || "");
+      setAddressLine(isAdmin ? opt.area || "" : opt.value || "");
       setGpsCoordinates(opt.subValue || "");
-      setThirdVal("");
+      setThirdVal(isAdmin ? opt.phone || "" : "");
       setFourthVal("");
     } else {
       setAddressLine(opt ? opt.value : "");
@@ -293,17 +337,131 @@ export default function StoreDetailDetailComponent() {
   };
 
   const handleSave = async () => {
-    if (!addressLine.trim() && !isChargesSection && !isDeliverySection) {
-      Alert.alert("Error", "Please enter a valid value.");
+    const trimmedAddressLine = addressLine.trim();
+    if (id === "sd_rest") {
+      setAddressLine(trimmedAddressLine);
+    }
+    if (isTaxSection) {
+      setAddressLine(addressLine.trim());
+      setGpsCoordinates(gpsCoordinates.trim());
+      const errors: typeof taxErrors = {};
+      const firstLabel = isAdmin ? "CGST Percentage" : "GST Percentage";
+      if (!addressLine.trim()) {
+        errors.first = `${firstLabel} is required.`;
+      } else if (!Number.isFinite(Number(addressLine.trim()))) {
+        errors.first = `Enter a valid ${firstLabel.toLowerCase()}.`;
+      }
+      if (isAdmin) {
+        if (!gpsCoordinates.trim()) {
+          errors.second = "SGST Percentage is required.";
+        } else if (!Number.isFinite(Number(gpsCoordinates.trim()))) {
+          errors.second = "Enter a valid SGST percentage.";
+        }
+      }
+      if (Object.keys(errors).length > 0) {
+        setTaxErrors(errors);
+        return;
+      }
+    }
+    setTaxErrors({});
+    if (isWifiSection) {
+      setAddressLine(addressLine.trim());
+      setGpsCoordinates(gpsCoordinates.trim());
+      const errors: typeof wifiErrors = {};
+      if (!addressLine.trim()) errors.name = "Network name is required.";
+      if (!gpsCoordinates.trim()) errors.password = "Password is required.";
+      if (Object.keys(errors).length > 0) {
+        setWifiErrors(errors);
+        return;
+      }
+    }
+    setWifiErrors({});
+    if (isChargesSection) {
+      setAddressLine(addressLine.trim());
+      setGpsCoordinates(gpsCoordinates.trim());
+      setThirdVal(thirdVal.trim());
+    }
+    if (isDeliverySection) {
+      const errors: typeof deliveryErrors = {};
+      if (!addressLine.trim()) errors.name = "Delivery Type Title is required.";
+      if (!gpsCoordinates.trim()) {
+        errors.price = "Price / Fee is required.";
+      } else if (!Number.isFinite(Number(gpsCoordinates.trim()))) {
+        errors.price = "Enter a valid Price / Fee.";
+      }
+      if (!thirdVal.trim()) {
+        errors.description = "Subtitle Description is required.";
+      }
+      if (!fourthVal.trim()) {
+        errors.time = "Estimated Time Range is required.";
+      }
+      if (Object.keys(errors).length > 0) {
+        setDeliveryErrors(errors);
+        return;
+      }
+    }
+    setDeliveryErrors({});
+    if (isChargesSection) {
+      const errors: typeof chargeErrors = {};
+      const chargeFields = [
+        ["packaging", addressLine, "Packaging Charge"],
+        ["platform", gpsCoordinates, "Platform Fee"],
+        ["delivery", thirdVal, "Base Delivery Fee"],
+      ] as const;
+      chargeFields.forEach(([field, value, label]) => {
+        const trimmedValue = value.trim();
+        if (!trimmedValue) {
+          errors[field] = `${label} is required.`;
+        } else if (!Number.isFinite(Number(trimmedValue))) {
+          errors[field] = `Enter a valid ${label.toLowerCase()}.`;
+        }
+      });
+      if (Object.keys(errors).length > 0) {
+        setChargeErrors(errors);
+        return;
+      }
+    }
+    setChargeErrors({});
+    if (!trimmedAddressLine && !isChargesSection && !isDeliverySection) {
+      setFieldError(`${addressFieldLabel} is required.`);
       return;
     }
+    setFieldError("");
 
     if (isAdmin) {
       const definition = getStoreDetailDefinition(id);
       if (!definition) return;
 
       let body: Record<string, unknown>;
-      if (id === "sd_rest") {
+      if (editingOption && id === "sd_rest") {
+        body = { name: addressLine.trim() };
+      } else if (editingOption && isAddressSection) {
+        body = { area: addressLine.trim(), phone: thirdVal.trim() };
+      } else if (editingOption && isTaxSection) {
+        body = {
+          cgstPercentage: Number(addressLine) || 0,
+          sgstPercentage: Number(gpsCoordinates) || 0,
+        };
+      } else if (editingOption && isWifiSection) {
+        body = {
+          name: addressLine.trim(),
+          password: gpsCoordinates.trim(),
+        };
+      } else if (editingOption && isChargesSection) {
+        body = {
+          packaging: Number(addressLine) || 0,
+          platform: Number(gpsCoordinates) || 0,
+          delivery: Number(thirdVal) || 0,
+        };
+      } else if (editingOption && isDeliverySection) {
+        body = {
+          name: addressLine.trim(),
+          title: addressLine.trim(),
+          price: Number(gpsCoordinates) || 0,
+          description: thirdVal.trim(),
+          estimatedTimeRange: fourthVal.trim(),
+        };
+      } else if (id === "sd_rest") {
         body = { name: addressLine.trim() };
       } else if (isAddressSection) {
         const coordinates = gpsCoordinates.match(/-?\d+(?:\.\d+)?/g) || [];
@@ -335,7 +493,6 @@ export default function StoreDetailDetailComponent() {
       } else if (isDeliverySection) {
         body = {
           name: addressLine.trim(),
-          title: addressLine.trim(),
           price: Number(gpsCoordinates) || 0,
           description: thirdVal.trim(),
           estimatedTimeRange: fourthVal.trim(),
@@ -354,7 +511,10 @@ export default function StoreDetailDetailComponent() {
             body,
           );
         } else {
-          await adminProfileApi.createStoreDetail(definition.key, body);
+          await adminProfileApi.createStoreDetail(definition.key, {
+            ...body,
+            isActive: true,
+          });
         }
         await refreshSection();
         setIsEditorOpen(false);
@@ -516,14 +676,12 @@ export default function StoreDetailDetailComponent() {
       <ScrollView
         contentContainerStyle={{ padding: 20, paddingBottom: 100 }}
         refreshControl={
-          !isAdmin ? (
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => void handlePullToRefresh()}
-              tintColor={theme.primary}
-              colors={[theme.primary]}
-            />
-          ) : undefined
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void handlePullToRefresh()}
+            tintColor={theme.primary}
+            colors={[theme.primary]}
+          />
         }
       >
         {loading ? (
@@ -635,8 +793,62 @@ export default function StoreDetailDetailComponent() {
                     ? `Edit ${section.title}`
                     : `Add ${section.title}`}
                 </Text>
+                {fieldError ? (
+                  <Text
+                    className="mb-3 text-sm font-semibold"
+                    style={{ color: theme.danger }}
+                  >
+                    {fieldError}
+                  </Text>
+                ) : null}
 
                 {isAddressSection ? (
+                  isAdmin && editingOption ? (
+                    <>
+                      <Text
+                        className="text-xs font-bold mb-1 uppercase"
+                        style={{ color: theme.muted }}
+                      >
+                        Area
+                      </Text>
+                      <TextInput
+                        placeholder="Area"
+                        placeholderTextColor={theme.muted}
+                        value={addressLine}
+                        onChangeText={updateAddressLine}
+                        onBlur={() => setAddressLine(addressLine.trim())}
+                        className="px-4 rounded-xl mb-4 font-bold"
+                        style={{
+                          borderColor: theme.danger,
+                          borderWidth: fieldError ? 2 : 0,
+                          backgroundColor: theme.bg,
+                          color: theme.text,
+                          fontSize: 16,
+                          height: 52,
+                        }}
+                      />
+                      <Text
+                        className="text-xs font-bold mb-1 uppercase"
+                        style={{ color: theme.muted }}
+                      >
+                        Phone
+                      </Text>
+                      <TextInput
+                        placeholder="Phone number"
+                        placeholderTextColor={theme.muted}
+                        value={thirdVal}
+                        onChangeText={setThirdVal}
+                        keyboardType="phone-pad"
+                        className="px-4 rounded-xl mb-6 font-bold"
+                        style={{
+                          backgroundColor: theme.bg,
+                          color: theme.text,
+                          fontSize: 16,
+                          height: 52,
+                        }}
+                      />
+                    </>
+                  ) : (
                   <>
                     <Text
                       className="text-xs font-bold mb-2 uppercase"
@@ -692,10 +904,13 @@ export default function StoreDetailDetailComponent() {
                       placeholder="e.g. Plot 15, Cyber Towers Lane..."
                       placeholderTextColor={theme.muted}
                       value={addressLine}
-                      onChangeText={setAddressLine}
+                      onChangeText={updateAddressLine}
+                      onBlur={() => setAddressLine(addressLine.trim())}
                       multiline
                       className="px-4 py-3 rounded-xl mb-6 font-bold"
                       style={{
+                        borderColor: theme.danger,
+                        borderWidth: fieldError ? 2 : 0,
                         backgroundColor: theme.bg,
                         color: theme.text,
                         fontSize: 16,
@@ -704,22 +919,36 @@ export default function StoreDetailDetailComponent() {
                       }}
                     />
                   </>
+                  )
                 ) : isTaxSection ? (
                   <>
                     <Text
                       className="text-xs font-bold mb-1 uppercase"
                       style={{ color: theme.muted }}
                     >
-                      {isAdmin ? "CGST Percentage (%)" : "GST Percentage (%)"}
+                      {isAdmin ? "CGST Percentage (%) *" : "GST Percentage (%) *"}
                     </Text>
                     <TextInput
                       placeholder="e.g. 2.5"
                       placeholderTextColor={theme.muted}
                       value={addressLine}
-                      onChangeText={setAddressLine}
+                      onChangeText={(value) => {
+                        setAddressLine(value);
+                        if (taxErrors.first) {
+                          setTaxErrors((current) => ({
+                            ...current,
+                            first: undefined,
+                          }));
+                        }
+                      }}
+                      onBlur={() => setAddressLine(addressLine.trim())}
                       keyboardType="numeric"
-                      className="px-4 rounded-xl mb-4 font-bold"
+                      className="px-4 rounded-xl mb-1 font-bold"
                       style={{
+                        borderColor: taxErrors.first
+                          ? theme.danger
+                          : theme.border,
+                        borderWidth: taxErrors.first ? 2 : 1,
                         backgroundColor: theme.bg,
                         color: theme.text,
                         fontSize: 16,
@@ -727,28 +956,63 @@ export default function StoreDetailDetailComponent() {
                       }}
                       autoFocus={true}
                     />
+                    {taxErrors.first ? (
+                      <Text
+                        className="mb-3 text-xs font-semibold"
+                        style={{ color: theme.danger }}
+                      >
+                        {taxErrors.first}
+                      </Text>
+                    ) : (
+                      <View className="mb-3" />
+                    )}
                     {isAdmin ? (
                       <>
                         <Text
                           className="text-xs font-bold mb-1 uppercase"
                           style={{ color: theme.muted }}
                         >
-                          SGST Percentage (%)
+                          SGST Percentage (%) *
                         </Text>
                         <TextInput
                           placeholder="e.g. 2.5"
                           placeholderTextColor={theme.muted}
                           value={gpsCoordinates}
-                          onChangeText={setGpsCoordinates}
+                          onChangeText={(value) => {
+                            setGpsCoordinates(value);
+                            if (taxErrors.second) {
+                              setTaxErrors((current) => ({
+                                ...current,
+                                second: undefined,
+                              }));
+                            }
+                          }}
+                          onBlur={() =>
+                            setGpsCoordinates(gpsCoordinates.trim())
+                          }
                           keyboardType="numeric"
-                          className="px-4 rounded-xl mb-6 font-bold"
+                          className="px-4 rounded-xl mb-1 font-bold"
                           style={{
+                            borderColor: taxErrors.second
+                              ? theme.danger
+                              : theme.border,
+                            borderWidth: taxErrors.second ? 2 : 1,
                             backgroundColor: theme.bg,
                             color: theme.text,
                             fontSize: 16,
                             height: 52,
                           }}
                         />
+                        {taxErrors.second ? (
+                          <Text
+                            className="mb-3 text-xs font-semibold"
+                            style={{ color: theme.danger }}
+                          >
+                            {taxErrors.second}
+                          </Text>
+                        ) : (
+                          <View className="mb-3" />
+                        )}
                         <View className="p-3 mb-6 rounded-xl bg-black/5 dark:bg-white/5 flex-row justify-between items-center">
                           <Text
                             className="text-xs font-bold"
@@ -765,25 +1029,6 @@ export default function StoreDetailDetailComponent() {
                             %
                           </Text>
                         </View>
-                        <Text
-                          className="text-xs font-bold mb-1 uppercase"
-                          style={{ color: theme.muted }}
-                        >
-                          Description
-                        </Text>
-                        <TextInput
-                          placeholder="Optional charge description"
-                          placeholderTextColor={theme.muted}
-                          value={fourthVal}
-                          onChangeText={setFourthVal}
-                          className="px-4 rounded-xl mb-6 font-semibold"
-                          style={{
-                            backgroundColor: theme.bg,
-                            color: theme.text,
-                            fontSize: 16,
-                            height: 52,
-                          }}
-                        />
                       </>
                     ) : null}
                   </>
@@ -799,10 +1044,17 @@ export default function StoreDetailDetailComponent() {
                       placeholder="e.g. 20"
                       placeholderTextColor={theme.muted}
                       value={addressLine}
-                      onChangeText={setAddressLine}
+                      onChangeText={(value) =>
+                        updateChargeValue("packaging", value, setAddressLine)
+                      }
+                      onBlur={() => setAddressLine(addressLine.trim())}
                       keyboardType="numeric"
-                      className="px-4 rounded-xl mb-4 font-bold"
+                      className="px-4 rounded-xl mb-1 font-bold"
                       style={{
+                        borderColor: chargeErrors.packaging
+                          ? theme.danger
+                          : theme.border,
+                        borderWidth: chargeErrors.packaging ? 2 : 1,
                         backgroundColor: theme.bg,
                         color: theme.text,
                         fontSize: 16,
@@ -810,6 +1062,16 @@ export default function StoreDetailDetailComponent() {
                       }}
                       autoFocus={true}
                     />
+                    {chargeErrors.packaging ? (
+                      <Text
+                        className="mb-3 text-xs font-semibold"
+                        style={{ color: theme.danger }}
+                      >
+                        {chargeErrors.packaging}
+                      </Text>
+                    ) : (
+                      <View className="mb-3" />
+                    )}
 
                     <Text
                       className="text-xs font-bold mb-1 uppercase"
@@ -821,16 +1083,35 @@ export default function StoreDetailDetailComponent() {
                       placeholder="e.g. 10"
                       placeholderTextColor={theme.muted}
                       value={gpsCoordinates}
-                      onChangeText={setGpsCoordinates}
+                      onChangeText={(value) =>
+                        updateChargeValue("platform", value, setGpsCoordinates)
+                      }
+                      onBlur={() =>
+                        setGpsCoordinates(gpsCoordinates.trim())
+                      }
                       keyboardType="numeric"
-                      className="px-4 rounded-xl mb-4 font-bold"
+                      className="px-4 rounded-xl mb-1 font-bold"
                       style={{
+                        borderColor: chargeErrors.platform
+                          ? theme.danger
+                          : theme.border,
+                        borderWidth: chargeErrors.platform ? 2 : 1,
                         backgroundColor: theme.bg,
                         color: theme.text,
                         fontSize: 16,
                         height: 52,
                       }}
                     />
+                    {chargeErrors.platform ? (
+                      <Text
+                        className="mb-3 text-xs font-semibold"
+                        style={{ color: theme.danger }}
+                      >
+                        {chargeErrors.platform}
+                      </Text>
+                    ) : (
+                      <View className="mb-3" />
+                    )}
 
                     <Text
                       className="text-xs font-bold mb-1 uppercase"
@@ -842,16 +1123,33 @@ export default function StoreDetailDetailComponent() {
                       placeholder="e.g. 30"
                       placeholderTextColor={theme.muted}
                       value={thirdVal}
-                      onChangeText={setThirdVal}
+                      onChangeText={(value) =>
+                        updateChargeValue("delivery", value, setThirdVal)
+                      }
+                      onBlur={() => setThirdVal(thirdVal.trim())}
                       keyboardType="numeric"
-                      className="px-4 rounded-xl mb-6 font-bold"
+                      className="px-4 rounded-xl mb-1 font-bold"
                       style={{
+                        borderColor: chargeErrors.delivery
+                          ? theme.danger
+                          : theme.border,
+                        borderWidth: chargeErrors.delivery ? 2 : 1,
                         backgroundColor: theme.bg,
                         color: theme.text,
                         fontSize: 16,
                         height: 52,
                       }}
                     />
+                    {chargeErrors.delivery ? (
+                      <Text
+                        className="mb-3 text-xs font-semibold"
+                        style={{ color: theme.danger }}
+                      >
+                        {chargeErrors.delivery}
+                      </Text>
+                    ) : (
+                      <View className="mb-3" />
+                    )}
 
                     <View className="p-3 mb-6 rounded-xl bg-black/5 dark:bg-white/5 flex-row justify-between items-center">
                       <Text
@@ -877,15 +1175,28 @@ export default function StoreDetailDetailComponent() {
                       className="text-xs font-bold mb-1 uppercase"
                       style={{ color: theme.muted }}
                     >
-                      Delivery Type Title
+                      Delivery Type Title *
                     </Text>
                     <TextInput
                       placeholder="e.g. Express, Standard, Eco Saver"
                       placeholderTextColor={theme.muted}
                       value={addressLine}
-                      onChangeText={setAddressLine}
-                      className="px-4 rounded-xl mb-4 font-bold"
+                      onChangeText={(value) => {
+                        updateAddressLine(value);
+                        if (deliveryErrors.name) {
+                          setDeliveryErrors((current) => ({
+                            ...current,
+                            name: undefined,
+                          }));
+                        }
+                      }}
+                      onBlur={() => setAddressLine(addressLine.trim())}
+                      className="px-4 rounded-xl mb-1 font-bold"
                       style={{
+                        borderColor: deliveryErrors.name
+                          ? theme.danger
+                          : theme.border,
+                        borderWidth: deliveryErrors.name ? 2 : 1,
                         backgroundColor: theme.bg,
                         color: theme.text,
                         fontSize: 16,
@@ -893,101 +1204,250 @@ export default function StoreDetailDetailComponent() {
                       }}
                       autoFocus={true}
                     />
+                    {deliveryErrors.name ? (
+                      <Text className="mb-3 text-xs font-semibold" style={{ color: theme.danger }}>
+                        {deliveryErrors.name}
+                      </Text>
+                    ) : (
+                      <View className="mb-3" />
+                    )}
 
                     <Text
                       className="text-xs font-bold mb-1 uppercase"
                       style={{ color: theme.muted }}
                     >
-                      Price / Fee (₹) [Use -10 for discounts]
+                      Price / Fee (₹) [Use -10 for discounts] *
                     </Text>
                     <TextInput
                       placeholder="e.g. 29, 0, -10"
                       placeholderTextColor={theme.muted}
                       value={gpsCoordinates}
-                      onChangeText={setGpsCoordinates}
+                      onChangeText={(value) => {
+                        setGpsCoordinates(value);
+                        if (deliveryErrors.price) {
+                          setDeliveryErrors((current) => ({
+                            ...current,
+                            price: undefined,
+                          }));
+                        }
+                      }}
+                      onBlur={() => setGpsCoordinates(gpsCoordinates.trim())}
                       keyboardType="numeric"
-                      className="px-4 rounded-xl mb-4 font-bold"
+                      className="px-4 rounded-xl mb-1 font-bold"
                       style={{
+                        borderColor: deliveryErrors.price
+                          ? theme.danger
+                          : theme.border,
+                        borderWidth: deliveryErrors.price ? 2 : 1,
                         backgroundColor: theme.bg,
                         color: theme.text,
                         fontSize: 16,
                         height: 52,
                       }}
                     />
+                    {deliveryErrors.price ? (
+                      <Text className="mb-3 text-xs font-semibold" style={{ color: theme.danger }}>
+                        {deliveryErrors.price}
+                      </Text>
+                    ) : (
+                      <View className="mb-3" />
+                    )}
 
                     <Text
                       className="text-xs font-bold mb-1 uppercase"
                       style={{ color: theme.muted }}
                     >
-                      Subtitle Description
+                      Subtitle Description *
                     </Text>
                     <TextInput
+                      key={editingOption?.id ?? "new-delivery-option"}
+                      ref={deliveryDescriptionRef}
                       placeholder="e.g. Fastest delivery, directly to you!"
                       placeholderTextColor={theme.muted}
                       value={thirdVal}
-                      onChangeText={setThirdVal}
-                      className="px-4 rounded-xl mb-4 font-bold"
+                      onChangeText={(value) => {
+                        setThirdVal(value);
+                        if (deliveryErrors.description) {
+                          setDeliveryErrors((current) => ({
+                            ...current,
+                            description: undefined,
+                          }));
+                        }
+                      }}
+                      onBlur={() => setThirdVal(thirdVal.trim())}
+                      onFocus={() => {
+                        const end = thirdVal.length;
+                        requestAnimationFrame(() => {
+                          deliveryDescriptionRef.current?.setNativeProps({
+                            selection: { start: end, end },
+                          });
+                        });
+                      }}
+                      className="px-4 rounded-xl mb-1 font-bold"
                       style={{
+                        borderColor: deliveryErrors.description
+                          ? theme.danger
+                          : theme.border,
+                        borderWidth: deliveryErrors.description ? 2 : 1,
                         backgroundColor: theme.bg,
                         color: theme.text,
                         fontSize: 16,
                         height: 52,
                       }}
                     />
+                    {deliveryErrors.description ? (
+                      <Text className="mb-3 text-xs font-semibold" style={{ color: theme.danger }}>
+                        {deliveryErrors.description}
+                      </Text>
+                    ) : (
+                      <View className="mb-3" />
+                    )}
 
                     <Text
                       className="text-xs font-bold mb-1 uppercase"
                       style={{ color: theme.muted }}
                     >
-                      Estimated Time Range
+                      Estimated Time Range *
                     </Text>
                     <TextInput
                       placeholder="e.g. 20-25 mins"
                       placeholderTextColor={theme.muted}
                       value={fourthVal}
-                      onChangeText={setFourthVal}
-                      className="px-4 rounded-xl mb-6 font-bold"
+                      onChangeText={(value) => {
+                        setFourthVal(value);
+                        if (deliveryErrors.time) {
+                          setDeliveryErrors((current) => ({
+                            ...current,
+                            time: undefined,
+                          }));
+                        }
+                      }}
+                      onBlur={() => setFourthVal(fourthVal.trim())}
+                      className="px-4 rounded-xl mb-1 font-bold"
                       style={{
+                        borderColor: deliveryErrors.time
+                          ? theme.danger
+                          : theme.border,
+                        borderWidth: deliveryErrors.time ? 2 : 1,
                         backgroundColor: theme.bg,
                         color: theme.text,
                         fontSize: 16,
                         height: 52,
                       }}
                     />
+                    {deliveryErrors.time ? (
+                      <Text className="mb-3 text-xs font-semibold" style={{ color: theme.danger }}>
+                        {deliveryErrors.time}
+                      </Text>
+                    ) : null}
                   </>
                 ) : (
                   <>
-                    <TextInput
-                      placeholder={
-                        id === "sd_wifi"
-                          ? "Network SSID (Name)..."
-                          : "Enter Name"
-                      }
-                      placeholderTextColor={theme.muted}
-                      value={addressLine}
-                      onChangeText={setAddressLine}
-                      className="px-4 rounded-xl mb-4 font-bold"
-                      style={{
-                        backgroundColor: theme.bg,
-                        color: theme.text,
-                        fontSize: 16,
-                        height: 52,
-                      }}
-                      autoFocus={true}
-                    />
-                    {id === "sd_wifi" && (
+                    {isWifiSection ? (
+                      <>
+                        <Text
+                          className="text-xs font-bold mb-1 uppercase"
+                          style={{ color: theme.muted }}
+                        >
+                          Network SSID (Name) *
+                        </Text>
+                        <TextInput
+                          placeholder="Network SSID (Name)..."
+                          placeholderTextColor={theme.muted}
+                          value={addressLine}
+                          onChangeText={(value) => {
+                            updateAddressLine(value);
+                            if (wifiErrors.name) {
+                              setWifiErrors((current) => ({
+                                ...current,
+                                name: undefined,
+                              }));
+                            }
+                          }}
+                          onBlur={() => setAddressLine(addressLine.trim())}
+                          className="px-4 rounded-xl mb-1 font-bold"
+                          style={{
+                            borderColor: wifiErrors.name
+                              ? theme.danger
+                              : theme.border,
+                            borderWidth: wifiErrors.name ? 2 : 1,
+                            backgroundColor: theme.bg,
+                            color: theme.text,
+                            fontSize: 16,
+                            height: 52,
+                          }}
+                          autoFocus={true}
+                        />
+                        {wifiErrors.name ? (
+                          <Text
+                            className="mb-3 text-xs font-semibold"
+                            style={{ color: theme.danger }}
+                          >
+                            {wifiErrors.name}
+                          </Text>
+                        ) : (
+                          <View className="mb-3" />
+                        )}
+                        <Text
+                          className="text-xs font-bold mb-1 uppercase"
+                          style={{ color: theme.muted }}
+                        >
+                          Password *
+                        </Text>
+                        <TextInput
+                          placeholder="Password..."
+                          placeholderTextColor={theme.muted}
+                          value={gpsCoordinates}
+                          onChangeText={(value) => {
+                            setGpsCoordinates(value);
+                            if (wifiErrors.password) {
+                              setWifiErrors((current) => ({
+                                ...current,
+                                password: undefined,
+                              }));
+                            }
+                          }}
+                          onBlur={() =>
+                            setGpsCoordinates(gpsCoordinates.trim())
+                          }
+                          className="px-4 rounded-xl mb-1 font-semibold"
+                          style={{
+                            borderColor: wifiErrors.password
+                              ? theme.danger
+                              : theme.border,
+                            borderWidth: wifiErrors.password ? 2 : 1,
+                            backgroundColor: theme.bg,
+                            color: theme.text,
+                            fontSize: 16,
+                            height: 52,
+                          }}
+                        />
+                        {wifiErrors.password ? (
+                          <Text
+                            className="mb-3 text-xs font-semibold"
+                            style={{ color: theme.danger }}
+                          >
+                            {wifiErrors.password}
+                          </Text>
+                        ) : null}
+                      </>
+                    ) : (
                       <TextInput
-                        placeholder="Password..."
+                        placeholder="Enter Name"
                         placeholderTextColor={theme.muted}
-                        value={gpsCoordinates}
-                        onChangeText={setGpsCoordinates}
-                        className="px-4 rounded-xl mb-6 font-semibold"
+                        value={addressLine}
+                        onChangeText={updateAddressLine}
+                        onBlur={() => setAddressLine(addressLine.trim())}
+                        className="px-4 rounded-xl mb-4 font-bold"
                         style={{
+                          borderColor: theme.danger,
+                          borderWidth: fieldError ? 2 : 0,
                           backgroundColor: theme.bg,
                           color: theme.text,
                           fontSize: 16,
                           height: 52,
                         }}
+                        autoFocus={true}
                       />
                     )}
                   </>

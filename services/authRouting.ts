@@ -1,3 +1,12 @@
+export type ManagerDestination =
+  | "/(manager)/floor"
+  | "/(manager)/operations";
+
+export type AuthDestination =
+  | ManagerDestination
+  | "/(admin)"
+  | "/(home)/(tabs)";
+
 export function normalizeManagerType(managerType?: string | null): string {
   return managerType?.trim().toLowerCase().replace(/[^a-z]/g, "") || "";
 }
@@ -11,7 +20,9 @@ export function isKnownManagerType(managerType?: string | null): boolean {
   );
 }
 
-export function getManagerDestination(managerType?: string | null): string {
+export function getManagerDestination(
+  managerType?: string | null,
+): ManagerDestination {
   return normalizeManagerType(managerType).includes("floor")
     ? "/(manager)/floor"
     : "/(manager)/operations";
@@ -20,7 +31,7 @@ export function getManagerDestination(managerType?: string | null): string {
 export function getAuthDestination(
   role: string,
   managerType?: string | null,
-): string {
+): AuthDestination {
   const normalizedRole = role.trim().toLowerCase();
   switch (normalizedRole) {
     case "admin":
@@ -30,6 +41,6 @@ export function getAuthDestination(
     case "user":
     case "waiter":
     default:
-      return "/(home)";
+      return "/(home)/(tabs)";
   }
 }

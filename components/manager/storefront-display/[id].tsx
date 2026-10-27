@@ -1,4 +1,5 @@
 import { Feather } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
 import {
   useLocalSearchParams,
   useRouter,
@@ -7,6 +8,8 @@ import {
 import { useEffect, useState } from "react";
 import {
   Alert,
+  ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -26,6 +29,7 @@ import {
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { adminProfileApi } from "../../../services/api/admin-profile";
 import { managerProfileApi } from "../../../services/api/manager-profile";
+import { operationsApi } from "../../../services/api/operations";
 import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
 import {
@@ -47,6 +51,7 @@ export default function StorefrontDisplayDetailComponent() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [editingOption, setEditingOption] = useState<StoreDetailOption | null>(
     null,
   );
@@ -55,6 +60,7 @@ export default function StorefrontDisplayDetailComponent() {
   const [val1, setVal1] = useState("");
   const [val2, setVal2] = useState("");
   const [mediaUri, setMediaUri] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const section = isAdmin ? adminSection : managerSection;
 
   useEffect(() => {
@@ -64,7 +70,7 @@ export default function StorefrontDisplayDetailComponent() {
 
     let isCurrent = true;
     (isAdmin
-      ? adminProfileApi.getStorefrontSection(definition.key)
+      ? adminProfileApi.getStorefrontSection(definition.key, true)
       : managerProfileApi.getStorefrontSection(definition.key))
       .then((data) => {
         if (!isCurrent) return;
@@ -123,16 +129,105 @@ export default function StorefrontDisplayDetailComponent() {
     );
   }
 
-  const isCelebrationsSection = id === "sf_celebrations";
   const isFeaturedSection = id === "sf_featured";
   const isEmptySection = id === "sf_empty";
   const isSingleInputSection = id === "sf_greetings" || id === "sf_search";
+  const singleInputLabel =
+    id === "sf_greetings" ? "Greeting Text" : "Search Placeholder";
+  const singleInputPlaceholder =
+    id === "sf_greetings"
+      ? "e.g. Welcome to Spice Garden!"
+      : "e.g. Search for 'Chicken'";
+  const updateField = (
+    field: string,
+    value: string,
+    setter: (nextValue: string) => void,
+  ) => {
+    setter(value);
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  };
+  const fieldInputStyle = (field: string) =>
+    fieldErrors[field]
+      ? { borderColor: theme.danger, borderWidth: 2 }
+      : undefined;
+
+  const pickFeaturedImage = async (source: "camera" | "gallery") => {
+    if (uploadingImage) return;
+    try {
+      if (source === "camera") {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert(
+            "Camera access required",
+            "Allow camera access to take a featured-content photo.",
+          );
+          return;
+        }
+      } else {
+        const permission =
+          await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert(
+            "Photo access required",
+            "Allow photo library access to attach a featured-content image.",
+          );
+          return;
+        }
+      }
+
+      const pickerOptions: ImagePicker.ImagePickerOptions = {
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [16, 9],
+        quality: 0.85,
+      };
+      const result =
+        source === "camera"
+          ? await ImagePicker.launchCameraAsync(pickerOptions)
+          : await ImagePicker.launchImageLibraryAsync(pickerOptions);
+      const asset = result.assets?.[0];
+      if (result.canceled || !asset) return;
+
+      setUploadingImage(true);
+      const mimeType = asset.mimeType || "image/jpeg";
+      const extension = mimeType.split("/")[1] || "jpg";
+      const [uploadedUrl] = await operationsApi.uploadMenuImages(
+        [
+          {
+            uri: asset.uri,
+            fileName:
+              asset.fileName || `featured-content-${Date.now()}.${extension}`,
+            mimeType,
+          },
+        ],
+        "storefront-display",
+      );
+      setMediaUri(uploadedUrl);
+      setFieldErrors((current) => {
+        const next = { ...current };
+        delete next.mediaUri;
+        return next;
+      });
+    } catch (error) {
+      Alert.alert(
+        "Unable to attach image",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setUploadingImage(false);
+    }
+  };
 
   const refreshSection = async () => {
     const definition = getStorefrontDefinition(id);
     if (!definition) return;
     const data = isAdmin
-      ? await adminProfileApi.getStorefrontSection(definition.key)
+      ? await adminProfileApi.getStorefrontSection(definition.key, true)
       : await managerProfileApi.getStorefrontSection(definition.key);
     const nextSection = mapAdminStorefrontSection(id, data);
     if (nextSection) {
@@ -184,6 +279,7 @@ export default function StorefrontDisplayDetailComponent() {
   };
 
   const openEditor = (opt?: StoreDetailOption) => {
+    setFieldErrors({});
     setEditingOption(opt || null);
     if (isFeaturedSection && opt) {
       setVal1(opt.value || "");
@@ -203,53 +299,34 @@ export default function StorefrontDisplayDetailComponent() {
   };
 
   const handleSave = async () => {
-    if (isCelebrationsSection) {
-      if (!val1.trim()) {
-        Alert.alert("Error", "Emoji field is mandatory.");
-        return;
-      }
-      const hasEmoji = /\p{Extended_Pictographic}/u.test(val1);
-      const hasAlphabets = /[a-zA-Z]/u.test(val1);
+    const trimmedVal1 = val1.trim();
+    const trimmedVal2 = val2.trim();
+    const trimmedMediaUri = mediaUri.trim();
+    setVal1(trimmedVal1);
+    setVal2(trimmedVal2);
+    setMediaUri(trimmedMediaUri);
 
-      if (!hasEmoji || hasAlphabets) {
-        Alert.alert(
-          "Invalid Input",
-          "Please enter an emoji character only (alphabets and text are not allowed).",
-          [{ text: "OK", onPress: () => setVal1("") }],
-        );
-        return;
-      }
-    } else if (isFeaturedSection) {
-      if (!val1.trim() || !val2.trim() || !mediaUri.trim()) {
-        Alert.alert(
-          "Error",
-          "All fields (Title, Subtitle, and Media file) are mandatory!",
-        );
-        return;
-      }
-      if (!/^https?:\/\//i.test(mediaUri.trim())) {
-        Alert.alert(
-          "Image URL required",
-          "Enter a public http or https image URL to save featured content.",
-        );
-        return;
+    const errors: Record<string, string> = {};
+    if (isFeaturedSection) {
+      if (!trimmedVal1) errors.val1 = "Title is required.";
+      if (!trimmedVal2) errors.val2 = "Subtitle is required.";
+      if (!trimmedMediaUri) errors.mediaUri = "Featured image is required.";
+      else if (!/^https?:\/\/\S+$/i.test(trimmedMediaUri)) {
+        errors.mediaUri = "Attach a valid image from your gallery or camera.";
       }
     } else if (isEmptySection) {
-      if (!val1.trim() || !val2.trim()) {
-        Alert.alert("Error", "Both Title and Description are mandatory!");
-        return;
-      }
+      if (!trimmedVal1) errors.val1 = "Title is required.";
+      if (!trimmedVal2) errors.val2 = "Description is required.";
     } else if (isSingleInputSection) {
-      if (!val1.trim()) {
-        Alert.alert("Error", "This field is mandatory!");
-        return;
-      }
+      if (!trimmedVal1) errors.val1 = "Text is required.";
     } else {
-      if (!val1.trim()) {
-        Alert.alert("Error", "Field is mandatory!");
-        return;
-      }
+      if (!trimmedVal1) errors.val1 = "This field is required.";
     }
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      return;
+    }
+    setFieldErrors({});
 
     if (isAdmin) {
       const definition = getStorefrontDefinition(id);
@@ -267,8 +344,6 @@ export default function StorefrontDisplayDetailComponent() {
         };
       } else if (isEmptySection) {
         body = { title: val1.trim(), description: val2.trim() };
-      } else if (isCelebrationsSection) {
-        body = { emoji: val1.trim() };
       } else {
         Alert.alert("Unsupported storefront section", "This section cannot be saved.");
         return;
@@ -283,7 +358,10 @@ export default function StorefrontDisplayDetailComponent() {
             body,
           );
         } else {
-          await adminProfileApi.createStorefrontItem(definition.key, body);
+          await adminProfileApi.createStorefrontItem(definition.key, {
+            ...body,
+            isActive: true,
+          });
         }
         await refreshSection();
         setIsEditorOpen(false);
@@ -312,8 +390,6 @@ export default function StorefrontDisplayDetailComponent() {
       };
     } else if (isEmptySection) {
       body = { title: val1.trim(), description: val2.trim() };
-    } else if (isCelebrationsSection) {
-      body = { emoji: val1.trim(), description: val2.trim() };
     } else {
       Alert.alert("Unsupported storefront section", "This section cannot be saved.");
       return;
@@ -541,58 +617,7 @@ export default function StorefrontDisplayDetailComponent() {
                     ? `Edit ${section.title}`
                     : `Add ${section.title}`}
                 </Text>
-
-                {isCelebrationsSection ? (
-                  <>
-                    <Text
-                      className="text-xs font-bold mb-1 uppercase"
-                      style={{ color: theme.muted }}
-                    >
-                      Emoji Character Only *
-                    </Text>
-                    <TextInput
-                      placeholder="🌸"
-                      placeholderTextColor={theme.muted + "44"}
-                      value={val1}
-                      onChangeText={setVal1}
-                      maxLength={4}
-                      className="rounded-xl mb-6 font-bold"
-                      style={{
-                        backgroundColor: theme.bg,
-                        color: theme.text,
-                        fontSize: 26,
-                        height: 48,
-                        textAlign: "center",
-                        textAlignVertical: "center",
-                        paddingHorizontal: 0,
-                      }}
-                      autoFocus={true}
-                    />
-                    {!isAdmin ? (
-                      <>
-                        <Text
-                          className="text-xs font-bold mb-1 uppercase"
-                          style={{ color: theme.muted }}
-                        >
-                          Description
-                        </Text>
-                        <TextInput
-                          placeholder="Describe the celebration"
-                          placeholderTextColor={theme.muted + "44"}
-                          value={val2}
-                          onChangeText={setVal2}
-                          className="px-4 rounded-xl mb-6 font-semibold"
-                          style={{
-                            backgroundColor: theme.bg,
-                            color: theme.text,
-                            fontSize: 16,
-                            height: 52,
-                          }}
-                        />
-                      </>
-                    ) : null}
-                  </>
-                ) : isFeaturedSection ? (
+                {isFeaturedSection ? (
                   <>
                     <Text
                       className="text-xs font-bold mb-1 uppercase"
@@ -604,9 +629,11 @@ export default function StorefrontDisplayDetailComponent() {
                       placeholder="e.g. Freshly Crafted Daily"
                       placeholderTextColor={theme.muted + "44"}
                       value={val1}
-                      onChangeText={setVal1}
+                      onChangeText={(value) => updateField("val1", value, setVal1)}
+                      onBlur={() => setVal1(val1.trim())}
                       className="px-4 rounded-xl mb-4 font-bold"
                       style={{
+                        ...(fieldInputStyle("val1") || {}),
                         backgroundColor: theme.bg,
                         color: theme.text,
                         fontSize: 16,
@@ -614,6 +641,14 @@ export default function StorefrontDisplayDetailComponent() {
                       }}
                       autoFocus={true}
                     />
+                    {fieldErrors.val1 ? (
+                      <Text
+                        className="mb-3 text-xs font-semibold"
+                        style={{ color: theme.danger }}
+                      >
+                        {fieldErrors.val1}
+                      </Text>
+                    ) : null}
 
                     <Text
                       className="text-xs font-bold mb-1 uppercase"
@@ -622,40 +657,106 @@ export default function StorefrontDisplayDetailComponent() {
                       Subtitle *
                     </Text>
                     <TextInput
-                      placeholder="e.g. Featured Reel Banner"
+                      placeholder="e.g. Freshly made, just for you"
                       placeholderTextColor={theme.muted + "44"}
                       value={val2}
-                      onChangeText={setVal2}
+                      onChangeText={(value) => updateField("val2", value, setVal2)}
+                      onBlur={() => setVal2(val2.trim())}
                       className="px-4 rounded-xl mb-4 font-semibold"
                       style={{
+                        ...(fieldInputStyle("val2") || {}),
                         backgroundColor: theme.bg,
                         color: theme.text,
                         fontSize: 16,
                         height: 52,
                       }}
                     />
+                    {fieldErrors.val2 ? (
+                      <Text
+                        className="mb-3 text-xs font-semibold"
+                        style={{ color: theme.danger }}
+                      >
+                        {fieldErrors.val2}
+                      </Text>
+                    ) : null}
 
                     <Text
-                      className="text-xs font-bold mb-1 uppercase"
+                      className="text-xs font-bold mb-2 uppercase"
                       style={{ color: theme.muted }}
                     >
-                      Image URL *
+                      Featured Image *
                     </Text>
-                    <TextInput
-                      placeholder="https://example.com/image.jpg"
-                      placeholderTextColor={theme.muted + "44"}
-                      value={mediaUri}
-                      onChangeText={setMediaUri}
-                      autoCapitalize="none"
-                      keyboardType="url"
-                      className="px-4 rounded-xl mb-6 font-semibold"
-                      style={{
-                        backgroundColor: theme.bg,
-                        color: theme.text,
-                        fontSize: 16,
-                        height: 52,
-                      }}
-                    />
+                    {mediaUri ? (
+                      <Image
+                        source={{ uri: mediaUri }}
+                        resizeMode="cover"
+                        style={{
+                          width: "100%",
+                          height: 160,
+                          borderRadius: 12,
+                          marginBottom: 12,
+                          backgroundColor: theme.bg,
+                        }}
+                      />
+                    ) : null}
+                    <View className="mb-6 flex-row gap-3">
+                      <Pressable
+                        onPress={() => void pickFeaturedImage("gallery")}
+                        disabled={uploadingImage || saving}
+                        className="flex-1 flex-row items-center justify-center gap-2 rounded-xl border p-3"
+                        style={{
+                          borderColor: fieldErrors.mediaUri
+                            ? theme.danger
+                            : theme.primary,
+                          borderWidth: fieldErrors.mediaUri ? 2 : 1,
+                          opacity: uploadingImage ? 0.6 : 1,
+                        }}
+                      >
+                        <Feather name="image" size={18} color={theme.primary} />
+                        <Text
+                          className="text-sm font-bold"
+                          style={{ color: theme.primary }}
+                        >
+                          Gallery
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => void pickFeaturedImage("camera")}
+                        disabled={uploadingImage || saving}
+                        className="flex-1 flex-row items-center justify-center gap-2 rounded-xl border p-3"
+                        style={{
+                          borderColor: fieldErrors.mediaUri
+                            ? theme.danger
+                            : theme.primary,
+                          borderWidth: fieldErrors.mediaUri ? 2 : 1,
+                          opacity: uploadingImage ? 0.6 : 1,
+                        }}
+                      >
+                        <Feather name="camera" size={18} color={theme.primary} />
+                        <Text
+                          className="text-sm font-bold"
+                          style={{ color: theme.primary }}
+                        >
+                          Camera
+                        </Text>
+                      </Pressable>
+                    </View>
+                    {fieldErrors.mediaUri ? (
+                      <Text
+                        className="mb-3 text-xs font-semibold"
+                        style={{ color: theme.danger }}
+                      >
+                        {fieldErrors.mediaUri}
+                      </Text>
+                    ) : null}
+                    {uploadingImage ? (
+                      <View className="mb-4 flex-row items-center justify-center gap-2">
+                        <ActivityIndicator color={theme.primary} />
+                        <Text style={{ color: theme.muted }}>
+                          Uploading image...
+                        </Text>
+                      </View>
+                    ) : null}
                   </>
                 ) : isEmptySection ? (
                   <>
@@ -666,12 +767,14 @@ export default function StorefrontDisplayDetailComponent() {
                       Title *
                     </Text>
                     <TextInput
-                      placeholder="e.g. Oops! No matches found."
+                      placeholder="e.g. No matching dishes found"
                       placeholderTextColor={theme.muted + "44"}
                       value={val1}
-                      onChangeText={setVal1}
+                      onChangeText={(value) => updateField("val1", value, setVal1)}
+                      onBlur={() => setVal1(val1.trim())}
                       className="px-4 rounded-xl mb-4 font-bold"
                       style={{
+                        ...(fieldInputStyle("val1") || {}),
                         backgroundColor: theme.bg,
                         color: theme.text,
                         fontSize: 16,
@@ -679,6 +782,14 @@ export default function StorefrontDisplayDetailComponent() {
                       }}
                       autoFocus={true}
                     />
+                    {fieldErrors.val1 ? (
+                      <Text
+                        className="mb-3 text-xs font-semibold"
+                        style={{ color: theme.danger }}
+                      >
+                        {fieldErrors.val1}
+                      </Text>
+                    ) : null}
 
                     <Text
                       className="text-xs font-bold mb-1 uppercase"
@@ -687,18 +798,28 @@ export default function StorefrontDisplayDetailComponent() {
                       Description *
                     </Text>
                     <TextInput
-                      placeholder="e.g. We couldn't find anything matching..."
+                      placeholder="e.g. Try another dish or search term"
                       placeholderTextColor={theme.muted + "44"}
                       value={val2}
-                      onChangeText={setVal2}
+                      onChangeText={(value) => updateField("val2", value, setVal2)}
+                      onBlur={() => setVal2(val2.trim())}
                       className="px-4 rounded-xl mb-6 font-semibold"
                       style={{
+                        ...(fieldInputStyle("val2") || {}),
                         backgroundColor: theme.bg,
                         color: theme.text,
                         fontSize: 16,
                         height: 52,
                       }}
                     />
+                    {fieldErrors.val2 ? (
+                      <Text
+                        className="mb-3 text-xs font-semibold"
+                        style={{ color: theme.danger }}
+                      >
+                        {fieldErrors.val2}
+                      </Text>
+                    ) : null}
                   </>
                 ) : isSingleInputSection ? (
                   <>
@@ -706,15 +827,17 @@ export default function StorefrontDisplayDetailComponent() {
                       className="text-xs font-bold mb-1 uppercase"
                       style={{ color: theme.muted }}
                     >
-                      Text *
+                      {singleInputLabel} *
                     </Text>
                     <TextInput
-                      placeholder="Enter value..."
+                      placeholder={singleInputPlaceholder}
                       placeholderTextColor={theme.muted + "44"}
                       value={val1}
-                      onChangeText={setVal1}
+                      onChangeText={(value) => updateField("val1", value, setVal1)}
+                      onBlur={() => setVal1(val1.trim())}
                       className="px-4 rounded-xl mb-6 font-bold"
                       style={{
+                        ...(fieldInputStyle("val1") || {}),
                         backgroundColor: theme.bg,
                         color: theme.text,
                         fontSize: 16,
@@ -722,6 +845,14 @@ export default function StorefrontDisplayDetailComponent() {
                       }}
                       autoFocus={true}
                     />
+                    {fieldErrors.val1 ? (
+                      <Text
+                        className="mb-3 text-xs font-semibold"
+                        style={{ color: theme.danger }}
+                      >
+                        {fieldErrors.val1}
+                      </Text>
+                    ) : null}
                   </>
                 ) : (
                   <>
@@ -732,12 +863,14 @@ export default function StorefrontDisplayDetailComponent() {
                       Title *
                     </Text>
                     <TextInput
-                      placeholder="Enter title..."
+                      placeholder="e.g. A little something special"
                       placeholderTextColor={theme.muted + "44"}
                       value={val1}
-                      onChangeText={setVal1}
+                      onChangeText={(value) => updateField("val1", value, setVal1)}
+                      onBlur={() => setVal1(val1.trim())}
                       className="px-4 rounded-xl mb-4 font-bold"
                       style={{
+                        ...(fieldInputStyle("val1") || {}),
                         backgroundColor: theme.bg,
                         color: theme.text,
                         fontSize: 16,
@@ -745,6 +878,15 @@ export default function StorefrontDisplayDetailComponent() {
                       }}
                       autoFocus={true}
                     />
+                    {fieldErrors.val1 ? (
+                      <Text
+                        className="mb-3 text-xs font-semibold"
+                        style={{ color: theme.danger }}
+                      >
+                        {fieldErrors.val1}
+                      </Text>
+                    ) : null}
+
                     <Text
                       className="text-xs font-bold mb-1 uppercase"
                       style={{ color: theme.muted }}
@@ -752,18 +894,28 @@ export default function StorefrontDisplayDetailComponent() {
                       Subtitle *
                     </Text>
                     <TextInput
-                      placeholder="Enter subtitle..."
+                      placeholder="e.g. Enjoy a fresh meal made to order"
                       placeholderTextColor={theme.muted + "44"}
                       value={val2}
-                      onChangeText={setVal2}
+                      onChangeText={(value) => updateField("val2", value, setVal2)}
+                      onBlur={() => setVal2(val2.trim())}
                       className="px-4 rounded-xl mb-6 font-semibold"
                       style={{
+                        ...(fieldInputStyle("val2") || {}),
                         backgroundColor: theme.bg,
                         color: theme.text,
                         fontSize: 16,
                         height: 52,
                       }}
                     />
+                    {fieldErrors.val2 ? (
+                      <Text
+                        className="mb-3 text-xs font-semibold"
+                        style={{ color: theme.danger }}
+                      >
+                        {fieldErrors.val2}
+                      </Text>
+                    ) : null}
                   </>
                 )}
 
@@ -777,7 +929,7 @@ export default function StorefrontDisplayDetailComponent() {
                   <Button
                     title={saving ? "Saving..." : "Save"}
                     onPress={handleSave}
-                    disabled={saving}
+                    disabled={saving || uploadingImage}
                     className="py-3 px-8"
                   />
                 </View>
