@@ -1,15 +1,15 @@
 {
   "expo": {
-    "name": "Restaurant_App",
-    "slug": "Restaurant_App",
+    "name": "Green Spice",
+    "slug": "green-spice",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "restaurantapp",
+    "scheme": "green-spice",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.siva.ggstinnovations.restaurantapp",
+      "bundleIdentifier": "com.siva.ggstinnovations.green-spice",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -23,13 +23,14 @@
         "monochromeImage": "./assets/images/android-apk-icon-monochrome-padded.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.siva.ggstinnovations.restaurantapp"
+      "package": "com.siva.ggstinnovations.green_spice"
     },
     "web": {
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      "./plugins/withWindowsCmakeObjectPaths",
       [
         "expo-build-properties",
         {
