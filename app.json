@@ -9,7 +9,7 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.siva.ggstinnovations.green-spice",
+      "bundleIdentifier": "com.ggst.greenspice",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -23,7 +23,7 @@
         "monochromeImage": "./assets/images/android-apk-icon-monochrome-padded.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.siva.ggstinnovations.green_spice"
+      "package": "com.ggst.greenspice"
     },
     "web": {
       "output": "static",
