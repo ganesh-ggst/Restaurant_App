@@ -18,7 +18,7 @@
       "softwareKeyboardLayoutMode": "resize",
       "icon": "./assets/images/android-apk-icon.png",
       "adaptiveIcon": {
-        "backgroundColor": "#FCF5E9",
+        "backgroundColor": "#1A3B1D",
         "foregroundImage": "./assets/images/android-apk-icon-foreground.png",
         "monochromeImage": "./assets/images/android-apk-icon-monochrome-padded.png"
       },
