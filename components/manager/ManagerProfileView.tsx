@@ -39,6 +39,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { useCurrentManager } from "../../hooks/useCurrentManager";
+import { saveThemePreference } from "../../services/theme-preference";
 import {
   AdminProfile,
   adminProfileApi,
@@ -104,6 +105,21 @@ export default function ManagerProfileView({
   const [adminProfile, setAdminProfile] = useState<AdminProfile | null>(null);
   const [adminAvatarUri, setAdminAvatarUri] = useState<string | null>(null);
   const [profileError, setProfileError] = useState("");
+
+  const selectTheme = async (value: "light" | "dark" | "system") => {
+    try {
+      await saveThemePreference(value);
+      setColorScheme(value);
+      setShowThemeModal(false);
+    } catch (themeError) {
+      Alert.alert(
+        "Unable to Save Theme",
+        themeError instanceof Error
+          ? themeError.message
+          : "Please try selecting your theme again.",
+      );
+    }
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -555,10 +571,7 @@ export default function ManagerProfileView({
             </View>
             <View className="gap-3">
               <Pressable
-                onPress={() => {
-                  setColorScheme("light");
-                  setShowThemeModal(false);
-                }}
+                onPress={() => void selectTheme("light")}
                 className="flex-row items-center p-4 rounded-2xl border"
                 style={{
                   backgroundColor: theme.card,
@@ -586,10 +599,7 @@ export default function ManagerProfileView({
               </Pressable>
 
               <Pressable
-                onPress={() => {
-                  setColorScheme("dark");
-                  setShowThemeModal(false);
-                }}
+                onPress={() => void selectTheme("dark")}
                 className="flex-row items-center p-4 rounded-2xl border"
                 style={{
                   backgroundColor: theme.card,
@@ -617,10 +627,7 @@ export default function ManagerProfileView({
               </Pressable>
 
               <Pressable
-                onPress={() => {
-                  setColorScheme("system");
-                  setShowThemeModal(false);
-                }}
+                onPress={() => void selectTheme("system")}
                 className="flex-row items-center p-4 rounded-2xl border"
                 style={{
                   backgroundColor: theme.card,

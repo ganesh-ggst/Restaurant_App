@@ -20,7 +20,6 @@ export default function HomeTabsLayout() {
       <Tabs.Screen name="search" options={{ title: "Menu" }} />
       <Tabs.Screen name="orders" options={{ title: "Orders" }} />
       <Tabs.Screen name="profile" options={{ title: "My Profile" }} />
-      <Tabs.Screen name="favorites" options={{ href: null, title: "Favorites" }} />
     </Tabs>
   );
 }

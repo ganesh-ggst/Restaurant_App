@@ -1,12 +1,16 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useEffect, useState } from "react";
+import * as Location from "expo-location";
+import { LocateFixed, MapPin } from "lucide-react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
   Text,
+  TextInput,
   View,
 } from "react-native";
+import MapView, { Marker, type Region } from "react-native-maps";
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -23,6 +27,13 @@ import { useAppTheme } from "../../../../hooks/useAppTheme";
 import { api } from "../../../../services/api";
 import type { AddressInput } from "../../../../services/api/profile";
 
+const DEFAULT_MAP_REGION: Region = {
+  latitude: 17.385,
+  longitude: 78.4867,
+  latitudeDelta: 0.012,
+  longitudeDelta: 0.012,
+};
+
 function emptyAddress(): AddressInput {
   return {
     label: "",
@@ -36,19 +47,146 @@ function emptyAddress(): AddressInput {
   };
 }
 
+function ReadOnlyAddressField({
+  label,
+  value,
+  placeholder,
+  theme,
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  theme: ReturnType<typeof useAppTheme>;
+}) {
+  return (
+    <View className="mb-5">
+      <Text className="mb-2 ml-1 text-sm font-bold" style={{ color: theme.muted }}>
+        {label}
+      </Text>
+      <TextInput
+        value={value}
+        placeholder={placeholder}
+        placeholderTextColor={theme.muted}
+        editable={false}
+        style={{
+          backgroundColor: theme.secondaryBg,
+          borderColor: theme.border,
+          color: theme.text,
+          paddingVertical: 12,
+          fontSize: 16,
+          fontWeight: "600",
+        }}
+        className="rounded-2xl border px-4"
+      />
+    </View>
+  );
+}
+
 export default function AddressFormScreen() {
   const router = useRouter();
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
-  const { id } = useLocalSearchParams<{ id?: string }>();
+  const { id, source } = useLocalSearchParams<{
+    id?: string;
+    source?: "current" | "map";
+  }>();
   const [form, setForm] = useState<AddressInput>(emptyAddress);
   const [loading, setLoading] = useState(Boolean(id));
   const [saving, setSaving] = useState(false);
+  const [locationBusy, setLocationBusy] = useState(false);
+  const [mapPickerVisible, setMapPickerVisible] = useState(false);
+  const [coordinates, setCoordinates] = useState<{
+    latitude: number;
+    longitude: number;
+  } | null>(null);
+  const [locationSelected, setLocationSelected] = useState(false);
+  const [savedCoordinateAddressId, setSavedCoordinateAddressId] = useState<
+    string | null
+  >(null);
   const [error, setError] = useState("");
-  type RequiredAddressField = "label" | "line1" | "city" | "state" | "pincode";
+  const mapInteractionStarted = useRef(false);
+  const mapViewRef = useRef<MapView | null>(null);
+  const line1ManuallyEdited = useRef(false);
+  const line2ManuallyEdited = useRef(false);
+  const landmarkManuallyEdited = useRef(false);
+  const reverseGeocodeRequest = useRef(0);
+  const mapRegion = useRef<Region>(DEFAULT_MAP_REGION);
+  const [mapRegionState, setMapRegionState] = useState<Region>(
+    DEFAULT_MAP_REGION,
+  );
+  type RequiredAddressField = "label";
   const [fieldErrors, setFieldErrors] = useState<
     Partial<Record<RequiredAddressField, string>>
   >({});
+
+  const applyCoordinates = useCallback(
+    async (latitude: number, longitude: number) => {
+      const requestId = ++reverseGeocodeRequest.current;
+      setCoordinates({ latitude, longitude });
+      setLocationSelected(true);
+      setForm((current) => ({ ...current, lat: latitude, lng: longitude }));
+      setError("");
+
+      try {
+        const [place] = await Location.reverseGeocodeAsync({
+          latitude,
+          longitude,
+        });
+        if (place && requestId === reverseGeocodeRequest.current) {
+          setForm((current) => ({
+            ...current,
+            line1: line1ManuallyEdited.current
+              ? current.line1
+              : [place.name, place.street].filter(Boolean).join(", "),
+            city: place.city || place.district || current.city,
+            state: place.region || current.state,
+            pincode: place.postalCode || current.pincode,
+          }));
+        }
+      } catch (geocodeError) {
+        if (requestId !== reverseGeocodeRequest.current) return;
+        console.error("Unable to preview the selected address.", geocodeError);
+        setError(
+          "Location selected, but the address preview could not be loaded. You can still continue.",
+        );
+      }
+    },
+    [],
+  );
+
+  const chooseCurrentLocation = useCallback(async () => {
+    setLocationBusy(true);
+    setError("");
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        throw new Error("Allow location access to use your current location.");
+      }
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+      await applyCoordinates(
+        location.coords.latitude,
+        location.coords.longitude,
+      );
+      const nextRegion = {
+        ...mapRegion.current,
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+      };
+      mapRegion.current = nextRegion;
+      setMapRegionState(nextRegion);
+      mapViewRef.current?.animateToRegion(nextRegion);
+    } catch (locationError) {
+      setError(
+        locationError instanceof Error
+          ? locationError.message
+          : "Unable to get your current location.",
+      );
+    } finally {
+      setLocationBusy(false);
+    }
+  }, [applyCoordinates]);
 
   useEffect(() => {
     if (!id) return;
@@ -70,6 +208,20 @@ export default function AddressFormScreen() {
           lng: address.lng,
           isDefault: address.isDefault,
         });
+        if (
+          typeof address.lat === "number" &&
+          typeof address.lng === "number"
+        ) {
+          setCoordinates({
+            latitude: address.lat,
+            longitude: address.lng,
+          });
+          mapRegion.current = {
+            ...mapRegion.current,
+            latitude: address.lat,
+            longitude: address.lng,
+          };
+        }
       })
       .catch((loadError: unknown) => {
         if (isActive) {
@@ -89,68 +241,82 @@ export default function AddressFormScreen() {
     };
   }, [id]);
 
+  useEffect(() => {
+    if (id) return;
+    const timeout = setTimeout(() => {
+      if (source === "current") void chooseCurrentLocation();
+      if (source === "map") setMapPickerVisible(true);
+    }, 0);
+    return () => clearTimeout(timeout);
+  }, [chooseCurrentLocation, id, source]);
+
   const setField = <K extends keyof AddressInput>(
     key: K,
     value: AddressInput[K],
   ) => {
+    if (key === "line1") line1ManuallyEdited.current = true;
+    if (key === "line2") line2ManuallyEdited.current = true;
+    if (key === "landmark") landmarkManuallyEdited.current = true;
     setForm((current) => ({ ...current, [key]: value }));
     setError("");
     setFieldErrors((current) => {
-      switch (key) {
-        case "label":
-          return { ...current, label: undefined };
-        case "line1":
-          return { ...current, line1: undefined };
-        case "city":
-          return { ...current, city: undefined };
-        case "state":
-          return { ...current, state: undefined };
-        case "pincode":
-          return { ...current, pincode: undefined };
-        default:
-          return current;
-      }
+      return key === "label" ? { ...current, label: undefined } : current;
     });
   };
 
   const saveAddress = async () => {
-    const payload: AddressInput = {
-      label: form.label.trim(),
-      line1: form.line1.trim(),
-      line2: form.line2?.trim() || undefined,
-      city: form.city.trim(),
-      state: form.state.trim(),
-      pincode: form.pincode.trim(),
-      landmark: form.landmark?.trim() || undefined,
-      lat: form.lat,
-      lng: form.lng,
-      isDefault: form.isDefault,
-    };
+    const label = form.label.trim();
     const nextFieldErrors = {
-      ...(!payload.label ? { label: "Label is required." } : {}),
-      ...(!payload.line1 ? { line1: "Address line 1 is required." } : {}),
-      ...(!payload.city ? { city: "City is required." } : {}),
-      ...(!payload.state ? { state: "State is required." } : {}),
-      ...(!payload.pincode
-        ? { pincode: "Pincode is required." }
-        : !/^\d{6}$/.test(payload.pincode)
-          ? { pincode: "Pincode must be exactly 6 digits." }
-          : {}),
+      ...(!label ? { label: "Label is required." } : {}),
     };
     setFieldErrors(nextFieldErrors);
     if (Object.keys(nextFieldErrors).length > 0) {
-      setError("Please complete the highlighted required fields.");
+      setError("Enter a label for this address.");
+      return;
+    }
+    if (!id && !locationSelected) {
+      setError("Choose your current location or select a point on the map.");
+      return;
+    }
+    if (!coordinates) {
+      setError("Select a location before saving this address.");
       return;
     }
 
     setSaving(true);
     setError("");
     try {
-      if (id) {
-        await api.updateAddress(id, payload);
-      } else {
-        await api.createAddress(payload);
+      const editableFields: Partial<AddressInput> = {
+        label,
+        ...(line1ManuallyEdited.current
+          ? { line1: form.line1.trim() }
+          : {}),
+        ...(line2ManuallyEdited.current
+          ? { line2: form.line2?.trim() || "" }
+          : {}),
+        ...(landmarkManuallyEdited.current
+          ? { landmark: form.landmark?.trim() || "" }
+          : {}),
+        isDefault: form.isDefault,
+      };
+      let savedAddressId = id || savedCoordinateAddressId || undefined;
+
+      if (locationSelected && (id || !savedCoordinateAddressId)) {
+        const savedAddress = await api.saveAddressFromCoordinates({
+          lat: String(coordinates.latitude),
+          lng: String(coordinates.longitude),
+          label,
+          landmark: form.landmark?.trim() || "",
+          ...(id ? { addressId: id } : {}),
+        });
+        savedAddressId = id || savedAddress._id;
+        if (!id) setSavedCoordinateAddressId(savedAddress._id);
       }
+
+      if (!savedAddressId) {
+        throw new Error("Choose a location before creating an address.");
+      }
+      await api.updateAddress(savedAddressId, editableFields);
       router.back();
     } catch (saveError) {
       setError(
@@ -163,16 +329,124 @@ export default function AddressFormScreen() {
     }
   };
 
+  const openMapPicker = () => {
+    mapInteractionStarted.current = false;
+    if (coordinates) {
+      const nextRegion = {
+        ...mapRegion.current,
+        latitude: coordinates.latitude,
+        longitude: coordinates.longitude,
+      };
+      mapRegion.current = nextRegion;
+      setMapRegionState(nextRegion);
+    }
+    setMapPickerVisible(true);
+  };
+
+  const handleMapRegionChangeComplete = (region: Region) => {
+    mapRegion.current = region;
+    if (mapInteractionStarted.current) {
+      mapInteractionStarted.current = false;
+      void applyCoordinates(region.latitude, region.longitude);
+    }
+  };
+
+  const handleMapSelection = (latitude: number, longitude: number) => {
+    mapInteractionStarted.current = false;
+    void applyCoordinates(latitude, longitude);
+    mapRegion.current = {
+      ...mapRegion.current,
+      latitude,
+      longitude,
+    };
+  };
+
   return (
     <SafeAreaView className="flex-1" style={{ backgroundColor: theme.bg }}>
       <StatusBar style={theme.isDark ? "light" : "dark"} />
       <ProfileScreenHeader
-        title={id ? "Edit Address" : "Add New Address"}
-        onBack={() => router.back()}
+        title={mapPickerVisible ? "Choose Location" : id ? "Edit Address" : "Add New Address"}
+        onBack={() =>
+          mapPickerVisible ? setMapPickerVisible(false) : router.back()
+        }
       />
       {loading ? (
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator color={theme.primary} />
+        </View>
+      ) : mapPickerVisible ? (
+        <View className="flex-1">
+          <MapView
+            ref={mapViewRef}
+            style={{ flex: 1 }}
+            initialRegion={mapRegionState}
+            showsUserLocation
+            showsMyLocationButton={false}
+            onPanDrag={() => {
+              mapInteractionStarted.current = true;
+            }}
+            onRegionChangeComplete={handleMapRegionChangeComplete}
+            onPress={(event) => {
+              const { latitude, longitude } = event.nativeEvent.coordinate;
+              handleMapSelection(latitude, longitude);
+            }}
+          >
+            {coordinates ? (
+              <Marker
+                coordinate={coordinates}
+                title="Selected address"
+                pinColor={theme.primary}
+              />
+            ) : null}
+          </MapView>
+          <View
+            className="absolute left-4 right-4 top-4"
+            style={{ gap: 12 }}
+          >
+            <Pressable
+              onPress={() => void chooseCurrentLocation()}
+              disabled={locationBusy}
+              className="flex-row items-center justify-center rounded-2xl border p-4"
+              style={{ backgroundColor: theme.card, borderColor: theme.border }}
+            >
+              {locationBusy ? (
+                <ActivityIndicator color={theme.primary} />
+              ) : (
+                <LocateFixed size={20} color={theme.primary} />
+              )}
+              <Text className="ml-2 font-bold" style={{ color: theme.primary }}>
+                Use my current location
+              </Text>
+            </Pressable>
+            <ProfileError message={error} />
+          </View>
+          <View
+            className="border-t p-4"
+            style={{
+              backgroundColor: theme.bg,
+              borderColor: theme.border,
+              paddingBottom: Math.max(insets.bottom, 16) + 72 + 16,
+            }}
+          >
+            <Text className="mb-1 font-black" style={{ color: theme.text }}>
+              Selected location
+            </Text>
+            <Text className="mb-4" style={{ color: theme.muted }}>
+              {coordinates
+                ? `${coordinates.latitude.toFixed(6)}, ${coordinates.longitude.toFixed(6)}`
+                : "Tap or pan the map to select a point."}
+            </Text>
+            <Button
+              title="Use this location"
+              onPress={() => {
+                if (!coordinates) {
+                  setError("Tap or pan the map to choose a location first.");
+                  return;
+                }
+                setMapPickerVisible(false);
+              }}
+            />
+          </View>
         </View>
       ) : (
         <KeyboardAwareScrollView
@@ -188,6 +462,52 @@ export default function AddressFormScreen() {
           keyboardShouldPersistTaps="handled"
         >
           <ProfileError message={error} />
+          <View className="mb-5 flex-row gap-3">
+            <Pressable
+              onPress={() => void chooseCurrentLocation()}
+              disabled={locationBusy}
+              className="flex-1 flex-row items-center justify-center rounded-2xl border p-3"
+              style={{ backgroundColor: theme.card, borderColor: theme.border }}
+            >
+              {locationBusy ? (
+                <ActivityIndicator color={theme.primary} />
+              ) : (
+                <LocateFixed size={18} color={theme.primary} />
+              )}
+              <Text
+                className="ml-2 text-center text-sm font-bold"
+                style={{ color: theme.primary }}
+              >
+                Current location
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={openMapPicker}
+              className="flex-1 flex-row items-center justify-center rounded-2xl border p-3"
+              style={{ backgroundColor: theme.card, borderColor: theme.border }}
+            >
+              <MapPin size={18} color={theme.primary} />
+              <Text
+                className="ml-2 text-center text-sm font-bold"
+                style={{ color: theme.primary }}
+              >
+                Choose from map
+              </Text>
+            </Pressable>
+          </View>
+          {coordinates ? (
+            <View
+              className="mb-5 rounded-2xl p-4"
+              style={{ backgroundColor: theme.secondaryBg }}
+            >
+              <Text className="font-bold" style={{ color: theme.primary }}>
+                Location selected
+              </Text>
+              <Text className="mt-1 text-xs" style={{ color: theme.muted }}>
+                {coordinates.latitude.toFixed(6)}, {coordinates.longitude.toFixed(6)}
+              </Text>
+            </View>
+          ) : null}
           <ProfileTextField
             label="Label"
             value={form.label}
@@ -203,8 +523,6 @@ export default function AddressFormScreen() {
             onChangeText={(value) => setField("line1", value)}
             theme={theme}
             placeholder="Street address"
-            required
-            error={fieldErrors.line1}
           />
           <ProfileTextField
             label="Address Line 2 (optional)"
@@ -213,38 +531,23 @@ export default function AddressFormScreen() {
             theme={theme}
             placeholder="Apartment, suite, etc."
           />
-          <ProfileTextField
+          <ReadOnlyAddressField
             label="City"
-            value={form.city}
-            onChangeText={(value) => setField("city", value)}
+            value={form.city || ""}
             theme={theme}
-            placeholder="City"
-            required
-            error={fieldErrors.city}
+            placeholder="Filled from selected location"
           />
-          <ProfileTextField
+          <ReadOnlyAddressField
             label="State"
-            value={form.state}
-            onChangeText={(value) => setField("state", value)}
+            value={form.state || ""}
             theme={theme}
-            placeholder="State"
-            required
-            error={fieldErrors.state}
+            placeholder="Filled from selected location"
           />
-          <ProfileTextField
+          <ReadOnlyAddressField
             label="Pincode"
-            value={form.pincode}
-            onChangeText={(value) => setField("pincode", value)}
+            value={form.pincode || ""}
             theme={theme}
-            placeholder="Pincode"
-            keyboardType="number-pad"
-            required
-            error={
-              fieldErrors.pincode ||
-              (form.pincode && !/^\d{6}$/.test(form.pincode)
-                ? "Pincode must be exactly 6 digits."
-                : undefined)
-            }
+            placeholder="Filled from selected location"
           />
           <ProfileTextField
             label="Landmark (optional)"
@@ -254,8 +557,10 @@ export default function AddressFormScreen() {
             placeholder="Nearby landmark"
           />
           <Pressable
+            disabled={Boolean(id)}
             onPress={() => setField("isDefault", !form.isDefault)}
             className="mb-5 flex-row items-center gap-3"
+            style={{ opacity: id ? 0.6 : 1 }}
           >
             <View
               className="h-5 w-5 items-center justify-center rounded border"
