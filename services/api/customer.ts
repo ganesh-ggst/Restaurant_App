@@ -49,6 +49,7 @@ export interface CustomerMenuItem {
   ratingAverage?: number;
   ratingCount?: number;
   prepTimeMinutes?: number;
+  deliveryEstimateMinutes?: number;
   availableQuantity?: number;
   isBestseller?: boolean;
   isHot?: boolean;
@@ -616,10 +617,14 @@ export const customerApi = {
   async getMenuItems(
     stock?: "all" | "in_stock" | "out_of_stock",
     branchId?: string,
+    addressId?: string,
+    fulfillmentType?: "delivery" | "takeaway" | "dine-in",
   ): Promise<CustomerMenuItem[]> {
     const query = new URLSearchParams();
     if (branchId) query.set("branchId", branchId);
     if (stock) query.set("stock", stock);
+    if (addressId) query.set("addressId", addressId);
+    if (fulfillmentType) query.set("fulfillmentType", fulfillmentType);
     const queryString = query.toString();
 
     return requireArray(
@@ -631,11 +636,17 @@ export const customerApi = {
     );
   },
 
-  async voiceSearch(query: string): Promise<CustomerMenuItem[]> {
+  async voiceSearch(
+    query: string,
+    branchId: string,
+    address: string,
+  ): Promise<CustomerMenuItem[]> {
     return requireArray(
-      await request<CustomerMenuItem[]>("POST", "/menu-items/voice-search", {
-        query,
-      }),
+      await request<CustomerMenuItem[]>(
+        "POST",
+        "/menu-items/voice-search",
+        { query, branchId, address },
+      ),
       "The server did not return voice-search results.",
     );
   },

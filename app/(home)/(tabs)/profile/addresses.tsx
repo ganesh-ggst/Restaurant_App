@@ -5,6 +5,7 @@ import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Pressable,
   ScrollView,
   Text,
@@ -40,6 +41,15 @@ export default function AddressesScreen() {
   const [addresses, setAddresses] = useState<CustomerAddress[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [showAddressSourceModal, setShowAddressSourceModal] = useState(false);
+
+  const openAddressForm = (source: "current" | "map") => {
+    setShowAddressSourceModal(false);
+    router.push({
+      pathname: "/(home)/(tabs)/profile/address-form",
+      params: { source },
+    });
+  };
 
   const loadAddresses = useCallback(async () => {
     setLoading(true);
@@ -121,7 +131,7 @@ export default function AddressesScreen() {
       >
         <ProfileError message={error} />
         <Pressable
-          onPress={() => router.push("/(home)/(tabs)/profile/address-form")}
+          onPress={() => setShowAddressSourceModal(true)}
           className="mb-5 flex-row items-center justify-center rounded-2xl border border-dashed p-4"
           style={{ borderColor: theme.primary }}
         >
@@ -220,6 +230,51 @@ export default function AddressesScreen() {
           ))
         )}
       </ScrollView>
+      <Modal
+        visible={showAddressSourceModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowAddressSourceModal(false)}
+      >
+        <Pressable
+          className="flex-1 justify-center bg-black/60 px-6"
+          onPress={() => setShowAddressSourceModal(false)}
+        >
+          <Pressable
+            className="rounded-3xl border p-5"
+            style={{
+              backgroundColor: theme.bg,
+              borderColor: theme.border,
+              marginBottom: insets.bottom,
+            }}
+            onPress={(event) => event.stopPropagation()}
+          >
+            <Text className="mb-4 text-lg font-black" style={{ color: theme.text }}>
+              Choose how to add your address
+            </Text>
+            <Pressable
+              onPress={() => openAddressForm("current")}
+              className="mb-3 flex-row items-center rounded-2xl border p-4"
+              style={{ backgroundColor: theme.card, borderColor: theme.border }}
+            >
+              <MapPin size={22} color={theme.primary} />
+              <Text className="ml-3 font-bold" style={{ color: theme.text }}>
+                Choose current location
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => openAddressForm("map")}
+              className="flex-row items-center rounded-2xl border p-4"
+              style={{ backgroundColor: theme.card, borderColor: theme.border }}
+            >
+              <MapPin size={22} color={theme.primary} />
+              <Text className="ml-3 font-bold" style={{ color: theme.text }}>
+                Choose from map
+              </Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }

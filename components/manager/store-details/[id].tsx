@@ -1,5 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import * as Location from "expo-location";
+import { LocateFixed, MapPin } from "lucide-react-native";
 import {
   useLocalSearchParams,
   useRouter,
@@ -7,6 +8,7 @@ import {
 } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
@@ -18,6 +20,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import MapView, { Marker, type Region } from "react-native-maps";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
@@ -34,6 +37,13 @@ import {
   mapAdminStoreDetailSection,
 } from "../adminProfileSections";
 
+const DEFAULT_MAP_REGION: Region = {
+  latitude: 17.385,
+  longitude: 78.4867,
+  latitudeDelta: 0.012,
+  longitudeDelta: 0.012,
+};
+
 export default function StoreDetailDetailComponent() {
   const router = useRouter();
   const segments = useSegments();
@@ -48,6 +58,15 @@ export default function StoreDetailDetailComponent() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [locationBusy, setLocationBusy] = useState(false);
+  const [mapPickerVisible, setMapPickerVisible] = useState(false);
+  const [selectedCoordinates, setSelectedCoordinates] = useState<{
+    latitude: number;
+    longitude: number;
+  } | null>(null);
+  const [mapRegion, setMapRegion] = useState<Region>(DEFAULT_MAP_REGION);
+  const mapViewRef = useRef<MapView | null>(null);
+  const mapInteractionStarted = useRef(false);
   const [editingOption, setEditingOption] = useState<StoreDetailOption | null>(
     null,
   );
@@ -171,47 +190,33 @@ export default function StoreDetailDetailComponent() {
     }
   };
 
-  const fetchCurrentLocation = async () => {
+  const fetchCurrentLocation = async (showSuccess = true) => {
+    setLocationBusy(true);
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert(
-          "Permission Denied",
-          "Permission to access location was denied.",
-        );
-        return;
+        throw new Error("Permission to access location was denied.");
       }
 
       const location = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
       });
       const { latitude, longitude } = location.coords;
-
-      setGpsCoordinates(
-        `GPS: ${latitude.toFixed(4)}° N, ${longitude.toFixed(4)}° E`,
-      );
-
-      const reverseGeocode = await Location.reverseGeocodeAsync({
+      setSelectedCoordinates({ latitude, longitude });
+      setGpsCoordinates(`${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
+      setMapRegion((current) => ({ ...current, latitude, longitude }));
+      mapViewRef.current?.animateToRegion({
+        ...mapRegion,
         latitude,
         longitude,
       });
-      if (reverseGeocode && reverseGeocode.length > 0) {
-        const addr = reverseGeocode[0];
-        const formattedAddress = [
-          addr.name,
-          addr.street,
-          addr.city,
-          addr.region,
-          addr.postalCode,
-        ]
-          .filter(Boolean)
-          .join(", ");
-        setAddressLine(formattedAddress);
-      } else {
-        setAddressLine(`Lat: ${latitude}, Lon: ${longitude}`);
+      await updateAddressPreview(latitude, longitude);
+      if (showSuccess) {
+        Alert.alert(
+          "Success",
+          "Real-time device location fetched successfully!",
+        );
       }
-
-      Alert.alert("Success", "Real-time device location fetched successfully!");
     } catch (error) {
       Alert.alert(
         "Error",
@@ -219,7 +224,61 @@ export default function StoreDetailDetailComponent() {
           ? error.message
           : "Could not fetch current location. Please ensure GPS is enabled.",
       );
+    } finally {
+      setLocationBusy(false);
     }
+  };
+
+  const updateAddressPreview = async (latitude: number, longitude: number) => {
+    setSelectedCoordinates({ latitude, longitude });
+    setGpsCoordinates(`${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
+    try {
+      const [address] = await Location.reverseGeocodeAsync({
+        latitude,
+        longitude,
+      });
+      if (address) {
+        const formattedAddress = [
+          address.name,
+          address.street,
+          address.city,
+          address.region,
+          address.postalCode,
+        ]
+          .filter(Boolean)
+          .join(", ");
+        if (formattedAddress) setAddressLine(formattedAddress);
+      }
+    } catch (error) {
+      console.error("Unable to preview the selected store address.", error);
+    }
+  };
+
+  const openMapPicker = () => {
+    mapInteractionStarted.current = false;
+    if (selectedCoordinates) {
+      const nextRegion = {
+        ...mapRegion,
+        latitude: selectedCoordinates.latitude,
+        longitude: selectedCoordinates.longitude,
+      };
+      setMapRegion(nextRegion);
+    }
+    setMapPickerVisible(true);
+  };
+
+  const handleMapRegionChangeComplete = (region: Region) => {
+    setMapRegion(region);
+    if (mapInteractionStarted.current) {
+      mapInteractionStarted.current = false;
+      void updateAddressPreview(region.latitude, region.longitude);
+    }
+  };
+
+  const handleMapSelection = (latitude: number, longitude: number) => {
+    mapInteractionStarted.current = false;
+    void updateAddressPreview(latitude, longitude);
+    setMapRegion((current) => ({ ...current, latitude, longitude }));
   };
 
   const refreshSection = async () => {
@@ -278,6 +337,7 @@ export default function StoreDetailDetailComponent() {
   };
 
   const openEditor = (opt?: StoreDetailOption) => {
+    setMapPickerVisible(false);
     setFieldError("");
     setChargeErrors({});
     setDeliveryErrors({});
@@ -323,11 +383,27 @@ export default function StoreDetailDetailComponent() {
       setThirdVal(subParts[0] ? subParts[0].trim() : "");
       setFourthVal(subParts[1] ? subParts[1].trim() : "");
     } else if (isAddressSection && opt) {
-      setAddressLine(isAdmin ? opt.area || "" : opt.value || "");
+      setAddressLine(isAdmin ? opt.area || opt.value || "" : opt.value || "");
       setGpsCoordinates(opt.subValue || "");
       setThirdVal(isAdmin ? opt.phone || "" : "");
       setFourthVal("");
+      const coordinateMatch = opt.subValue?.match(
+        /GPS:\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/,
+      );
+      if (coordinateMatch) {
+        const latitude = Number(coordinateMatch[1]);
+        const longitude = Number(coordinateMatch[2]);
+        setSelectedCoordinates({ latitude, longitude });
+        setGpsCoordinates(`${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
+        setMapRegion((current) => ({ ...current, latitude, longitude }));
+      } else {
+        setSelectedCoordinates(null);
+      }
     } else {
+      if (isAddressSection) {
+        setSelectedCoordinates(null);
+        setGpsCoordinates("");
+      }
       setAddressLine(opt ? opt.value : "");
       setGpsCoordinates(opt && opt.subValue ? opt.subValue : "");
       setThirdVal("");
@@ -422,8 +498,19 @@ export default function StoreDetailDetailComponent() {
       }
     }
     setChargeErrors({});
-    if (!trimmedAddressLine && !isChargesSection && !isDeliverySection) {
+    const addressHasCoordinates =
+      isAdmin && isAddressSection && selectedCoordinates !== null;
+    if (
+      !trimmedAddressLine &&
+      !isChargesSection &&
+      !isDeliverySection &&
+      !addressHasCoordinates
+    ) {
       setFieldError(`${addressFieldLabel} is required.`);
+      return;
+    }
+    if (isAdmin && isAddressSection && !selectedCoordinates) {
+      setFieldError("Choose a current location or select a point on the map.");
       return;
     }
     setFieldError("");
@@ -432,11 +519,42 @@ export default function StoreDetailDetailComponent() {
       const definition = getStoreDetailDefinition(id);
       if (!definition) return;
 
+      if (addressHasCoordinates && !editingOption) {
+        setSaving(true);
+        try {
+          await adminProfileApi.createStoreAddressFromCoordinates(
+            selectedCoordinates.latitude,
+            selectedCoordinates.longitude,
+          );
+          await refreshSection();
+          setIsEditorOpen(false);
+        } catch (error) {
+          Alert.alert(
+            "Unable to save store address",
+            error instanceof Error ? error.message : "Please try again.",
+          );
+        } finally {
+          setSaving(false);
+        }
+        return;
+      }
+
       let body: Record<string, unknown>;
       if (editingOption && id === "sd_rest") {
         body = { name: addressLine.trim() };
       } else if (editingOption && isAddressSection) {
-        body = { area: addressLine.trim(), phone: thirdVal.trim() };
+        if (!selectedCoordinates) {
+          setFieldError("Choose a current location or select a point on the map.");
+          return;
+        }
+        body = {
+          area: addressLine.trim(),
+          phone: thirdVal.trim(),
+          location: {
+            lat: selectedCoordinates.latitude,
+            lng: selectedCoordinates.longitude,
+          },
+        };
       } else if (editingOption && isTaxSection) {
         body = {
           cgstPercentage: Number(addressLine) || 0,
@@ -803,75 +921,54 @@ export default function StoreDetailDetailComponent() {
                 ) : null}
 
                 {isAddressSection ? (
-                  isAdmin && editingOption ? (
-                    <>
-                      <Text
-                        className="text-xs font-bold mb-1 uppercase"
-                        style={{ color: theme.muted }}
-                      >
-                        Area
-                      </Text>
-                      <TextInput
-                        placeholder="Area"
-                        placeholderTextColor={theme.muted}
-                        value={addressLine}
-                        onChangeText={updateAddressLine}
-                        onBlur={() => setAddressLine(addressLine.trim())}
-                        className="px-4 rounded-xl mb-4 font-bold"
-                        style={{
-                          borderColor: theme.danger,
-                          borderWidth: fieldError ? 2 : 0,
-                          backgroundColor: theme.bg,
-                          color: theme.text,
-                          fontSize: 16,
-                          height: 52,
-                        }}
-                      />
-                      <Text
-                        className="text-xs font-bold mb-1 uppercase"
-                        style={{ color: theme.muted }}
-                      >
-                        Phone
-                      </Text>
-                      <TextInput
-                        placeholder="Phone number"
-                        placeholderTextColor={theme.muted}
-                        value={thirdVal}
-                        onChangeText={setThirdVal}
-                        keyboardType="phone-pad"
-                        className="px-4 rounded-xl mb-6 font-bold"
-                        style={{
-                          backgroundColor: theme.bg,
-                          color: theme.text,
-                          fontSize: 16,
-                          height: 52,
-                        }}
-                      />
-                    </>
-                  ) : (
                   <>
                     <Text
                       className="text-xs font-bold mb-2 uppercase"
                       style={{ color: theme.muted }}
                     >
-                      Fetch Location from Device GPS
+                      Choose address location
                     </Text>
-                    <View className="flex-row gap-2 mb-4">
+                    <View className="mb-4 gap-2">
                       <Pressable
-                        onPress={fetchCurrentLocation}
-                        className="flex-1 p-3 rounded-xl items-center justify-center border border-dashed"
+                        onPress={() => void fetchCurrentLocation()}
+                        disabled={locationBusy}
+                        className="flex-row items-center justify-center rounded-xl border border-dashed p-3"
                         style={{
                           borderColor: theme.primary,
                           backgroundColor: theme.card,
+                          opacity: locationBusy ? 0.6 : 1,
                         }}
                       >
+                        {locationBusy ? (
+                          <ActivityIndicator color={theme.primary} />
+                        ) : (
+                          <LocateFixed size={18} color={theme.primary} />
+                        )}
                         <Text
-                          className="text-xs font-bold"
+                          className="ml-2 text-xs font-bold"
                           style={{ color: theme.primary }}
                         >
-                          📍 Get Current GPS Location
+                          Use my current location
                         </Text>
                       </Pressable>
+                      {isAdmin ? (
+                        <Pressable
+                          onPress={openMapPicker}
+                          className="flex-row items-center justify-center rounded-xl border p-3"
+                          style={{
+                            borderColor: theme.border,
+                            backgroundColor: theme.card,
+                          }}
+                        >
+                          <MapPin size={18} color={theme.primary} />
+                          <Text
+                            className="ml-2 text-xs font-bold"
+                            style={{ color: theme.primary }}
+                          >
+                            Choose from map
+                          </Text>
+                        </Pressable>
+                      ) : null}
                     </View>
 
                     <Text
@@ -919,7 +1016,6 @@ export default function StoreDetailDetailComponent() {
                       }}
                     />
                   </>
-                  )
                 ) : isTaxSection ? (
                   <>
                     <Text
@@ -1472,6 +1568,114 @@ export default function StoreDetailDetailComponent() {
           </KeyboardAvoidingView>
         </View>
       )}
+      {isAdmin && isAddressSection && isEditorOpen && mapPickerVisible ? (
+        <View
+          className="absolute inset-0"
+          style={{
+            zIndex: 10,
+            elevation: 10,
+            backgroundColor: theme.bg,
+            paddingTop: insets.top,
+          }}
+        >
+          <View
+            className="flex-row items-center border-b px-4 py-4"
+            style={{
+              backgroundColor: theme.card,
+              borderBottomColor: theme.border,
+            }}
+          >
+            <Pressable
+              onPress={() => setMapPickerVisible(false)}
+              className="mr-4 p-1"
+              hitSlop={15}
+              accessibilityRole="button"
+              accessibilityLabel="Back to address form"
+            >
+              <Feather name="arrow-left" size={24} color={theme.text} />
+            </Pressable>
+            <Text className="text-xl font-black" style={{ color: theme.text }}>
+              Choose Location
+            </Text>
+          </View>
+          <View className="flex-1">
+            <MapView
+              ref={mapViewRef}
+              style={{ flex: 1 }}
+              initialRegion={mapRegion}
+              showsUserLocation
+              showsMyLocationButton={false}
+              onPanDrag={() => {
+                mapInteractionStarted.current = true;
+              }}
+              onRegionChangeComplete={handleMapRegionChangeComplete}
+              onPress={(event) => {
+                const { latitude, longitude } = event.nativeEvent.coordinate;
+                handleMapSelection(latitude, longitude);
+              }}
+            >
+              {selectedCoordinates ? (
+                <Marker
+                  coordinate={selectedCoordinates}
+                  title="Selected store location"
+                  pinColor={theme.primary}
+                />
+              ) : null}
+            </MapView>
+            <View className="absolute left-4 right-4 top-4">
+              <Pressable
+                onPress={() => void fetchCurrentLocation(false)}
+                disabled={locationBusy}
+                className="flex-row items-center justify-center rounded-2xl border p-4"
+                style={{
+                  backgroundColor: theme.card,
+                  borderColor: theme.border,
+                  opacity: locationBusy ? 0.6 : 1,
+                }}
+              >
+                {locationBusy ? (
+                  <ActivityIndicator color={theme.primary} />
+                ) : (
+                  <LocateFixed size={20} color={theme.primary} />
+                )}
+                <Text className="ml-2 font-bold" style={{ color: theme.primary }}>
+                  Use my current location
+                </Text>
+              </Pressable>
+            </View>
+            <View
+              className="border-t p-4"
+              style={{
+                backgroundColor: theme.bg,
+                borderColor: theme.border,
+                paddingBottom: Math.max(insets.bottom, 16) + 72 + 16,
+              }}
+            >
+              <Text className="mb-1 font-black" style={{ color: theme.text }}>
+                Selected location
+              </Text>
+              <Text className="mb-4" style={{ color: theme.muted }}>
+                {selectedCoordinates
+                  ? `${selectedCoordinates.latitude.toFixed(6)}, ${selectedCoordinates.longitude.toFixed(6)}`
+                  : "Tap or pan the map to select a point."}
+              </Text>
+              <Button
+                title="Use this location"
+                onPress={() => {
+                  if (!selectedCoordinates) {
+                    Alert.alert(
+                      "Location required",
+                      "Tap or pan the map to choose a location first.",
+                    );
+                    return;
+                  }
+                  setMapPickerVisible(false);
+                }}
+              />
+            </View>
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }

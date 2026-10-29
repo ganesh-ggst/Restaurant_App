@@ -68,6 +68,20 @@ export interface AddressInput {
   isDefault?: boolean;
 }
 
+export interface AddressCoordinatesInput {
+  lat: string;
+  lng: string;
+  label: string;
+  landmark?: string;
+  addressId?: string;
+}
+
+function isAddressResponse(
+  value: CustomerAddress | { address?: CustomerAddress },
+): value is { address?: CustomerAddress } {
+  return "address" in value;
+}
+
 export interface CustomerNotification {
   _id?: string;
   id?: string;
@@ -369,6 +383,22 @@ export const profileApi = {
 
   async createAddress(address: AddressInput): Promise<void> {
     await request("POST", "/addresses", { ...address });
+  },
+
+  async saveAddressFromCoordinates(
+    coordinates: AddressCoordinatesInput,
+  ): Promise<CustomerAddress> {
+    const result = requireData(
+      await request<
+        CustomerAddress | { address?: CustomerAddress }
+      >("POST", "/addresses/from-coordinates", { ...coordinates }),
+      "The server did not return the saved address.",
+    );
+    const address = isAddressResponse(result) ? result.address : result;
+    if (!address?._id) {
+      throw new Error("The server returned an invalid saved address.");
+    }
+    return address;
   },
 
   async updateAddress(

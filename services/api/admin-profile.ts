@@ -547,6 +547,18 @@ export const adminProfileApi = {
     invalidate("store-details", `store-detail:${section}`);
   },
 
+  async createStoreAddressFromCoordinates(
+    lat: number,
+    lng: number,
+  ): Promise<void> {
+    await request(
+      "POST",
+      "/store-details/addresses/from-coordinates",
+      { lat: String(lat), lng: String(lng) },
+    );
+    invalidate("store-details", "store-detail:addresses");
+  },
+
   async updateStoreDetail(
     section: string,
     id: string,

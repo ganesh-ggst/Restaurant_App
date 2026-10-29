@@ -55,18 +55,46 @@ const hasImageUri = (uri: unknown): uri is string =>
   typeof uri === "string" && uri.trim().length > 0;
 
 function matchesSearchText(query: string, value: string): boolean {
-  const normalizedQuery = query.toLowerCase().replace(/\s+/g, "");
-  const normalizedValue = value.toLowerCase();
-  if (!normalizedQuery) return true;
-  if (normalizedValue.includes(normalizedQuery)) return true;
+  const queryWords = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const valueWords = value.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  if (queryWords.length === 0) return true;
 
-  let queryIndex = 0;
-  for (const character of normalizedValue) {
-    if (character === normalizedQuery[queryIndex]) queryIndex += 1;
-    if (queryIndex === normalizedQuery.length) return true;
-  }
+  const matchesWord = (searchWord: string, valueWord: string): boolean => {
+    if (searchWord.length === 1) return valueWord.startsWith(searchWord);
+    if (valueWord.includes(searchWord)) return true;
 
-  return false;
+    let queryIndex = 0;
+    for (const character of valueWord) {
+      if (character === searchWord[queryIndex]) queryIndex += 1;
+      if (queryIndex === searchWord.length) return true;
+    }
+
+    return false;
+  };
+
+  const orderedQueryWords = [...queryWords].sort(
+    (first, second) =>
+      valueWords.filter((word) => matchesWord(first, word)).length -
+      valueWords.filter((word) => matchesWord(second, word)).length,
+  );
+  const matchNextWord = (
+    queryIndex: number,
+    usedValueWords: Set<number>,
+  ): boolean => {
+    if (queryIndex === orderedQueryWords.length) return true;
+
+    return valueWords.some(
+      (word, wordIndex) =>
+        !usedValueWords.has(wordIndex) &&
+        matchesWord(orderedQueryWords[queryIndex], word) &&
+        matchNextWord(
+          queryIndex + 1,
+          new Set([...usedValueWords, wordIndex]),
+        ),
+    );
+  };
+
+  return matchNextWord(0, new Set());
 }
 
 const formatPrice = (price: number) => {
@@ -814,13 +842,26 @@ export default function HomeScreen() {
       return;
     }
 
+    const branchId = activeBranch?.id;
+    const address = activeAddress?.id;
+    if (!branchId || !address) {
+      setIsListening(false);
+      Alert.alert(
+        "Voice Search Unavailable",
+        !branchId
+          ? "Select a branch before searching by voice."
+          : "Select a saved address before searching by voice.",
+      );
+      return;
+    }
+
     const requestGeneration = voiceSearchGeneration.current;
     setSearchQuery(query);
     setIsListening(false);
     setIsVoiceSearching(true);
 
     try {
-      const results = await api.voiceSearch(query);
+      const results = await api.voiceSearch(query, branchId, address);
       if (requestGeneration === voiceSearchGeneration.current) {
         setVoiceResultIds(
           results.flatMap((item) =>
@@ -842,7 +883,7 @@ export default function HomeScreen() {
         setIsVoiceSearching(false);
       }
     }
-  }, []);
+  }, [activeAddress?.id, activeBranch?.id]);
 
   useSpeechRecognitionEvent("result", (event) => {
     if (!event.isFinal || voiceResultHandled.current) return;
@@ -960,10 +1001,9 @@ export default function HomeScreen() {
 
     const lowerQuery = searchQuery.toLowerCase().trim();
     if (lowerQuery && voiceResultIds === null) {
-      filtered = filtered.filter((item: any) => {
-        const queryWords = lowerQuery.split(" ").filter((w) => w.length > 0);
-        return queryWords.some((word) => matchesSearchText(word, item.name));
-      });
+      filtered = filtered.filter((item: any) =>
+        matchesSearchText(lowerQuery, item.name),
+      );
     }
     return filtered.sort(
       (first: any, second: any) =>
@@ -1260,7 +1300,7 @@ export default function HomeScreen() {
 
         <View className="flex-row items-center">
           <Pressable
-            onPress={() => router.push("/(home)/(tabs)/favorites")}
+            onPress={() => router.push("/(home)/favorites")}
             className="h-11 w-11 items-center justify-center rounded-full shadow-sm border mr-3"
             style={{ backgroundColor: theme.card, borderColor: theme.border }}
           >

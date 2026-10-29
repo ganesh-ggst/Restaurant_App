@@ -190,7 +190,7 @@ export default function NotificationsScreen() {
     <SafeAreaView className="flex-1" style={{ backgroundColor: theme.bg }}>
       <StatusBar style={theme.isDark ? "light" : "dark"} />
       <ProfileScreenHeader title="Notifications" onBack={() => router.back()} />
-      <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 32 }}>
+      <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 120 }}>
         <ProfileError message={error} />
         {page && page.unreadCount > 0 ? (
           <Pressable

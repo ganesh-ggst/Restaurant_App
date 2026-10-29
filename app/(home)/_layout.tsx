@@ -128,7 +128,7 @@ function toMenuCardItem(
     ...item,
     id: item._id,
     price: `₹${item.price}`,
-    time: `${item.prepTimeMinutes ?? 0} mins`,
+    time: `${item.deliveryEstimateMinutes ?? item.prepTimeMinutes ?? 0} mins`,
     rating:
       item.ratingAverage && item.ratingAverage > 0
         ? item.ratingAverage.toFixed(1)
@@ -348,7 +348,7 @@ export function CustomTabBar({
       ],
       opacity: withSpring(currentVisibleIndex >= 0 ? 1 : 0),
     };
-  }, [currentVisibleIndex, TAB_WIDTH]);
+  }, Platform.OS === "web" ? [currentVisibleIndex, TAB_WIDTH] : undefined);
 
   return (
     <View style={[styles.container, { bottom: bottomInset }]}>
@@ -509,6 +509,7 @@ export default function HomeLayout() {
   const [menuItems, setMenuItems] = useState<
     ReturnType<typeof toMenuCardItem>[]
   >([]);
+  const deliveryMenuRequestId = useRef(0);
   const [isRefreshingHome, setIsRefreshingHome] = useState(false);
   const [categories, setCategories] = useState<
     (CustomerCategory & {
@@ -592,6 +593,7 @@ export default function HomeLayout() {
   );
 
   const loadUserData = useCallback(async () => {
+    const menuRequestId = ++deliveryMenuRequestId.current;
     let cartBranchId = activeBranch?.id;
     const [menuResult, categoryResult, branchResult, offerResult, reelResult] =
       await Promise.allSettled([
@@ -612,9 +614,15 @@ export default function HomeLayout() {
           )
         : [];
 
-    if (menuResult.status === "fulfilled") {
+    if (
+      menuResult.status === "fulfilled" &&
+      menuRequestId === deliveryMenuRequestId.current
+    ) {
       setMenuItems(menuCardItems);
-    } else {
+    } else if (
+      menuResult.status === "rejected" &&
+      menuRequestId === deliveryMenuRequestId.current
+    ) {
       Alert.alert("Unable to Load Menu", menuResult.reason.message);
     }
 
@@ -811,6 +819,35 @@ export default function HomeLayout() {
   useEffect(() => {
     void loadUserData();
   }, [loadUserData]);
+
+  useEffect(() => {
+    const requestId = ++deliveryMenuRequestId.current;
+    if (mode !== "Delivery" || !activeBranch?.id || !activeAddress?.id) {
+      return;
+    }
+
+    void api
+      .getMenuItems("all", activeBranch.id, activeAddress.id, "delivery")
+      .then((items) => {
+        if (requestId !== deliveryMenuRequestId.current) return;
+        setMenuItems(
+          items.map((item) => toMenuCardItem(item, categories)),
+        );
+      })
+      .catch((error: unknown) => {
+        if (requestId !== deliveryMenuRequestId.current) return;
+        Alert.alert(
+          "Unable to Load Delivery Estimates",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      });
+
+    return () => {
+      if (requestId === deliveryMenuRequestId.current) {
+        deliveryMenuRequestId.current += 1;
+      }
+    };
+  }, [activeAddress?.id, activeBranch?.id, categories, mode]);
 
   const reloadCart = useCallback(
     async (expectedBranchId?: string) => {
@@ -1466,6 +1503,13 @@ export default function HomeLayout() {
         <View className="flex-1" style={{ backgroundColor: theme.bg }}>
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="(tabs)" />
+            <Stack.Screen
+              name="favorites"
+              options={{
+                gestureEnabled: true,
+                animation: "slide_from_right",
+              }}
+            />
             <Stack.Screen
               name="delivery-cart"
               options={{

@@ -102,7 +102,7 @@ export default function OffersScreen() {
         </Text>
         <View className="flex-row items-center">
           <Pressable
-            onPress={() => router.push("/(home)/(tabs)/favorites")}
+            onPress={() => router.push("/(home)/favorites")}
             className="h-11 w-11 items-center justify-center rounded-full border mr-3"
             style={{ backgroundColor: theme.card, borderColor: theme.border }}
           >

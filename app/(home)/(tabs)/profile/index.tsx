@@ -32,6 +32,7 @@ import {
   Alert,
   Modal,
   Pressable,
+  RefreshControl,
   ScrollView,
   Text,
   View,
@@ -45,6 +46,7 @@ import { useProfile } from "../../../../components/profile/ProfileContext";
 import { formatProfilePhone } from "../../../../components/profile/ProfileUi";
 import { useAppTheme } from "../../../../hooks/useAppTheme";
 import { api } from "../../../../services/api";
+import { saveThemePreference } from "../../../../services/theme-preference";
 import { useOrderMode } from "../../_layout";
 
 const themeOptions = [
@@ -71,6 +73,7 @@ export default function ProfileScreen() {
   const { colorScheme, setColorScheme } = useColorScheme();
   const { user, error, reloadProfile, clearUser } = useProfile();
   const [showThemeModal, setShowThemeModal] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [failedAvatarUrl, setFailedAvatarUrl] = useState("");
   const profileScrollRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
   const { mode, carts, dineInCartState } = useOrderMode();
@@ -86,6 +89,30 @@ export default function ProfileScreen() {
       "Coming Soon",
       `${featureName} is currently under development.`,
     );
+  };
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await reloadProfile();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [reloadProfile]);
+
+  const selectTheme = async (value: (typeof themeOptions)[number]["value"]) => {
+    try {
+      await saveThemePreference(value);
+      setColorScheme(value);
+      setShowThemeModal(false);
+    } catch (themeError) {
+      Alert.alert(
+        "Unable to Save Theme",
+        themeError instanceof Error
+          ? themeError.message
+          : "Please try selecting your theme again.",
+      );
+    }
   };
 
   const settingsGroups: ProfileLink[][] = [
@@ -247,6 +274,14 @@ export default function ProfileScreen() {
           flexGrow: 1,
           paddingBottom: insets.bottom + (cartButtonVisible ? 230 : 150),
         }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void handleRefresh()}
+            tintColor={theme.primary}
+            colors={[theme.primary]}
+          />
+        }
         showsVerticalScrollIndicator={false}
       >
         <View className="items-center px-6 pt-8 pb-10">
@@ -405,10 +440,7 @@ export default function ProfileScreen() {
                   key={value}
                   accessibilityRole="radio"
                   accessibilityState={{ checked: selected }}
-                  onPress={() => {
-                    setColorScheme(value);
-                    setShowThemeModal(false);
-                  }}
+                  onPress={() => void selectTheme(value)}
                   className="mb-3 flex-row items-center rounded-2xl border p-4"
                   style={{
                     backgroundColor: theme.card,

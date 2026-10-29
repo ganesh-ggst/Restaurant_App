@@ -3,10 +3,10 @@ import { ArrowLeft, Heart } from "lucide-react-native";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import FoodCard from "../../../components/home/FoodCard";
-import { ProfileAvatarButton } from "../../../components/profile/ProfileAvatarButton";
-import { useAppTheme } from "../../../hooks/useAppTheme";
-import { useFavorites, useOrderMode } from "../_layout";
+import FoodCard from "../../components/home/FoodCard";
+import { ProfileAvatarButton } from "../../components/profile/ProfileAvatarButton";
+import { useAppTheme } from "../../hooks/useAppTheme";
+import { useFavorites, useOrderMode } from "./_layout";
 
 export default function FavoritesScreen() {
   const router = useRouter();
