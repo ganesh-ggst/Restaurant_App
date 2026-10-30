@@ -18,6 +18,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -45,9 +46,11 @@ import { CATEGORIES as CATEGORY_PRESENTATION } from "../../constants/mockData";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { api } from "../../services/api";
 import { authApi } from "../../services/api/auth";
+import { isDeliveryBranchEligible } from "../../utils/delivery-branch";
 import type {
   CustomerBranch,
   CustomerCart,
+  CustomerCartContext,
   CustomerCartItem,
   CustomerCategory,
   CustomerCustomizationSelection,
@@ -74,6 +77,30 @@ const MARGIN = 20;
 const TAB_BAR_WIDTH = width - MARGIN * 2;
 const TAB_BAR_HEIGHT = 72;
 const MIN_TAB_BAR_BOTTOM = 16;
+
+function isUnavailableRestaurantError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /selected restaurant was not found or is inactive/i.test(error.message)
+  );
+}
+
+function getCartContext(
+  branchId: string,
+  mode: string,
+  addressId?: string,
+): CustomerCartContext {
+  if (mode === "Delivery") {
+    if (!addressId) {
+      throw new Error("Choose a delivery address before updating your cart.");
+    }
+    return { branchId, addressId, fulfillmentType: "delivery" };
+  }
+  if (mode === "Takeaway") {
+    return { branchId, fulfillmentType: "takeaway" };
+  }
+  return { branchId, fulfillmentType: "dine-in" };
+}
 
 const getNumericPrice = (price: any) => {
   if (typeof price === "number") return price;
@@ -112,13 +139,14 @@ function toMenuCardItem(
     .replace(/[_\s-]+/g, "");
   const selectedTag = item.customTagEnabled && customTag
     ? customTag
-    : normalizedMarketingTag === "autodiscount"
-      ? item.discountLabel
-      : normalizedMarketingTag === "bestseller"
-        ? "⭐ Bestseller"
-        : normalizedMarketingTag === "hot"
-          ? "🔥 Hot"
-          : item.marketingTag;
+    : item.marketingBadgeLabel?.trim() ||
+      (normalizedMarketingTag === "autodiscount"
+        ? item.discountLabel
+        : normalizedMarketingTag === "bestseller"
+          ? "⭐ Bestseller"
+          : normalizedMarketingTag === "hot"
+            ? "🔥 Hot"
+            : item.marketingTag);
   const marketingTag =
     typeof selectedTag === "string" && selectedTag.trim().toLowerCase() !== "none"
       ? selectedTag.trim().toUpperCase()
@@ -128,7 +156,9 @@ function toMenuCardItem(
     ...item,
     id: item._id,
     price: `₹${item.price}`,
-    time: `${item.deliveryEstimateMinutes ?? item.prepTimeMinutes ?? 0} mins`,
+    time:
+      item.estimatedDeliveryRange ||
+      `${item.deliveryEstimateMinutes ?? item.prepTimeMinutes ?? 0} mins`,
     rating:
       item.ratingAverage && item.ratingAverage > 0
         ? item.ratingAverage.toFixed(1)
@@ -592,15 +622,52 @@ export default function HomeLayout() {
       sum + (item.total || getNumericPrice(item.price) * item.quantity),
     0,
   );
+  const activeAddressId = activeAddress?.id;
+  const activeAddressDatabaseId = activeAddress?._id;
+  const activeAddressLatitude = activeAddress?.lat;
+  const activeAddressLongitude = activeAddress?.lng;
+  const activeAddressLocation = useMemo(
+    () =>
+      activeAddressId ||
+      activeAddressDatabaseId ||
+      activeAddressLatitude !== undefined ||
+      activeAddressLongitude !== undefined
+        ? {
+            id: activeAddressId,
+            _id: activeAddressDatabaseId,
+            lat: activeAddressLatitude,
+            lng: activeAddressLongitude,
+          }
+        : null,
+    [
+      activeAddressId,
+      activeAddressDatabaseId,
+      activeAddressLatitude,
+      activeAddressLongitude,
+    ],
+  );
 
   const loadUserData = useCallback(async () => {
     const menuRequestId = ++deliveryMenuRequestId.current;
     let cartBranchId = activeBranch?.id;
+    const fulfillmentType =
+      mode === "Delivery"
+        ? "delivery"
+        : mode === "Takeaway"
+          ? "takeaway"
+          : "dine-in";
     const [menuResult, categoryResult, branchResult, offerResult, reelResult] =
       await Promise.allSettled([
-        api.getMenuItems("all", activeBranch?.id),
+        api.getMenuItems({
+          stock: "all",
+          branchId: activeBranch?.id,
+          address: mode === "Delivery" ? activeAddressId : undefined,
+          fulfillmentType,
+        }),
         api.getCategories(),
-        api.getBranches(),
+        mode === "Delivery" && activeAddressId
+          ? api.getNearbyBranches(activeAddressId)
+          : api.getBranches(),
         api.getOffers(),
         api.getFeaturedReels(),
       ]);
@@ -624,7 +691,15 @@ export default function HomeLayout() {
       menuResult.status === "rejected" &&
       menuRequestId === deliveryMenuRequestId.current
     ) {
-      Alert.alert("Unable to Load Menu", menuResult.reason.message);
+      setMenuItems([]);
+      if (!isUnavailableRestaurantError(menuResult.reason)) {
+        Alert.alert(
+          "Unable to Load Menu",
+          menuResult.reason instanceof Error
+            ? menuResult.reason.message
+            : "Please try again.",
+        );
+      }
     }
 
     if (categoryResult.status === "fulfilled") {
@@ -660,6 +735,8 @@ export default function HomeLayout() {
         return {
           ...branch,
           id: branch._id,
+          distanceAddressId:
+            mode === "Delivery" ? activeAddressId : undefined,
           name: activeName || branch.name,
           address: activeAddress || branch.address || branch.city || "",
         };
@@ -675,20 +752,25 @@ export default function HomeLayout() {
       const defaultBranch =
         branchOptions.find(
           (branch: any) =>
-            branch.isActive &&
-            branch.isOnline !== false &&
+            (mode === "Delivery"
+            ? isDeliveryBranchEligible(branch, activeAddressLocation)
+              : branch.isActive && branch.isOnline !== false) &&
             menuBranchIds.has(branch.id),
         ) ||
         branchOptions.find(
-          (branch: any) => branch.isActive && branch.isOnline !== false,
+          (branch: any) =>
+            mode === "Delivery"
+            ? isDeliveryBranchEligible(branch, activeAddressLocation)
+              : branch.isActive && branch.isOnline !== false,
         ) ||
         null;
       const selectedBranch =
         branchOptions.find(
           (branch: any) =>
             branch.id === activeBranch?.id &&
-            branch.isActive &&
-            branch.isOnline !== false,
+            (mode === "Delivery"
+              ? isDeliveryBranchEligible(branch, activeAddressLocation)
+              : branch.isActive && branch.isOnline !== false),
         ) ||
         defaultBranch;
       cartBranchId = selectedBranch?.id;
@@ -734,10 +816,9 @@ export default function HomeLayout() {
         return;
       }
 
-      const [favoriteResult, cartResult, addressResult] =
+      const [favoriteResult, addressResult] =
         await Promise.allSettled([
           api.getFavorites(),
-          cartBranchId ? api.getCart(cartBranchId) : Promise.resolve(undefined),
           api.getAddresses(),
         ]);
 
@@ -747,34 +828,7 @@ export default function HomeLayout() {
         Alert.alert("Unable to Load Favorites", favoriteResult.reason.message);
       }
 
-      if (cartResult.status === "fulfilled") {
-        const cart = cartResult.value;
-        if (cart) {
-          const cartItems = toCartCardItems(cart, menuCardItems);
-          setCarts({
-            Delivery: cartItems,
-            "Dine-in": cartItems,
-            Takeaway: cartItems,
-          });
-          const resolvedBranchId = cart.branchId || cartBranchId;
-          if (resolvedBranchId) {
-            setDeliveryCartsByBranch((previous) => ({
-              ...previous,
-              [resolvedBranchId]: cartItems,
-            }));
-            setDeliveryOptionByBranch((previous) => ({
-              ...previous,
-              [resolvedBranchId]: cart.deliveryOptionId || undefined,
-            }));
-          }
-          setCartBranchId(cart.branchId || cartBranchId || null);
-          setCartPricing(cart.pricing);
-        }
-        setCartLoaded(true);
-      } else {
-        Alert.alert("Unable to Load Cart", cartResult.reason.message);
-      }
-
+      let resolvedAddressId = activeAddressId;
       if (addressResult.status === "fulfilled") {
         const addressOptions = addressResult.value.map((address: any) => ({
           ...address,
@@ -791,22 +845,65 @@ export default function HomeLayout() {
             .filter(Boolean)
             .join(", "),
         }));
-        setAddresses(addressOptions);
-        setActiveAddress(
+        const selectedAddress =
+          addressOptions.find(
+            (address: any) => address.id === activeAddressId,
+          ) ||
           addressOptions.find((address: any) => address.isDefault) ||
-            addressOptions[0] ||
-            null,
-        );
+          addressOptions[0] ||
+          null;
+        resolvedAddressId = selectedAddress?.id;
+        setAddresses(addressOptions);
+        setActiveAddress(selectedAddress);
       } else {
         Alert.alert("Unable to Load Addresses", addressResult.reason.message);
+      }
+
+      if (!cartBranchId) {
+        setCartLoaded(true);
+        return;
+      }
+
+      const cartResult = await Promise.allSettled([
+        api.getCart(getCartContext(cartBranchId, mode, resolvedAddressId)),
+      ]);
+      if (cartResult[0].status === "fulfilled") {
+        const cart = cartResult[0].value;
+        const cartItems = toCartCardItems(cart, menuCardItems);
+        setCarts({
+          Delivery: cartItems,
+          "Dine-in": cartItems,
+          Takeaway: cartItems,
+        });
+        const resolvedBranchId = cart.branchId || cartBranchId;
+        setDeliveryCartsByBranch((previous) => ({
+          ...previous,
+          [resolvedBranchId]: cartItems,
+        }));
+        setDeliveryOptionByBranch((previous) => ({
+          ...previous,
+          [resolvedBranchId]: cart.deliveryOptionId || undefined,
+        }));
+        setCartBranchId(resolvedBranchId);
+        setCartPricing(cart.pricing);
+        setCartLoaded(true);
+      } else {
+        Alert.alert("Unable to Load Cart", cartResult[0].reason.message);
       }
     } catch (error) {
       Alert.alert(
         "Unable to Load Account Data",
         error instanceof Error ? error.message : "Please try again.",
       );
+    } finally {
+      setCartLoaded(true);
     }
-  }, [activeBranch?.id]);
+  }, [
+    activeAddressId,
+    activeAddressLocation,
+    activeBranch?.id,
+    mode,
+  ]);
 
   const refreshHomeData = useCallback(async () => {
     setIsRefreshingHome(true);
@@ -823,12 +920,25 @@ export default function HomeLayout() {
 
   useEffect(() => {
     const requestId = ++deliveryMenuRequestId.current;
-    if (mode !== "Delivery" || !activeBranch?.id || !activeAddress?.id) {
-      return;
-    }
+    if (!activeBranch?.id) return;
+
+    const fulfillmentType =
+      mode === "Delivery"
+        ? "delivery"
+        : mode === "Takeaway"
+          ? "takeaway"
+          : "dine-in";
+    const address =
+      mode === "Delivery" ? activeAddress?.id : undefined;
+    if (mode === "Delivery" && !address) return;
 
     void api
-      .getMenuItems("all", activeBranch.id, activeAddress.id, "delivery")
+      .getMenuItems({
+        branchId: activeBranch.id,
+        address,
+        fulfillmentType,
+        stock: "all",
+      })
       .then((items) => {
         if (requestId !== deliveryMenuRequestId.current) return;
         setMenuItems(
@@ -837,10 +947,13 @@ export default function HomeLayout() {
       })
       .catch((error: unknown) => {
         if (requestId !== deliveryMenuRequestId.current) return;
-        Alert.alert(
-          "Unable to Load Delivery Estimates",
-          error instanceof Error ? error.message : "Please try again.",
-        );
+        setMenuItems([]);
+        if (!isUnavailableRestaurantError(error)) {
+          Alert.alert(
+            "Unable to Load Delivery Estimates",
+            error instanceof Error ? error.message : "Please try again.",
+          );
+        }
       });
 
     return () => {
@@ -857,7 +970,9 @@ export default function HomeLayout() {
         throw new Error("Choose a restaurant branch before loading your cart.");
       }
 
-      const cart = await api.getCart(branchId);
+      const cart = await api.getCart(
+        getCartContext(branchId, mode, activeAddress?.id),
+      );
       const cartItems = toCartCardItems(cart, menuItems);
       const cartBranchId = cart.branchId || branchId;
       setCarts({
@@ -877,7 +992,7 @@ export default function HomeLayout() {
       setCartPricing(cart.pricing);
       setCartLoaded(true);
     },
-    [activeBranch?.id, menuItems],
+    [activeAddress?.id, activeBranch?.id, menuItems, mode],
   );
 
   useEffect(() => {
@@ -921,13 +1036,14 @@ export default function HomeLayout() {
   }, [activeBranch?.id, reloadCart]);
 
   const replaceServerCart = async (branchId: string, items: any[]) => {
-    await api.clearCart(branchId);
+    const context = getCartContext(branchId, mode, activeAddress?.id);
+    await api.clearCart(context);
     for (const item of items) {
       await api.addCartItem({
         menuItemId: String(item.id),
         quantity: item.quantity,
         selectedCustomizations: item.addons || [],
-        branchId,
+        ...context,
       });
     }
   };
@@ -935,6 +1051,16 @@ export default function HomeLayout() {
   const selectActiveBranch = async (
     branch: CustomerBranch & { id: string; address: string },
   ) => {
+    if (
+      mode === "Delivery" &&
+      !isDeliveryBranchEligible(branch, activeAddressLocation)
+    ) {
+      Alert.alert(
+        "Branch Unavailable for Delivery",
+        "Choose an active branch within 5 km of your delivery address.",
+      );
+      return;
+    }
     if (!branch.isActive || branch.isOnline === false) {
       setActiveBranch(branch);
       return;
@@ -977,7 +1103,10 @@ export default function HomeLayout() {
     if (!branchId) {
       throw new Error("Choose a restaurant branch before applying a coupon.");
     }
-    await api.applyCartCoupon(code, branchId);
+    await api.applyCartCoupon(
+      code,
+      getCartContext(branchId, mode, activeAddress?.id),
+    );
     await reloadCart(branchId);
   };
 
@@ -986,7 +1115,9 @@ export default function HomeLayout() {
     if (!branchId) {
       throw new Error("Choose a restaurant branch before removing a coupon.");
     }
-    await api.removeCartCoupon(branchId);
+    await api.removeCartCoupon(
+      getCartContext(branchId, mode, activeAddress?.id),
+    );
     await reloadCart(branchId);
   };
 
@@ -1098,8 +1229,11 @@ export default function HomeLayout() {
     const cartItemId = existing?.cartItemId;
 
     try {
+      const cartContext = branchId
+        ? getCartContext(branchId, mode, activeAddress?.id)
+        : null;
       if (quantity < 0) {
-        if (!branchId) {
+        if (!branchId || !cartContext) {
           throw new Error("Choose a restaurant branch before updating your cart.");
         }
         if (!existing || !cartItemId) {
@@ -1109,22 +1243,22 @@ export default function HomeLayout() {
         }
         const updatedQuantity = existing.quantity + quantity;
         if (updatedQuantity <= 0) {
-          await api.removeCartItem(cartItemId, branchId);
+          await api.removeCartItem(cartItemId, cartContext);
         } else {
-          await api.updateCartItem(cartItemId, updatedQuantity, branchId);
+          await api.updateCartItem(cartItemId, updatedQuantity, cartContext);
         }
       } else {
         if (item?.isAvailable !== true) {
           throw new Error("This item is out of stock.");
         }
-        if (!branchId) {
+        if (!branchId || !cartContext) {
           throw new Error("Choose a restaurant branch before adding items.");
         }
         await api.addCartItem({
           menuItemId: String(menuItemId),
           quantity,
           selectedCustomizations: addons,
-          branchId,
+          ...cartContext,
         });
       }
       await reloadCart(branchId);
@@ -1166,22 +1300,23 @@ export default function HomeLayout() {
         ) || matchingItems[0];
     if (!existing?.cartItemId) return;
     const branchId = activeBranch?.id;
-    if (!branchId) {
+    if (!branchId || (mode === "Delivery" && !activeAddress?.id)) {
       Alert.alert(
         "Unable to Update Cart",
-        "Choose a restaurant branch before updating your cart.",
+        "Choose a restaurant branch and delivery address before updating your cart.",
       );
       return;
     }
     try {
+      const cartContext = getCartContext(branchId, mode, activeAddress?.id);
       if (existing.quantity > 1) {
         await api.updateCartItem(
           existing.cartItemId,
           existing.quantity - 1,
-          branchId,
+          cartContext,
         );
       } else {
-        await api.removeCartItem(existing.cartItemId, branchId);
+        await api.removeCartItem(existing.cartItemId, cartContext);
       }
       await reloadCart(branchId);
     } catch (error) {
@@ -1196,7 +1331,10 @@ export default function HomeLayout() {
     itemsToRemove: { menuItemId: string; cartItemId?: string }[],
   ) => {
     const branchId = activeBranch?.id;
-    if (!branchId) {
+    const cartContext = branchId
+      ? getCartContext(branchId, mode, activeAddress?.id)
+      : null;
+    if (!branchId || !cartContext) {
       throw new Error("Choose a restaurant branch before updating your cart.");
     }
 
@@ -1235,7 +1373,7 @@ export default function HomeLayout() {
     const results: PromiseSettledResult<void>[] = [];
     for (const { cartItemId } of cartItemRemovals) {
       try {
-        await api.removeCartItem(cartItemId, branchId);
+        await api.removeCartItem(cartItemId, cartContext);
         results.push({ status: "fulfilled", value: undefined });
       } catch (reason) {
         results.push({ status: "rejected", reason });

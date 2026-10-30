@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { DeliveryCartModal } from "../../components/home/DeliveryCartModal";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { api } from "../../services/api";
+import type { DeliverySpeed } from "../../services/api/customer";
 import { useOrderMode } from "./_layout";
 
 function getEntityId(value: any): string | null {
@@ -71,7 +72,14 @@ export default function DeliveryCartScreen() {
       if (!activeBranch?.id) {
         throw new Error("Choose a restaurant branch before clearing your cart.");
       }
-      await api.clearCart(activeBranch.id);
+      if (!activeAddress?.id) {
+        throw new Error("Choose a delivery address before clearing your cart.");
+      }
+      await api.clearCart({
+        branchId: activeBranch.id,
+        addressId: activeAddress.id,
+        fulfillmentType: "delivery",
+      });
       await reloadCart(activeBranch?.id);
     } catch (error) {
       Alert.alert(
@@ -106,14 +114,30 @@ export default function DeliveryCartScreen() {
     if (!activeBranch?.id) {
       throw new Error("Choose a restaurant branch before clearing your cart.");
     }
-    await api.clearCart(activeBranch.id);
+    if (!activeAddress?.id) {
+      throw new Error("Choose a delivery address before clearing your cart.");
+    }
+    await api.clearCart({
+      branchId: activeBranch.id,
+      addressId: activeAddress.id,
+      fulfillmentType: "delivery",
+    });
     await reloadCart(activeBranch.id);
   };
 
-  const handleSelectDeliveryOption = async (optionId: string) => {
+  const handleSelectDeliveryOption = async (
+    deliverySpeed: DeliverySpeed | null,
+  ) => {
     if (!activeBranch?.id) return;
+    if (!deliverySpeed) {
+      Alert.alert(
+        "Unable to Update Delivery Option",
+        "This delivery option is not mapped to a supported speed. Choose Eco Saver, Standard, or Express.",
+      );
+      return;
+    }
     try {
-      await api.updateCartDeliveryOption(optionId, activeBranch.id);
+      await api.updateCartDeliveryOption(deliverySpeed, activeBranch.id);
       await reloadCart(activeBranch.id);
     } catch (error) {
       Alert.alert(

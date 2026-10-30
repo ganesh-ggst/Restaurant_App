@@ -8,6 +8,7 @@ import {
 } from "lucide-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -20,6 +21,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FoodCard from "../../../components/home/FoodCard";
 import { ProfileAvatarButton } from "../../../components/profile/ProfileAvatarButton";
 import { useAppTheme } from "../../../hooks/useAppTheme";
+import { api } from "../../../services/api";
 import { useOrderMode } from "../_layout";
 
 export default function SearchScreen() {
@@ -52,6 +54,7 @@ export default function SearchScreen() {
     menuItems,
     categories,
     activeBranch,
+    activeAddress,
     refreshHomeData,
     isRefreshingHome,
     handleAddToCart,
@@ -124,6 +127,88 @@ export default function SearchScreen() {
   const activeCategoryData = branchCategories.find(
     (category: any) => category.name === activeCategory,
   );
+  const menuFilterKey = JSON.stringify({
+    branchId: activeBranchId,
+    address: orderMode === "Delivery" ? activeAddress?.id : undefined,
+    fulfillmentType:
+      orderMode === "Delivery"
+        ? "delivery"
+        : orderMode === "Takeaway"
+          ? "takeaway"
+          : "dine-in",
+    search: searchQuery.trim(),
+    categoryId: activeCategoryData?.id,
+    foodType: isVegOnly ? "veg" : undefined,
+  });
+  const [serverMenuResults, setServerMenuResults] = useState<{
+    key: string;
+    ids: string[];
+  } | null>(null);
+  const menuSearchRequestId = useRef(0);
+  const hasServerMenuFilters = Boolean(
+    searchQuery.trim() || activeCategoryData || isVegOnly,
+  );
+
+  useEffect(() => {
+    const requestId = ++menuSearchRequestId.current;
+    if (
+      !activeBranchId ||
+      !hasServerMenuFilters ||
+      (orderMode === "Delivery" && !activeAddress?.id)
+    ) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      void api
+        .getMenuItems({
+          branchId: activeBranchId,
+          address: orderMode === "Delivery" ? activeAddress?.id : undefined,
+          fulfillmentType:
+            orderMode === "Delivery"
+              ? "delivery"
+              : orderMode === "Takeaway"
+                ? "takeaway"
+                : "dine-in",
+          search: searchQuery.trim() || undefined,
+          categoryId: activeCategoryData?.id,
+          foodType: isVegOnly ? "veg" : undefined,
+        })
+        .then((items) => {
+          if (requestId !== menuSearchRequestId.current) return;
+          setServerMenuResults({
+            key: menuFilterKey,
+            ids: items.map((item) => item._id),
+          });
+        })
+        .catch((error: unknown) => {
+          if (requestId !== menuSearchRequestId.current) return;
+          setServerMenuResults({ key: menuFilterKey, ids: [] });
+          Alert.alert(
+            "Unable to Search Menu",
+            error instanceof Error ? error.message : "Please try again.",
+          );
+        });
+    }, 250);
+
+    return () => {
+      clearTimeout(timer);
+      if (menuSearchRequestId.current === requestId) {
+        menuSearchRequestId.current += 1;
+      }
+    };
+  }, [
+    activeAddress?.id,
+    activeBranchId,
+    activeCategoryData?.id,
+    hasServerMenuFilters,
+    isVegOnly,
+    menuFilterKey,
+    orderMode,
+    searchQuery,
+  ]);
+  const matchingServerResults =
+    serverMenuResults?.key === menuFilterKey ? serverMenuResults.ids : null;
   const activeCategoryItemCount =
     activeCategory === "All"
       ? branchMenuItems.length
@@ -161,11 +246,26 @@ export default function SearchScreen() {
 
   const filteredItems = branchMenuItems
     .filter((item: any) => {
+      if (
+        matchingServerResults &&
+        !matchingServerResults.includes(item.id)
+      ) {
+        return false;
+      }
+
+      const itemCategoryId =
+        typeof item.categoryId === "string"
+          ? item.categoryId
+          : item.categoryId?._id;
       const matchesCategory =
-        activeCategory === "All" || item.category === activeCategory;
+        activeCategory === "All" ||
+        itemCategoryId === activeCategoryData?.id ||
+        item.category === activeCategory;
 
       return (
-        matchesCategory && (!isVegOnly || item.isVeg) && matchesSearch(item)
+        matchesCategory &&
+        (!isVegOnly || item.isVeg) &&
+        (matchingServerResults !== null || matchesSearch(item))
       );
     })
     .sort(

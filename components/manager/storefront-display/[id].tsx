@@ -130,7 +130,6 @@ export default function StorefrontDisplayDetailComponent() {
   }
 
   const isFeaturedSection = id === "sf_featured";
-  const isEmptySection = id === "sf_empty";
   const isSingleInputSection = id === "sf_greetings" || id === "sf_search";
   const singleInputLabel =
     id === "sf_greetings" ? "Greeting Text" : "Search Placeholder";
@@ -194,6 +193,14 @@ export default function StorefrontDisplayDetailComponent() {
       if (result.canceled || !asset) return;
 
       setUploadingImage(true);
+      const branchId = isAdmin
+        ? (await adminProfileApi.getProfile()).admin.branchId
+        : (await managerProfileApi.getProfile()).manager.branchId;
+      if (!branchId) {
+        throw new Error(
+          "Your account is not associated with a branch. Contact your administrator.",
+        );
+      }
       const mimeType = asset.mimeType || "image/jpeg";
       const extension = mimeType.split("/")[1] || "jpg";
       const [uploadedUrl] = await operationsApi.uploadMenuImages(
@@ -206,6 +213,7 @@ export default function StorefrontDisplayDetailComponent() {
           },
         ],
         "storefront-display",
+        branchId,
       );
       setMediaUri(uploadedUrl);
       setFieldErrors((current) => {
@@ -286,10 +294,6 @@ export default function StorefrontDisplayDetailComponent() {
       const subParts = opt.subValue ? opt.subValue.split("•") : [];
       setVal2(subParts[0] ? subParts[0].trim() : "");
       setMediaUri(subParts[1] ? subParts[1].trim() : "");
-    } else if (isEmptySection && opt) {
-      setVal1(opt.value || "");
-      setVal2(opt.subValue || "");
-      setMediaUri("");
     } else {
       setVal1(opt ? opt.value : "");
       setVal2(opt && opt.subValue ? opt.subValue : "");
@@ -314,9 +318,6 @@ export default function StorefrontDisplayDetailComponent() {
       else if (!/^https?:\/\/\S+$/i.test(trimmedMediaUri)) {
         errors.mediaUri = "Attach a valid image from your gallery or camera.";
       }
-    } else if (isEmptySection) {
-      if (!trimmedVal1) errors.val1 = "Title is required.";
-      if (!trimmedVal2) errors.val2 = "Description is required.";
     } else if (isSingleInputSection) {
       if (!trimmedVal1) errors.val1 = "Text is required.";
     } else {
@@ -342,8 +343,6 @@ export default function StorefrontDisplayDetailComponent() {
           imageUrl: mediaUri.trim(),
           ...(!editingOption ? { badge: "FEATURED", displayOrder: 1 } : {}),
         };
-      } else if (isEmptySection) {
-        body = { title: val1.trim(), description: val2.trim() };
       } else {
         Alert.alert("Unsupported storefront section", "This section cannot be saved.");
         return;
@@ -357,6 +356,15 @@ export default function StorefrontDisplayDetailComponent() {
             editingOption.id,
             body,
           );
+        } else if (isFeaturedSection) {
+          await adminProfileApi.createFeaturedContent({
+            title: val1.trim(),
+            subtitle: val2.trim(),
+            badge: "FEATURED",
+            imageUrl: mediaUri.trim(),
+            displayOrder: 1,
+            isActive: true,
+          });
         } else {
           await adminProfileApi.createStorefrontItem(definition.key, {
             ...body,
@@ -388,8 +396,6 @@ export default function StorefrontDisplayDetailComponent() {
         imageUrl: mediaUri.trim(),
         ...(!editingOption ? { badge: "FEATURED", displayOrder: 1 } : {}),
       };
-    } else if (isEmptySection) {
-      body = { title: val1.trim(), description: val2.trim() };
     } else {
       Alert.alert("Unsupported storefront section", "This section cannot be saved.");
       return;
@@ -756,69 +762,6 @@ export default function StorefrontDisplayDetailComponent() {
                           Uploading image...
                         </Text>
                       </View>
-                    ) : null}
-                  </>
-                ) : isEmptySection ? (
-                  <>
-                    <Text
-                      className="text-xs font-bold mb-1 uppercase"
-                      style={{ color: theme.muted }}
-                    >
-                      Title *
-                    </Text>
-                    <TextInput
-                      placeholder="e.g. No matching dishes found"
-                      placeholderTextColor={theme.muted + "44"}
-                      value={val1}
-                      onChangeText={(value) => updateField("val1", value, setVal1)}
-                      onBlur={() => setVal1(val1.trim())}
-                      className="px-4 rounded-xl mb-4 font-bold"
-                      style={{
-                        ...(fieldInputStyle("val1") || {}),
-                        backgroundColor: theme.bg,
-                        color: theme.text,
-                        fontSize: 16,
-                        height: 52,
-                      }}
-                      autoFocus={true}
-                    />
-                    {fieldErrors.val1 ? (
-                      <Text
-                        className="mb-3 text-xs font-semibold"
-                        style={{ color: theme.danger }}
-                      >
-                        {fieldErrors.val1}
-                      </Text>
-                    ) : null}
-
-                    <Text
-                      className="text-xs font-bold mb-1 uppercase"
-                      style={{ color: theme.muted }}
-                    >
-                      Description *
-                    </Text>
-                    <TextInput
-                      placeholder="e.g. Try another dish or search term"
-                      placeholderTextColor={theme.muted + "44"}
-                      value={val2}
-                      onChangeText={(value) => updateField("val2", value, setVal2)}
-                      onBlur={() => setVal2(val2.trim())}
-                      className="px-4 rounded-xl mb-6 font-semibold"
-                      style={{
-                        ...(fieldInputStyle("val2") || {}),
-                        backgroundColor: theme.bg,
-                        color: theme.text,
-                        fontSize: 16,
-                        height: 52,
-                      }}
-                    />
-                    {fieldErrors.val2 ? (
-                      <Text
-                        className="mb-3 text-xs font-semibold"
-                        style={{ color: theme.danger }}
-                      >
-                        {fieldErrors.val2}
-                      </Text>
                     ) : null}
                   </>
                 ) : isSingleInputSection ? (

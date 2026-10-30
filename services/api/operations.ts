@@ -386,6 +386,13 @@ export const operationsApi = {
     );
   },
 
+  async getItem(id: string): Promise<OperationsMenuItem> {
+    return requireData(
+      await request<OperationsMenuItem>("GET", `/items/${encode(id)}`),
+      "The server did not return this menu item.",
+    );
+  },
+
   async createCategoryItem(
     categoryId: string,
     body: Record<string, unknown>,
@@ -425,8 +432,14 @@ export const operationsApi = {
   async uploadMenuImages(
     files: { uri: string; fileName: string; mimeType: string }[],
     folder: "menu item" | "cross-sells" | "storefront-display",
+    branchId?: string,
   ): Promise<string[]> {
     if (files.length === 0) return [];
+    if (folder === "storefront-display" && !branchId) {
+      throw new Error(
+        "Choose a branch before uploading featured content images.",
+      );
+    }
     if (!API_BASE_URL) {
       throw new Error(
         "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
@@ -449,7 +462,9 @@ export const operationsApi = {
 
     try {
       const response = await axios.post<ApiEnvelope<unknown>>(
-        `${API_BASE_URL}/api/operations/upload-images`,
+        `${API_BASE_URL}/api/operations/upload-images${
+          branchId ? `?branchId=${encode(branchId)}` : ""
+        }`,
         formData,
         {
           timeout: 60_000,

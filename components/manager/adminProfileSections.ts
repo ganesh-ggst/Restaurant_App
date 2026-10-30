@@ -18,7 +18,6 @@ const storefrontDefinitions = [
   { id: "sf_greetings", key: "greetings", title: "Greetings", selectionType: "multiple" },
   { id: "sf_search", key: "searchPlaceholders", title: "Search Placeholders", selectionType: "multiple" },
   { id: "sf_featured", key: "featuredContents", title: "Featured Content", selectionType: "single" },
-  { id: "sf_empty", key: "emptyStates", title: "Empty States", selectionType: "single" },
 ] as const;
 
 const record = (value: unknown): DataRecord =>
@@ -197,10 +196,6 @@ function toStorefrontOption(
         .map(text)
         .filter(Boolean)
         .join(" • ");
-      break;
-    case "emptyStates":
-      value = text(item.title);
-      subValue = text(item.description);
       break;
   }
   return { id: idOf(item, index), value, subValue, isActive: activeOf(item) };

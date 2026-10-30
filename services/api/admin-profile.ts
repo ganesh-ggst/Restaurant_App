@@ -28,6 +28,20 @@ export interface AdminProfileResponse {
   store: Record<string, unknown> | null;
 }
 
+export interface AdminFeaturedContentInput {
+  title: string;
+  subtitle: string;
+  badge: string;
+  imageUrl: string;
+  displayOrder: number;
+  isActive: boolean;
+}
+
+export interface AdminFeaturedContent extends AdminFeaturedContentInput {
+  id: string;
+  branchId: string;
+}
+
 export interface AdminPerson {
   id: string;
   name: string;
@@ -623,6 +637,20 @@ export const adminProfileApi = {
       data,
     });
     invalidate("storefront-display", `storefront-section:${section}`);
+  },
+
+  async createFeaturedContent(
+    data: AdminFeaturedContentInput,
+  ): Promise<AdminFeaturedContent> {
+    const createdItem = requireData(
+      await request<AdminFeaturedContent>("POST", "/storefront-display", {
+        section: "featured-content",
+        data,
+      }),
+      "The server did not return the created featured content.",
+    );
+    invalidate("storefront-display", "storefront-section:featuredContents");
+    return createdItem;
   },
 
   async updateStorefrontItem(

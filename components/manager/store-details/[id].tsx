@@ -20,7 +20,11 @@ import {
   TextInput,
   View,
 } from "react-native";
-import MapView, { Marker, type Region } from "react-native-maps";
+import MapView, {
+  Marker,
+  PROVIDER_GOOGLE,
+  type Region,
+} from "react-native-maps";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
@@ -30,7 +34,10 @@ import {
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { adminProfileApi } from "../../../services/api/admin-profile";
 import { managerProfileApi } from "../../../services/api/manager-profile";
-import { isAndroidMapsApiKeyConfigured } from "../../../services/maps";
+import {
+  isGoogleMapsApiKeyConfigured,
+  isMapSelectionSupported,
+} from "../../../services/maps";
 import { MapUnavailableNotice } from "../../maps/MapUnavailableNotice";
 import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
@@ -69,7 +76,8 @@ export default function StoreDetailDetailComponent() {
   const [mapRegion, setMapRegion] = useState<Region>(DEFAULT_MAP_REGION);
   const mapViewRef = useRef<MapView | null>(null);
   const mapInteractionStarted = useRef(false);
-  const mapsApiKeyConfigured = isAndroidMapsApiKeyConfigured();
+  const mapSelectionSupported = isMapSelectionSupported();
+  const googleMapsProviderConfigured = isGoogleMapsApiKeyConfigured();
   const [editingOption, setEditingOption] = useState<StoreDetailOption | null>(
     null,
   );
@@ -86,7 +94,7 @@ export default function StoreDetailDetailComponent() {
     Partial<Record<"packaging" | "platform" | "delivery", string>>
   >({});
   const [deliveryErrors, setDeliveryErrors] = useState<
-    Partial<Record<"name" | "price" | "description" | "time", string>>
+    Partial<Record<"name" | "price" | "description", string>>
   >({});
   const [wifiErrors, setWifiErrors] = useState<
     Partial<Record<"name" | "password", string>>
@@ -384,7 +392,7 @@ export default function StoreDetailDetailComponent() {
       setGpsCoordinates(priceMatch ? priceMatch[1] : "0");
       const subParts = opt.subValue ? opt.subValue.split("•") : [];
       setThirdVal(subParts[0] ? subParts[0].trim() : "");
-      setFourthVal(subParts[1] ? subParts[1].trim() : "");
+      setFourthVal("");
     } else if (isAddressSection && opt) {
       setAddressLine(isAdmin ? opt.area || opt.value || "" : opt.value || "");
       setGpsCoordinates(opt.subValue || "");
@@ -470,9 +478,6 @@ export default function StoreDetailDetailComponent() {
       }
       if (!thirdVal.trim()) {
         errors.description = "Subtitle Description is required.";
-      }
-      if (!fourthVal.trim()) {
-        errors.time = "Estimated Time Range is required.";
       }
       if (Object.keys(errors).length > 0) {
         setDeliveryErrors(errors);
@@ -580,7 +585,6 @@ export default function StoreDetailDetailComponent() {
           title: addressLine.trim(),
           price: Number(gpsCoordinates) || 0,
           description: thirdVal.trim(),
-          estimatedTimeRange: fourthVal.trim(),
         };
       } else if (id === "sd_rest") {
         body = { name: addressLine.trim() };
@@ -616,7 +620,6 @@ export default function StoreDetailDetailComponent() {
           name: addressLine.trim(),
           price: Number(gpsCoordinates) || 0,
           description: thirdVal.trim(),
-          estimatedTimeRange: fourthVal.trim(),
         };
       } else {
         Alert.alert("Unsupported store detail", "This section cannot be saved.");
@@ -685,7 +688,6 @@ export default function StoreDetailDetailComponent() {
         title: addressLine.trim(),
         price: Number(gpsCoordinates) || 0,
         description: thirdVal.trim(),
-        estimatedTimeRange: fourthVal.trim(),
       };
     } else {
       Alert.alert("Unsupported store detail", "This section cannot be saved.");
@@ -1402,43 +1404,6 @@ export default function StoreDetailDetailComponent() {
                       <View className="mb-3" />
                     )}
 
-                    <Text
-                      className="text-xs font-bold mb-1 uppercase"
-                      style={{ color: theme.muted }}
-                    >
-                      Estimated Time Range *
-                    </Text>
-                    <TextInput
-                      placeholder="e.g. 20-25 mins"
-                      placeholderTextColor={theme.muted}
-                      value={fourthVal}
-                      onChangeText={(value) => {
-                        setFourthVal(value);
-                        if (deliveryErrors.time) {
-                          setDeliveryErrors((current) => ({
-                            ...current,
-                            time: undefined,
-                          }));
-                        }
-                      }}
-                      onBlur={() => setFourthVal(fourthVal.trim())}
-                      className="px-4 rounded-xl mb-1 font-bold"
-                      style={{
-                        borderColor: deliveryErrors.time
-                          ? theme.danger
-                          : theme.border,
-                        borderWidth: deliveryErrors.time ? 2 : 1,
-                        backgroundColor: theme.bg,
-                        color: theme.text,
-                        fontSize: 16,
-                        height: 52,
-                      }}
-                    />
-                    {deliveryErrors.time ? (
-                      <Text className="mb-3 text-xs font-semibold" style={{ color: theme.danger }}>
-                        {deliveryErrors.time}
-                      </Text>
-                    ) : null}
                   </>
                 ) : (
                   <>
@@ -1602,10 +1567,13 @@ export default function StoreDetailDetailComponent() {
             </Text>
           </View>
           <View className="flex-1">
-            {mapsApiKeyConfigured ? (
+            {mapSelectionSupported ? (
               <MapView
                 ref={mapViewRef}
                 style={{ flex: 1 }}
+                provider={
+                  googleMapsProviderConfigured ? PROVIDER_GOOGLE : undefined
+                }
                 initialRegion={mapRegion}
                 showsUserLocation
                 showsMyLocationButton={false}

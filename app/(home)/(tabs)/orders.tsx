@@ -37,6 +37,7 @@ import { useAppTheme } from "../../../hooks/useAppTheme";
 import { api } from "../../../services/api";
 import { authApi } from "../../../services/api/auth";
 import type {
+  CustomerCartItemInput,
   CustomerCustomizationSelection,
   CustomerDineInSession,
   CustomerOrder,
@@ -755,6 +756,7 @@ export default function OrdersScreen() {
     reloadCart,
     branches = [],
     setActiveBranch,
+    activeAddress,
   } = useOrderMode();
   const [orders, setOrders] = useState<any[]>([]);
   const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
@@ -967,7 +969,27 @@ export default function OrdersScreen() {
         order.isPaymentRejected ||
         normalizeOrderStatus(order.status) === "rejected"
       ) {
-        const cartItems = sourceOrder.items.map((item) => {
+        const cartFulfillmentType =
+          fulfillmentType === "delivery" ||
+          fulfillmentType === "takeaway" ||
+          fulfillmentType === "dine-in"
+            ? fulfillmentType
+            : null;
+        if (!cartFulfillmentType) {
+          throw new Error(
+            "This order has an unsupported fulfillment type and cannot be reordered.",
+          );
+        }
+        const sourceAddressId =
+          typeof sourceOrder.addressId === "string"
+            ? sourceOrder.addressId
+            : sourceOrder.addressId?._id || sourceOrder.addressId?.id;
+        const addressId =
+          cartFulfillmentType === "delivery"
+            ? sourceAddressId || activeAddress?.id
+            : undefined;
+        const cartItems = sourceOrder.items.map(
+          (item): CustomerCartItemInput => {
           const menuItemId = item.menuItemId;
           if (!menuItemId || !Number.isFinite(item.quantity) || item.quantity < 1) {
             throw new Error(
@@ -998,13 +1020,23 @@ export default function OrdersScreen() {
                 optionIds: customization.optionIds,
               };
             });
-          return {
+          const cartItem = {
             menuItemId,
             quantity: item.quantity,
             selectedCustomizations,
             branchId,
           };
-        });
+          if (cartFulfillmentType === "delivery") {
+            if (!addressId) {
+              throw new Error(
+                "Choose a delivery address before reordering this delivery order.",
+              );
+            }
+            return { ...cartItem, fulfillmentType: "delivery", addressId };
+          }
+          return { ...cartItem, fulfillmentType: cartFulfillmentType };
+          },
+        );
 
         for (const item of cartItems) {
           await api.addCartItem(item);
