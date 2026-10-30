@@ -502,6 +502,7 @@ export default function HomeLayout() {
   const router = useRouter();
   const pathname = usePathname();
   const isDeliveryCartScreen = pathname.endsWith("/delivery-cart");
+  const isProfileScreen = pathname.includes("/profile");
   const tabBarBottom = Math.max(insets.bottom, MIN_TAB_BAR_BOTTOM);
 
   const [mode, setMode] = useState("Delivery");
@@ -716,7 +717,7 @@ export default function HomeLayout() {
     if (reelResult.status === "fulfilled") {
       setFeaturedReels(
         reelResult.value
-          .filter((reel: any) => reel.isActive)
+          .filter((reel: any) => reel.isActive !== false)
           .sort(
             (first: any, second: any) =>
               (first.displayOrder || 0) - (second.displayOrder || 0),
@@ -1522,6 +1523,7 @@ export default function HomeLayout() {
           {/* GLOBAL VIEW CART BAR (Handles all modes reliably across all tabs) */}
           {shouldShowGlobalCartButton &&
             !isDeliveryCartScreen &&
+            !isProfileScreen &&
             !showDineInCartModal && (
               <ViewCartButton
                 orderMode={mode}

@@ -30,6 +30,8 @@ import {
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { adminProfileApi } from "../../../services/api/admin-profile";
 import { managerProfileApi } from "../../../services/api/manager-profile";
+import { isAndroidMapsApiKeyConfigured } from "../../../services/maps";
+import { MapUnavailableNotice } from "../../maps/MapUnavailableNotice";
 import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
 import {
@@ -67,6 +69,7 @@ export default function StoreDetailDetailComponent() {
   const [mapRegion, setMapRegion] = useState<Region>(DEFAULT_MAP_REGION);
   const mapViewRef = useRef<MapView | null>(null);
   const mapInteractionStarted = useRef(false);
+  const mapsApiKeyConfigured = isAndroidMapsApiKeyConfigured();
   const [editingOption, setEditingOption] = useState<StoreDetailOption | null>(
     null,
   );
@@ -1599,29 +1602,33 @@ export default function StoreDetailDetailComponent() {
             </Text>
           </View>
           <View className="flex-1">
-            <MapView
-              ref={mapViewRef}
-              style={{ flex: 1 }}
-              initialRegion={mapRegion}
-              showsUserLocation
-              showsMyLocationButton={false}
-              onPanDrag={() => {
-                mapInteractionStarted.current = true;
-              }}
-              onRegionChangeComplete={handleMapRegionChangeComplete}
-              onPress={(event) => {
-                const { latitude, longitude } = event.nativeEvent.coordinate;
-                handleMapSelection(latitude, longitude);
-              }}
-            >
-              {selectedCoordinates ? (
-                <Marker
-                  coordinate={selectedCoordinates}
-                  title="Selected store location"
-                  pinColor={theme.primary}
-                />
-              ) : null}
-            </MapView>
+            {mapsApiKeyConfigured ? (
+              <MapView
+                ref={mapViewRef}
+                style={{ flex: 1 }}
+                initialRegion={mapRegion}
+                showsUserLocation
+                showsMyLocationButton={false}
+                onPanDrag={() => {
+                  mapInteractionStarted.current = true;
+                }}
+                onRegionChangeComplete={handleMapRegionChangeComplete}
+                onPress={(event) => {
+                  const { latitude, longitude } = event.nativeEvent.coordinate;
+                  handleMapSelection(latitude, longitude);
+                }}
+              >
+                {selectedCoordinates ? (
+                  <Marker
+                    coordinate={selectedCoordinates}
+                    title="Selected store location"
+                    pinColor={theme.primary}
+                  />
+                ) : null}
+              </MapView>
+            ) : (
+              <MapUnavailableNotice />
+            )}
             <View className="absolute left-4 right-4 top-4">
               <Pressable
                 onPress={() => void fetchCurrentLocation(false)}

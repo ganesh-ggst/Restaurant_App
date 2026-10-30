@@ -35,11 +35,19 @@
         "expo-build-properties",
         {
           "android": {
+            "enableMinifyInReleaseBuilds": false,
             "usesCleartextTraffic": true
           }
         }
       ],
       "expo-router",
+      [
+        "expo-dev-client",
+        {
+          "defaultLaunchURL": "http://localhost:8081",
+          "launchMode": "most-recent"
+        }
+      ],
       [
         "expo-media-library",
         {

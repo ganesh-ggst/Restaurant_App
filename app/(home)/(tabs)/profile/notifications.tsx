@@ -9,7 +9,10 @@ import {
   Text,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 
 import {
   ProfileError,
@@ -33,6 +36,7 @@ function firstText(...values: (string | undefined)[]): string {
 export default function NotificationsScreen() {
   const router = useRouter();
   const theme = useAppTheme();
+  const insets = useSafeAreaInsets();
   const [page, setPage] = useState<NotificationPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -190,7 +194,12 @@ export default function NotificationsScreen() {
     <SafeAreaView className="flex-1" style={{ backgroundColor: theme.bg }}>
       <StatusBar style={theme.isDark ? "light" : "dark"} />
       <ProfileScreenHeader title="Notifications" onBack={() => router.back()} />
-      <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 120 }}>
+      <ScrollView
+        contentContainerStyle={{
+          padding: 20,
+          paddingBottom: insets.bottom + 200,
+        }}
+      >
         <ProfileError message={error} />
         {page && page.unreadCount > 0 ? (
           <Pressable
