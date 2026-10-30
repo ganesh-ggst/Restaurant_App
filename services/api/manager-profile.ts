@@ -169,6 +169,20 @@ function requireData<T>(data: T | undefined, message: string): T {
 
 const encode = (value: string) => encodeURIComponent(value);
 const sectionPath = (section: string) => `/${encode(section)}`;
+const storefrontSectionSlugs: Record<string, string> = {
+  greetings: "greetings",
+  searchPlaceholders: "search-placeholders",
+  featuredContents: "featured-content",
+  emptyStates: "empty-states",
+  celebrationEmojis: "celebration-emojis",
+};
+const storefrontSectionSlug = (section: string) => {
+  const slug = storefrontSectionSlugs[section];
+  if (!slug) throw new Error(`Unsupported storefront section: ${section}`);
+  return slug;
+};
+const storefrontSectionPath = (section: string) =>
+  `/${storefrontSectionSlug(section)}`;
 
 export const managerProfileApi = {
   async getProfile(): Promise<ManagerProfileResponse> {
@@ -315,7 +329,10 @@ export const managerProfileApi = {
     section: string,
   ): Promise<T> {
     return requireData(
-      await request<T>("GET", `/storefront-display${sectionPath(section)}`),
+      await request<T>(
+        "GET",
+        `/storefront-display${storefrontSectionPath(section)}`,
+      ),
       "The server did not return this storefront section.",
     );
   },
@@ -324,7 +341,10 @@ export const managerProfileApi = {
     section: string,
     data: Record<string, unknown>,
   ): Promise<void> {
-    await request("POST", "/storefront-display", { section, data });
+    await request("POST", "/storefront-display", {
+      section: storefrontSectionSlug(section),
+      data,
+    });
   },
 
   async updateStorefrontItem(
@@ -334,15 +354,15 @@ export const managerProfileApi = {
   ): Promise<void> {
     await request(
       "PATCH",
-      `/storefront-display${sectionPath(section)}/${encode(id)}`,
-      body,
+      `/storefront-display${storefrontSectionPath(section)}/${encode(id)}`,
+      { ...body, section: storefrontSectionSlug(section) },
     );
   },
 
   async deleteStorefrontItem(section: string, id: string): Promise<void> {
     await request(
       "DELETE",
-      `/storefront-display${sectionPath(section)}/${encode(id)}`,
+      `/storefront-display${storefrontSectionPath(section)}/${encode(id)}`,
     );
   },
 
@@ -353,7 +373,7 @@ export const managerProfileApi = {
   ): Promise<void> {
     await request(
       "PATCH",
-      `/storefront-display${sectionPath(section)}/${encode(id)}/${isActive ? "activate" : "deactivate"}`,
+      `/storefront-display${storefrontSectionPath(section)}/${encode(id)}/${isActive ? "activate" : "deactivate"}`,
     );
   },
 

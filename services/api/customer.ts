@@ -181,7 +181,7 @@ export interface CustomerOffer {
 
 export interface CustomerFeaturedReel {
   _id: string;
-  branchId?: string | { _id: string; name?: string };
+  branchId?: string | { _id?: string; id?: string; name?: string } | null;
   title: string;
   subtitle?: string;
   badge?: string;

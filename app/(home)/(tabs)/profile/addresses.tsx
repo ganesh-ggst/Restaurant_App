@@ -42,6 +42,9 @@ export default function AddressesScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showAddressSourceModal, setShowAddressSourceModal] = useState(false);
+  const [settingDefaultAddressId, setSettingDefaultAddressId] = useState<
+    string | null
+  >(null);
 
   const openAddressForm = (source: "current" | "map") => {
     setShowAddressSourceModal(false);
@@ -75,15 +78,26 @@ export default function AddressesScreen() {
 
   const setDefaultAddress = async (id: string) => {
     setError("");
+    setSettingDefaultAddressId(id);
     try {
       await api.setDefaultAddress(id);
-      await loadAddresses();
+      const updatedAddresses = await api.getAddresses();
+      setAddresses(updatedAddresses);
+      if (
+        !updatedAddresses.some(
+          (address) => address._id === id && address.isDefault,
+        )
+      ) {
+        throw new Error("The server did not set this address as the default.");
+      }
     } catch (updateError) {
       setError(
         updateError instanceof Error
           ? updateError.message
           : "Unable to set the default address.",
       );
+    } finally {
+      setSettingDefaultAddressId(null);
     }
   };
 
@@ -192,14 +206,26 @@ export default function AddressesScreen() {
                 {!address.isDefault ? (
                   <Pressable
                     onPress={() => void setDefaultAddress(address._id)}
+                    disabled={settingDefaultAddressId !== null}
                     className="flex-row items-center gap-1"
                   >
-                    <Star size={16} color={theme.primary} />
+                    {settingDefaultAddressId === address._id ? (
+                      <ActivityIndicator size="small" color={theme.primary} />
+                    ) : (
+                      <Star size={16} color={theme.primary} />
+                    )}
                     <Text
                       className="font-bold"
-                      style={{ color: theme.primary }}
+                      style={{
+                        color:
+                          settingDefaultAddressId === null
+                            ? theme.primary
+                            : theme.muted,
+                      }}
                     >
-                      Set default
+                      {settingDefaultAddressId === address._id
+                        ? "Setting..."
+                        : "Set default"}
                     </Text>
                   </Pressable>
                 ) : null}

@@ -332,7 +332,9 @@ export default function HomeScreen() {
     : [];
   const branchFeaturedReels = featuredReels.filter((reel: any) => {
     const reelBranchId =
-      typeof reel.branchId === "string" ? reel.branchId : reel.branchId?._id;
+      typeof reel.branchId === "string"
+        ? reel.branchId
+        : reel.branchId?._id || reel.branchId?.id;
     return !reelBranchId || reelBranchId === selectedBranchId;
   });
 

@@ -417,10 +417,9 @@ export const profileApi = {
   },
 
   async setDefaultAddress(id: string): Promise<void> {
-    await request(
-      "PATCH",
-      `/addresses/${encodeURIComponent(id)}/default`,
-    );
+    await request("PATCH", `/addresses/${encodeURIComponent(id)}`, {
+      isDefault: true,
+    });
   },
 
   async getNotifications(

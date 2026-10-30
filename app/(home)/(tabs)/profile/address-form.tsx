@@ -22,10 +22,12 @@ import {
   ProfileScreenHeader,
   ProfileTextField,
 } from "../../../../components/profile/ProfileUi";
+import { MapUnavailableNotice } from "../../../../components/maps/MapUnavailableNotice";
 import { Button } from "../../../../components/ui/Button";
 import { useAppTheme } from "../../../../hooks/useAppTheme";
 import { api } from "../../../../services/api";
 import type { AddressInput } from "../../../../services/api/profile";
+import { isAndroidMapsApiKeyConfigured } from "../../../../services/maps";
 
 const DEFAULT_MAP_REGION: Region = {
   latitude: 17.385,
@@ -114,6 +116,7 @@ export default function AddressFormScreen() {
   const [mapRegionState, setMapRegionState] = useState<Region>(
     DEFAULT_MAP_REGION,
   );
+  const mapsApiKeyConfigured = isAndroidMapsApiKeyConfigured();
   type RequiredAddressField = "label";
   const [fieldErrors, setFieldErrors] = useState<
     Partial<Record<RequiredAddressField, string>>
@@ -165,10 +168,6 @@ export default function AddressFormScreen() {
       const location = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
       });
-      await applyCoordinates(
-        location.coords.latitude,
-        location.coords.longitude,
-      );
       const nextRegion = {
         ...mapRegion.current,
         latitude: location.coords.latitude,
@@ -177,6 +176,10 @@ export default function AddressFormScreen() {
       mapRegion.current = nextRegion;
       setMapRegionState(nextRegion);
       mapViewRef.current?.animateToRegion(nextRegion);
+      await applyCoordinates(
+        location.coords.latitude,
+        location.coords.longitude,
+      );
     } catch (locationError) {
       setError(
         locationError instanceof Error
@@ -249,6 +252,14 @@ export default function AddressFormScreen() {
     }, 0);
     return () => clearTimeout(timeout);
   }, [chooseCurrentLocation, id, source]);
+
+  useEffect(() => {
+    if (!mapPickerVisible || coordinates) return;
+    const timeout = setTimeout(() => {
+      void chooseCurrentLocation();
+    }, 0);
+    return () => clearTimeout(timeout);
+  }, [chooseCurrentLocation, coordinates, mapPickerVisible]);
 
   const setField = <K extends keyof AddressInput>(
     key: K,
@@ -376,29 +387,33 @@ export default function AddressFormScreen() {
         </View>
       ) : mapPickerVisible ? (
         <View className="flex-1">
-          <MapView
-            ref={mapViewRef}
-            style={{ flex: 1 }}
-            initialRegion={mapRegionState}
-            showsUserLocation
-            showsMyLocationButton={false}
-            onPanDrag={() => {
-              mapInteractionStarted.current = true;
-            }}
-            onRegionChangeComplete={handleMapRegionChangeComplete}
-            onPress={(event) => {
-              const { latitude, longitude } = event.nativeEvent.coordinate;
-              handleMapSelection(latitude, longitude);
-            }}
-          >
-            {coordinates ? (
-              <Marker
-                coordinate={coordinates}
-                title="Selected address"
-                pinColor={theme.primary}
-              />
-            ) : null}
-          </MapView>
+          {mapsApiKeyConfigured ? (
+            <MapView
+              ref={mapViewRef}
+              style={{ flex: 1 }}
+              initialRegion={mapRegionState}
+              showsUserLocation
+              showsMyLocationButton={false}
+              onPanDrag={() => {
+                mapInteractionStarted.current = true;
+              }}
+              onRegionChangeComplete={handleMapRegionChangeComplete}
+              onPress={(event) => {
+                const { latitude, longitude } = event.nativeEvent.coordinate;
+                handleMapSelection(latitude, longitude);
+              }}
+            >
+              {coordinates ? (
+                <Marker
+                  coordinate={coordinates}
+                  title="Selected address"
+                  pinColor={theme.primary}
+                />
+              ) : null}
+            </MapView>
+          ) : (
+            <MapUnavailableNotice />
+          )}
           <View
             className="absolute left-4 right-4 top-4"
             style={{ gap: 12 }}
@@ -557,10 +572,8 @@ export default function AddressFormScreen() {
             placeholder="Nearby landmark"
           />
           <Pressable
-            disabled={Boolean(id)}
             onPress={() => setField("isDefault", !form.isDefault)}
             className="mb-5 flex-row items-center gap-3"
-            style={{ opacity: id ? 0.6 : 1 }}
           >
             <View
               className="h-5 w-5 items-center justify-center rounded border"
