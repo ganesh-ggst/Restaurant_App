@@ -175,15 +175,7 @@ export default function EditMenuItemScreen() {
       let isCurrent = true;
       if (!hasLoadedItem.current) setLoading(true);
       (async () => {
-        const categoryItems = categoryId
-          ? await operationsApi.getCategoryItems(categoryId)
-          : await operationsApi.getInventoryCandidates();
-        let found = categoryItems.find((candidate) => candidate._id === id);
-        if (!found && categoryId) {
-          const inventoryItems = await operationsApi.getInventoryCandidates();
-          found = inventoryItems.find((candidate) => candidate._id === id);
-        }
-        if (!found) throw new Error("This menu item was not found.");
+        const found = await operationsApi.getItem(id);
         if (!isCurrent) return;
         hasLoadedItem.current = true;
         setItem(found);
@@ -245,7 +237,7 @@ export default function EditMenuItemScreen() {
       return () => {
         isCurrent = false;
       };
-    }, [categoryId, id, isNewItem]),
+    }, [id, isNewItem]),
   );
 
   const resolvedCategoryId =

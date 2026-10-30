@@ -2,6 +2,7 @@ const expoConfig = require("./app.json").expo;
 
 const mapsPluginOptions = {};
 const androidMapsApiKey = process.env.GOOGLE_MAPS_ANDROID_API_KEY?.trim();
+const iosMapsApiKey = process.env.GOOGLE_MAPS_IOS_API_KEY?.trim();
 const isEasAndroidBuild =
   process.env.EAS_BUILD === "true" &&
   process.env.EAS_BUILD_PLATFORM === "android";
@@ -15,12 +16,16 @@ if (isEasAndroidBuild && !androidMapsApiKey) {
 if (androidMapsApiKey) {
   mapsPluginOptions.androidGoogleMapsApiKey = androidMapsApiKey;
 }
+if (iosMapsApiKey) {
+  mapsPluginOptions.iosGoogleMapsApiKey = iosMapsApiKey;
+}
 
 module.exports = {
   ...expoConfig,
   extra: {
     ...expoConfig.extra,
     androidMapsApiKeyConfigured: Boolean(androidMapsApiKey),
+    iosMapsApiKeyConfigured: Boolean(iosMapsApiKey),
   },
   plugins: [
     ...expoConfig.plugins,

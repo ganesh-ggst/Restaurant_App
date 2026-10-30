@@ -42,13 +42,6 @@
       ],
       "expo-router",
       [
-        "expo-dev-client",
-        {
-          "defaultLaunchURL": "http://localhost:8081",
-          "launchMode": "most-recent"
-        }
-      ],
-      [
         "expo-media-library",
         {
           "photosPermission": "Allow Restaurant_App to access photos.",

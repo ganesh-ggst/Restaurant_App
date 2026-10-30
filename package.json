@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "scripts": {
     "postinstall": "patch-package",
-    "start": "expo start",
+    "start": "expo start --go",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo run:android",
     "ios": "expo run:ios",
@@ -27,7 +27,6 @@
     "expo-camera": "~58.0.14",
     "expo-clipboard": "~58.0.1",
     "expo-constants": "~58.0.13",
-    "expo-dev-client": "~58.0.17",
     "expo-font": "~58.0.10",
     "expo-haptics": "~58.0.2",
     "expo-image": "~58.0.18",

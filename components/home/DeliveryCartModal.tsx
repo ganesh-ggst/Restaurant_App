@@ -46,6 +46,7 @@ import {
   CELEBRATION_EMOJIS,
   TIP_OPTIONS,
 } from "../../constants/mockData";
+import { getDeliverySpeed } from "../../services/api/customer";
 
 const { height } = Dimensions.get("window");
 
@@ -149,6 +150,9 @@ export const DeliveryCartModal = memo(
       .map((option: any, index: number) => ({
         id: option._id || `${option.name}-${index}`,
         title: option.name,
+        speed:
+          getDeliverySpeed(option.deliverySpeed) ??
+          getDeliverySpeed(option.name),
         subtitle: option.description || "",
         price: Number(option.price) || 0,
         time: option.estimatedTimeRange || "",
@@ -428,7 +432,9 @@ export const DeliveryCartModal = memo(
 
     const selectedOption =
       deliveryOptions.find(
-        (option: any) => option.id === selectedDeliveryOptionId,
+        (option: any) =>
+          option.id === selectedDeliveryOptionId ||
+          option.speed === selectedDeliveryOptionId,
       ) ||
       deliveryOptions.find((option: any) =>
         /normal|standard/i.test(option.title),
@@ -1480,7 +1486,7 @@ export const DeliveryCartModal = memo(
                       return (
                         <Pressable
                           key={opt.id}
-                          onPress={() => onSelectDeliveryOption(opt.id)}
+                          onPress={() => onSelectDeliveryOption(opt.speed)}
                           style={{
                             borderBottomWidth:
                               index === deliveryOptions.length - 1 ? 0 : 1,
@@ -2301,14 +2307,16 @@ export const DeliveryCartModal = memo(
 
                     <View className="flex-row justify-between items-center">
                       <Text
-                        style={{ color: theme.text }}
+                        style={{ color: theme.text, flexShrink: 0 }}
                         className="font-black text-lg"
+                        numberOfLines={1}
                       >
                         To Pay
                       </Text>
                       <Text
-                        style={{ color: theme.text }}
+                        style={{ color: theme.text, flexShrink: 0 }}
                         className="font-black text-lg"
+                        numberOfLines={1}
                       >
                         ₹{formatPrice(finalPayable)}
                       </Text>

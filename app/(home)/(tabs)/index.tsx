@@ -1,5 +1,5 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { useNavigation, useRouter } from "expo-router";
+import { useFocusEffect, useNavigation, useRouter } from "expo-router";
 import {
   ArrowLeft,
   BellRing,
@@ -42,59 +42,61 @@ import { ProfileAvatarButton } from "../../../components/profile/ProfileAvatarBu
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { api } from "../../../services/api";
 import { authApi } from "../../../services/api/auth";
+import {
+  getDeliveryBranchDistanceKm,
+  getDeliveryBranchUnavailableReason,
+  MAX_DELIVERY_DISTANCE_KM,
+} from "../../../utils/delivery-branch";
 import type {
   CustomerBranch,
   CustomerDineInBill,
   CustomerDineInTable,
   CustomerDineInWaiter,
   CustomerDineInWifiConnection,
+  CustomerMenuItem,
 } from "../../../services/api/customer";
 import { useOrderMode } from "../_layout";
 
 const hasImageUri = (uri: unknown): uri is string =>
   typeof uri === "string" && uri.trim().length > 0;
 
+function isMenuItemInStock(
+  item: Pick<CustomerMenuItem, "isAvailable" | "availableQuantity">,
+): boolean {
+  const availableQuantity = Number(item.availableQuantity);
+  const hasInventoryCount =
+    item.availableQuantity !== null &&
+    item.availableQuantity !== undefined &&
+    Number.isFinite(availableQuantity);
+
+  return (
+    item.isAvailable === true &&
+    (!hasInventoryCount || availableQuantity > 0)
+  );
+}
+
 function matchesSearchText(query: string, value: string): boolean {
-  const queryWords = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const queryWords = query
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
   const valueWords = value.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
   if (queryWords.length === 0) return true;
 
-  const matchesWord = (searchWord: string, valueWord: string): boolean => {
-    if (searchWord.length === 1) return valueWord.startsWith(searchWord);
-    if (valueWord.includes(searchWord)) return true;
-
+  const matchesWordInOrder = (searchWord: string, valueWord: string) => {
     let queryIndex = 0;
     for (const character of valueWord) {
       if (character === searchWord[queryIndex]) queryIndex += 1;
       if (queryIndex === searchWord.length) return true;
     }
-
     return false;
   };
 
-  const orderedQueryWords = [...queryWords].sort(
-    (first, second) =>
-      valueWords.filter((word) => matchesWord(first, word)).length -
-      valueWords.filter((word) => matchesWord(second, word)).length,
+  return queryWords.every((searchWord) =>
+    valueWords.some((valueWord) =>
+      matchesWordInOrder(searchWord, valueWord),
+    ),
   );
-  const matchNextWord = (
-    queryIndex: number,
-    usedValueWords: Set<number>,
-  ): boolean => {
-    if (queryIndex === orderedQueryWords.length) return true;
-
-    return valueWords.some(
-      (word, wordIndex) =>
-        !usedValueWords.has(wordIndex) &&
-        matchesWord(orderedQueryWords[queryIndex], word) &&
-        matchNextWord(
-          queryIndex + 1,
-          new Set([...usedValueWords, wordIndex]),
-        ),
-    );
-  };
-
-  return matchNextWord(0, new Set());
 }
 
 const formatPrice = (price: number) => {
@@ -231,9 +233,15 @@ export default function HomeScreen() {
   const [voiceResultIds, setVoiceResultIds] = useState<string[] | null>(null);
   const voiceSearchInFlight = useRef(false);
   const voiceSearchGeneration = useRef(0);
+  const menuSearchRequestId = useRef(0);
+  const [serverSearchResults, setServerSearchResults] = useState<{
+    key: string;
+    ids: string[];
+  } | null>(null);
   const voiceResultHandled = useRef(false);
   const [offersViewportWidth, setOffersViewportWidth] = useState(0);
   const [activeOfferIndex, setActiveOfferIndex] = useState(0);
+  const homeFeedRef = useRef<FlatList<any>>(null);
   const [showAddressModal, setShowAddressModal] = useState(false);
   const [addressModalSelection, setAddressModalSelection] = useState<
     "address" | "branch"
@@ -337,6 +345,12 @@ export default function HomeScreen() {
         : reel.branchId?._id || reel.branchId?.id;
     return !reelBranchId || reelBranchId === selectedBranchId;
   });
+
+  useFocusEffect(
+    useCallback(() => {
+      homeFeedRef.current?.scrollToOffset({ offset: 0, animated: false });
+    }, []),
+  );
 
   useEffect(() => {
     if (!branchesLoaded || didRestoreDineInSession.current) return;
@@ -863,7 +877,16 @@ export default function HomeScreen() {
     setIsVoiceSearching(true);
 
     try {
-      const results = await api.voiceSearch(query, branchId, address);
+      const results = await api.voiceSearch(
+        query,
+        branchId,
+        address,
+        orderMode === "Delivery"
+          ? "delivery"
+          : orderMode === "Takeaway"
+            ? "takeaway"
+            : "dine-in",
+      );
       if (requestGeneration === voiceSearchGeneration.current) {
         setVoiceResultIds(
           results.flatMap((item) =>
@@ -885,7 +908,7 @@ export default function HomeScreen() {
         setIsVoiceSearching(false);
       }
     }
-  }, [activeAddress?.id, activeBranch?.id]);
+  }, [activeAddress?.id, activeBranch?.id, orderMode]);
 
   useSpeechRecognitionEvent("result", (event) => {
     if (!event.isFinal || voiceResultHandled.current) return;
@@ -984,6 +1007,84 @@ export default function HomeScreen() {
     setIsVoiceSearching(false);
   };
 
+  const menuSearchKey = JSON.stringify({
+    branchId: activeBranch?.id,
+    address: orderMode === "Delivery" ? activeAddress?.id : undefined,
+    fulfillmentType:
+      orderMode === "Delivery"
+        ? "delivery"
+        : orderMode === "Takeaway"
+          ? "takeaway"
+          : "dine-in",
+    search: searchQuery.trim(),
+    foodType: isVegOnly ? "veg" : undefined,
+  });
+  const hasMenuSearchFilters = Boolean(searchQuery.trim() || isVegOnly);
+
+  useEffect(() => {
+    const requestId = ++menuSearchRequestId.current;
+    const branchId = activeBranch?.id;
+    const address = orderMode === "Delivery" ? activeAddress?.id : undefined;
+    if (
+      !branchId ||
+      !hasMenuSearchFilters ||
+      isVoiceSearching ||
+      voiceResultIds !== null ||
+      (orderMode === "Delivery" && !address)
+    ) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      void api
+        .getMenuItems({
+          branchId,
+          address,
+          fulfillmentType:
+            orderMode === "Delivery"
+              ? "delivery"
+              : orderMode === "Takeaway"
+                ? "takeaway"
+                : "dine-in",
+          search: searchQuery.trim() || undefined,
+          foodType: isVegOnly ? "veg" : undefined,
+          stock: "all",
+        })
+        .then((items) => {
+          if (requestId !== menuSearchRequestId.current) return;
+          setServerSearchResults({
+            key: menuSearchKey,
+            ids: items.map((item) => item._id),
+          });
+        })
+        .catch((error: unknown) => {
+          if (requestId !== menuSearchRequestId.current) return;
+          setServerSearchResults({ key: menuSearchKey, ids: [] });
+          Alert.alert(
+            "Unable to Search Menu",
+            error instanceof Error ? error.message : "Please try again.",
+          );
+        });
+    }, 250);
+
+    return () => {
+      clearTimeout(timer);
+      if (menuSearchRequestId.current === requestId) {
+        menuSearchRequestId.current += 1;
+      }
+    };
+  }, [
+    activeAddress?.id,
+    activeBranch?.id,
+    hasMenuSearchFilters,
+    isVegOnly,
+    isVoiceSearching,
+    menuSearchKey,
+    orderMode,
+    searchQuery,
+    voiceResultIds,
+  ]);
+
   const getFilteredData = () => {
     let filtered = [...menuItems];
     if (activeBranch?.id) {
@@ -999,9 +1100,13 @@ export default function HomeScreen() {
       filtered = filtered.filter((item: any) =>
         voiceResultIds.includes(item.id),
       );
+    } else if (serverSearchResults?.key === menuSearchKey) {
+      filtered = filtered.filter((item: any) =>
+        serverSearchResults.ids.includes(item.id),
+      );
     }
 
-    const lowerQuery = searchQuery.toLowerCase().trim();
+    const lowerQuery = searchQuery.trim();
     if (lowerQuery && voiceResultIds === null) {
       filtered = filtered.filter((item: any) =>
         matchesSearchText(lowerQuery, item.name),
@@ -1014,7 +1119,38 @@ export default function HomeScreen() {
     );
   };
 
-  const listData = isSelectedBranchOnline ? getFilteredData() : [];
+  const filteredItems = isSelectedBranchOnline ? getFilteredData() : [];
+  const availableItems = filteredItems.filter(
+    (item: any) => isMenuItemInStock(item),
+  );
+  const outOfStockItems = filteredItems.filter(
+    (item: any) => !isMenuItemInStock(item),
+  );
+  const listData: (
+    | { type: "section"; key: string; title: string }
+    | { type: "items"; key: string; items: any[] }
+  )[] = [];
+
+  const addItemRows = (items: any[], keyPrefix: string) => {
+    for (let index = 0; index < items.length; index += 2) {
+      listData.push({
+        type: "items",
+        key: `${keyPrefix}-${index}`,
+        items: items.slice(index, index + 2),
+      });
+    }
+  };
+
+  addItemRows(availableItems, "available");
+  if (outOfStockItems.length > 0) {
+    listData.push({
+      type: "section",
+      key: "out-of-stock-heading",
+      title: "Out of stock",
+    });
+    addItemRows(outOfStockItems, "out-of-stock");
+  }
+
   const offerCardHeight = offersViewportWidth * 0.4;
   const offersCarousel =
     (orderMode === "Delivery" || orderMode === "Takeaway") && !searchQuery ? (
@@ -1148,7 +1284,15 @@ export default function HomeScreen() {
   const renderAddressModalItem = ({ item }: any) => {
     const isDeliveryAddress =
       orderMode === "Delivery" && addressModalSelection === "address";
+    const isDeliveryBranch =
+      orderMode === "Delivery" && addressModalSelection === "branch";
     const branchIsOnline = isBranchOnline(item);
+    const deliveryBranchUnavailableReason = isDeliveryBranch
+      ? getDeliveryBranchUnavailableReason(item, activeAddress)
+      : null;
+    const isBranchSelectable = isDeliveryBranch
+      ? deliveryBranchUnavailableReason === null
+      : branchIsOnline;
     const isActive = isDeliveryAddress
       ? activeAddress?.id === item.id
       : activeBranch?.id === item.id;
@@ -1157,7 +1301,7 @@ export default function HomeScreen() {
     return (
       <Pressable
         onPress={() => {
-          if (!isDeliveryAddress && !branchIsOnline) return;
+          if (!isDeliveryAddress && !isBranchSelectable) return;
           if (isDeliveryAddress) setActiveAddress(item);
           else if (pendingModeSetup === "Dine-in") {
             void selectDineInBranch(item);
@@ -1174,13 +1318,14 @@ export default function HomeScreen() {
           }
         }}
         disabled={
-          isCheckingDineInSession || (!isDeliveryAddress && !branchIsOnline)
+          isCheckingDineInSession ||
+          (!isDeliveryAddress && !isBranchSelectable)
         }
         className="flex-row items-center p-4 mb-3 rounded-2xl border"
         style={{
           backgroundColor: theme.card,
           borderColor: isActive ? theme.primary : theme.border,
-          opacity: !isDeliveryAddress && !branchIsOnline ? 0.6 : 1,
+          opacity: !isDeliveryAddress && !isBranchSelectable ? 0.6 : 1,
         }}
       >
         <Icon size={24} color={isActive ? theme.primary : theme.muted} />
@@ -1188,12 +1333,27 @@ export default function HomeScreen() {
           <Text className="text-base font-bold" style={{ color: theme.text }}>
             {isDeliveryAddress ? item.type : item.name}
           </Text>
-          {!isDeliveryAddress && !branchIsOnline ? (
+          {!isDeliveryAddress && !isBranchSelectable ? (
             <Text
               className="mt-1 text-xs font-bold"
               style={{ color: theme.danger }}
             >
-              BRANCH IS OFFLINE
+              {deliveryBranchUnavailableReason === "inactive"
+                ? "BRANCH IS INACTIVE"
+                : deliveryBranchUnavailableReason === "outside-delivery-area"
+                  ? `OUTSIDE ${MAX_DELIVERY_DISTANCE_KM} KM DELIVERY AREA`
+                  : deliveryBranchUnavailableReason === "distance-unavailable"
+                    ? "DELIVERY DISTANCE UNAVAILABLE"
+                    : "BRANCH IS OFFLINE"}
+            </Text>
+          ) : null}
+          {isDeliveryBranch && isBranchSelectable ? (
+            <Text
+              className="mt-1 text-xs font-bold"
+              style={{ color: theme.muted }}
+            >
+              {getDeliveryBranchDistanceKm(item, activeAddress)?.toFixed(1)} km
+              away
             </Text>
           ) : null}
           <Text
@@ -1319,31 +1479,53 @@ export default function HomeScreen() {
         style={{ flex: 1 }}
       >
         <FlatList
-          key={"grid-2"}
+          ref={homeFeedRef}
           data={listData}
-          keyExtractor={(item) => item.id.toString()}
-          numColumns={2}
-          columnWrapperStyle={{
-            justifyContent: "space-between",
-            paddingHorizontal: 16,
-            marginBottom: 16,
-          }}
-          renderItem={({ item }) => {
-            const cartQuantity = activeCart.reduce(
-              (quantity: number, cartItem: any) =>
-                quantity + (cartItem.id === item.id ? cartItem.quantity : 0),
-              0,
-            );
+          keyExtractor={(row) => row.key}
+          renderItem={({ item: row }) => {
+            if (row.type === "section") {
+              return (
+                <View className="px-4 pt-2 pb-4">
+                  <Text
+                    className="text-xl font-black"
+                    style={{ color: theme.text }}
+                  >
+                    {row.title}
+                  </Text>
+                  <Text
+                    className="mt-1 text-sm font-semibold"
+                    style={{ color: theme.muted }}
+                  >
+                    These items are currently unavailable
+                  </Text>
+                </View>
+              );
+            }
+
             return (
-              <View style={{ width: "48%" }}>
-                <FoodCard
-                  item={item}
-                  cartQuantity={cartQuantity}
-                  onAddToCart={(qty, addons, total) =>
-                    handleAddToCart(item, qty, addons, total)
-                  }
-                  onDecrement={() => handleDecrementCartItem(item.id)}
-                />
+              <View className="flex-row justify-between px-4 mb-4">
+                {row.items.map((menuItem: any) => {
+                  const cartQuantity = activeCart.reduce(
+                    (quantity: number, cartItem: any) =>
+                      quantity +
+                      (cartItem.id === menuItem.id ? cartItem.quantity : 0),
+                    0,
+                  );
+                  return (
+                    <View key={menuItem.id} style={{ width: "48%" }}>
+                      <FoodCard
+                        item={menuItem}
+                        cartQuantity={cartQuantity}
+                        onAddToCart={(qty, addons, total) =>
+                          handleAddToCart(menuItem, qty, addons, total)
+                        }
+                        onDecrement={() =>
+                          handleDecrementCartItem(menuItem.id)
+                        }
+                      />
+                    </View>
+                  );
+                })}
               </View>
             );
           }}
@@ -1488,6 +1670,16 @@ export default function HomeScreen() {
             }
             keyExtractor={(item: any) => item.id.toString()}
             renderItem={renderAddressModalItem}
+            refreshControl={
+              orderMode === "Delivery" ? (
+                <RefreshControl
+                  refreshing={isRefreshingHome}
+                  onRefresh={() => void refreshHomeData()}
+                  tintColor={theme.primary}
+                  colors={[theme.primary]}
+                />
+              ) : undefined
+            }
             style={{ flex: 1, minHeight: 0 }}
             contentContainerStyle={{
               paddingHorizontal: 24,

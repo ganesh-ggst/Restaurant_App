@@ -10,7 +10,11 @@ import {
   TextInput,
   View,
 } from "react-native";
-import MapView, { Marker, type Region } from "react-native-maps";
+import MapView, {
+  Marker,
+  PROVIDER_GOOGLE,
+  type Region,
+} from "react-native-maps";
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -27,7 +31,10 @@ import { Button } from "../../../../components/ui/Button";
 import { useAppTheme } from "../../../../hooks/useAppTheme";
 import { api } from "../../../../services/api";
 import type { AddressInput } from "../../../../services/api/profile";
-import { isAndroidMapsApiKeyConfigured } from "../../../../services/maps";
+import {
+  isGoogleMapsApiKeyConfigured,
+  isMapSelectionSupported,
+} from "../../../../services/maps";
 
 const DEFAULT_MAP_REGION: Region = {
   latitude: 17.385,
@@ -116,8 +123,9 @@ export default function AddressFormScreen() {
   const [mapRegionState, setMapRegionState] = useState<Region>(
     DEFAULT_MAP_REGION,
   );
-  const mapsApiKeyConfigured = isAndroidMapsApiKeyConfigured();
-  type RequiredAddressField = "label";
+  const mapSelectionSupported = isMapSelectionSupported();
+  const googleMapsProviderConfigured = isGoogleMapsApiKeyConfigured();
+  type RequiredAddressField = "label" | "line1";
   const [fieldErrors, setFieldErrors] = useState<
     Partial<Record<RequiredAddressField, string>>
   >({});
@@ -271,18 +279,23 @@ export default function AddressFormScreen() {
     setForm((current) => ({ ...current, [key]: value }));
     setError("");
     setFieldErrors((current) => {
-      return key === "label" ? { ...current, label: undefined } : current;
+      if (key === "label" || key === "line1") {
+        return { ...current, [key]: undefined };
+      }
+      return current;
     });
   };
 
   const saveAddress = async () => {
     const label = form.label.trim();
+    const line1 = form.line1.trim();
     const nextFieldErrors = {
       ...(!label ? { label: "Label is required." } : {}),
+      ...(!line1 ? { line1: "Address Line 1 is required." } : {}),
     };
     setFieldErrors(nextFieldErrors);
     if (Object.keys(nextFieldErrors).length > 0) {
-      setError("Enter a label for this address.");
+      setError("Enter the required address details.");
       return;
     }
     if (!id && !locationSelected) {
@@ -299,9 +312,7 @@ export default function AddressFormScreen() {
     try {
       const editableFields: Partial<AddressInput> = {
         label,
-        ...(line1ManuallyEdited.current
-          ? { line1: form.line1.trim() }
-          : {}),
+        line1,
         ...(line2ManuallyEdited.current
           ? { line2: form.line2?.trim() || "" }
           : {}),
@@ -387,10 +398,13 @@ export default function AddressFormScreen() {
         </View>
       ) : mapPickerVisible ? (
         <View className="flex-1">
-          {mapsApiKeyConfigured ? (
+          {mapSelectionSupported ? (
             <MapView
               ref={mapViewRef}
               style={{ flex: 1 }}
+              provider={
+                googleMapsProviderConfigured ? PROVIDER_GOOGLE : undefined
+              }
               initialRegion={mapRegionState}
               showsUserLocation
               showsMyLocationButton={false}
@@ -538,6 +552,8 @@ export default function AddressFormScreen() {
             onChangeText={(value) => setField("line1", value)}
             theme={theme}
             placeholder="Street address"
+            required
+            error={fieldErrors.line1}
           />
           <ProfileTextField
             label="Address Line 2 (optional)"

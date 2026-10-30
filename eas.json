@@ -6,7 +6,6 @@
   "build": {
     "development": {
       "environment": "development",
-      "developmentClient": true,
       "distribution": "internal"
     },
     "preview": {

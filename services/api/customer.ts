@@ -44,12 +44,14 @@ export interface CustomerMenuItem {
   compareAtPrice?: number;
   discountLabel?: string;
   marketingTag?: string;
+  marketingBadgeLabel?: string;
   customTag?: string;
   customTagEnabled?: boolean;
   ratingAverage?: number;
   ratingCount?: number;
   prepTimeMinutes?: number;
   deliveryEstimateMinutes?: number;
+  estimatedDeliveryRange?: string;
   availableQuantity?: number;
   isBestseller?: boolean;
   isHot?: boolean;
@@ -96,6 +98,8 @@ export interface CustomerBranch {
   address?: string;
   city?: string;
   area?: string;
+  distanceKm?: number | string;
+  distanceAddressId?: string;
   isActive: boolean;
   isOnline?: boolean;
   location?: { lat: number; lng: number };
@@ -139,6 +143,7 @@ export interface CustomerBranch {
   deliveryOptions?: {
     _id?: string;
     name: string;
+    deliverySpeed?: string;
     price: number;
     description?: string;
     estimatedTimeRange?: string;
@@ -222,10 +227,23 @@ export interface CustomerCart {
   availableOffers?: CustomerOffer[];
 }
 
+export type DeliverySpeed = "eco_saver" | "standard" | "express";
+
+export function getDeliverySpeed(value: unknown): DeliverySpeed | null {
+  if (typeof value !== "string") return null;
+
+  const normalized = value.trim().toLowerCase().replace(/[^a-z]/g, "");
+  if (normalized.includes("ecosaver")) return "eco_saver";
+  if (normalized.includes("standard")) return "standard";
+  if (normalized.includes("express")) return "express";
+  return null;
+}
+
 export interface CustomerOrder {
   _id: string;
   orderNumber: string;
   branchId?: string | CustomerBranch;
+  addressId?: string | { _id?: string; id?: string };
   dineInSessionId?: string | null;
   items: {
     menuItemId: string;
@@ -258,16 +276,41 @@ export interface CustomerOrder {
   updatedAt?: string;
 }
 
-export interface CustomerCartItemInput {
+export type CartFulfillmentType = "delivery" | "takeaway" | "dine-in";
+
+export type CustomerCartContext =
+  | {
+      branchId: string;
+      fulfillmentType: "delivery";
+      addressId: string;
+    }
+  | {
+      branchId: string;
+      fulfillmentType: "takeaway" | "dine-in";
+      addressId?: string;
+    };
+
+export type CustomerCartItemInput = CustomerCartContext & {
   menuItemId: string;
   quantity: number;
   selectedCustomizations: CustomerCustomizationSelection[];
-  branchId: string;
-}
+};
 
 export interface CustomerCustomizationSelection {
   groupId: string;
   optionIds: string[];
+}
+
+export interface CustomerMenuItemsQuery {
+  stock?: "all" | "in_stock" | "out_of_stock";
+  branchId?: string;
+  address?: string;
+  fulfillmentType?: "delivery" | "takeaway" | "dine-in";
+  search?: string;
+  categoryId?: string;
+  foodType?: string;
+  isBestseller?: boolean;
+  isHot?: boolean;
 }
 
 export interface CheckoutPreviewInput {
@@ -615,16 +658,22 @@ export const customerApi = {
   },
 
   async getMenuItems(
-    stock?: "all" | "in_stock" | "out_of_stock",
-    branchId?: string,
-    addressId?: string,
-    fulfillmentType?: "delivery" | "takeaway" | "dine-in",
+    filters: CustomerMenuItemsQuery = {},
   ): Promise<CustomerMenuItem[]> {
     const query = new URLSearchParams();
-    if (branchId) query.set("branchId", branchId);
-    if (stock) query.set("stock", stock);
-    if (addressId) query.set("addressId", addressId);
-    if (fulfillmentType) query.set("fulfillmentType", fulfillmentType);
+    if (filters.branchId) query.set("branchId", filters.branchId);
+    if (filters.address) query.set("address", filters.address);
+    if (filters.fulfillmentType) {
+      query.set("fulfillmentType", filters.fulfillmentType);
+    }
+    if (filters.search?.trim()) query.set("search", filters.search.trim());
+    if (filters.categoryId) query.set("categoryId", filters.categoryId);
+    if (filters.foodType) query.set("foodType", filters.foodType);
+    if (filters.stock) query.set("stock", filters.stock);
+    if (filters.isBestseller !== undefined) {
+      query.set("isBestseller", String(filters.isBestseller));
+    }
+    if (filters.isHot !== undefined) query.set("isHot", String(filters.isHot));
     const queryString = query.toString();
 
     return requireArray(
@@ -640,13 +689,22 @@ export const customerApi = {
     query: string,
     branchId: string,
     address: string,
+    fulfillmentType: "delivery" | "takeaway" | "dine-in",
   ): Promise<CustomerMenuItem[]> {
-    return requireArray(
-      await request<CustomerMenuItem[]>(
+    const result = requireData(
+      await request<{
+        query: string;
+        count: number;
+        items: CustomerMenuItem[];
+      }>(
         "POST",
         "/menu-items/voice-search",
-        { query, branchId, address },
+        { query, branchId, address, fulfillmentType },
       ),
+      "The server did not return voice-search results.",
+    );
+    return requireArray(
+      result.items,
       "The server did not return voice-search results.",
     );
   },
@@ -685,11 +743,11 @@ export const customerApi = {
     );
   },
 
-  async getNearbyBranches(lat: number, lng: number): Promise<CustomerBranch[]> {
+  async getNearbyBranches(addressId: string): Promise<CustomerBranch[]> {
     return requireArray(
       await request<CustomerBranch[]>(
         "GET",
-        `/branches/nearby?lat=${encode(String(lat))}&lng=${encode(String(lng))}`,
+        `/branches/nearby?addressId=${encode(addressId)}`,
       ),
       "The server did not return nearby branches.",
     );
@@ -736,11 +794,16 @@ export const customerApi = {
     );
   },
 
-  async getCart(branchId: string): Promise<CustomerCart> {
+  async getCart(context: CustomerCartContext): Promise<CustomerCart> {
+    const query = new URLSearchParams({
+      branchId: context.branchId,
+      fulfillmentType: context.fulfillmentType,
+    });
+    if (context.addressId) query.set("addressId", context.addressId);
     return requireData(
       await request<CustomerCart>(
         "GET",
-        `/cart?branchId=${encode(branchId)}`,
+        `/cart?${query.toString()}`,
         undefined,
         true,
       ),
@@ -749,13 +812,13 @@ export const customerApi = {
   },
 
   async updateCartDeliveryOption(
-    deliveryOptionId: string,
+    deliverySpeed: DeliverySpeed,
     branchId: string,
   ): Promise<void> {
     await request(
       "PATCH",
       "/cart/delivery-option",
-      { deliveryOptionId, branchId },
+      { branchId, deliverySpeed },
       true,
     );
   },
@@ -765,50 +828,91 @@ export const customerApi = {
   },
 
   async addCrossSellCartItem(
-    item: Pick<CustomerCartItemInput, "menuItemId" | "quantity">,
+    item: Pick<CustomerCartItemInput, "menuItemId" | "quantity"> &
+      CustomerCartContext,
   ): Promise<void> {
-    await request("POST", "/cart/items", item, true);
+    await request(
+      "POST",
+      "/cart/items",
+      { ...item, selectedCustomizations: [] },
+      true,
+    );
   },
 
   async updateCartItem(
     itemId: string,
     quantity: number,
-    branchId: string,
+    context: CustomerCartContext,
   ): Promise<void> {
+    const query = new URLSearchParams({
+      branchId: context.branchId,
+      fulfillmentType: context.fulfillmentType,
+    });
+    if (context.addressId) query.set("addressId", context.addressId);
     await request(
       "PATCH",
-      `/cart/items/${encode(itemId)}?branchId=${encode(branchId)}`,
+      `/cart/items/${encode(itemId)}?${query.toString()}`,
       { quantity },
       true,
     );
   },
 
-  async removeCartItem(itemId: string, branchId: string): Promise<void> {
+  async removeCartItem(
+    itemId: string,
+    context: CustomerCartContext,
+  ): Promise<void> {
+    const query = new URLSearchParams({
+      branchId: context.branchId,
+      fulfillmentType: context.fulfillmentType,
+    });
+    if (context.addressId) query.set("addressId", context.addressId);
     await request(
       "DELETE",
-      `/cart/items/${encode(itemId)}?branchId=${encode(branchId)}`,
+      `/cart/items/${encode(itemId)}?${query.toString()}`,
       undefined,
       true,
     );
   },
 
-  async applyCartCoupon(code: string, branchId: string): Promise<void> {
-    await request("POST", "/cart/coupon", { code, branchId }, true);
+  async applyCartCoupon(
+    code: string,
+    context: CustomerCartContext,
+  ): Promise<void> {
+    await request(
+      "POST",
+      "/cart/coupon",
+      {
+        branchId: context.branchId,
+        fulfillmentType: context.fulfillmentType,
+        code,
+      },
+      true,
+    );
   },
 
-  async removeCartCoupon(branchId: string): Promise<void> {
+  async removeCartCoupon(context: CustomerCartContext): Promise<void> {
+    const query = new URLSearchParams({
+      branchId: context.branchId,
+      fulfillmentType: context.fulfillmentType,
+    });
+    if (context.addressId) query.set("addressId", context.addressId);
     await request(
       "DELETE",
-      `/cart/coupon?branchId=${encode(branchId)}`,
+      `/cart/coupon?${query.toString()}`,
       undefined,
       true,
     );
   },
 
-  async clearCart(branchId: string): Promise<void> {
+  async clearCart(context: CustomerCartContext): Promise<void> {
+    const query = new URLSearchParams({
+      branchId: context.branchId,
+      fulfillmentType: context.fulfillmentType,
+    });
+    if (context.addressId) query.set("addressId", context.addressId);
     await request(
       "DELETE",
-      `/cart?branchId=${encode(branchId)}`,
+      `/cart?${query.toString()}`,
       undefined,
       true,
     );

@@ -158,6 +158,26 @@ function matchesInventorySearch(item: OperationsMenuItem, search: string): boole
   );
 }
 
+function matchesQuickInventorySearch(
+  item: OperationsMenuItem,
+  search: string,
+): boolean {
+  const searchWords = search.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  if (searchWords.length === 0) return true;
+
+  const itemWords = item.name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return searchWords.every((searchWord) =>
+    itemWords.some((itemWord) => {
+      let searchIndex = 0;
+      for (const character of itemWord) {
+        if (character === searchWord[searchIndex]) searchIndex += 1;
+        if (searchIndex === searchWord.length) return true;
+      }
+      return false;
+    }),
+  );
+}
+
 interface ExclusiveOffersSectionProps {
   offers: OperationsOffer[];
   error: string;
@@ -638,7 +658,7 @@ export default function OperationsDashboardScreen() {
   }, [offerItemSearch, offerItems]);
   const filteredInventory = useMemo(() => {
     return inventory.filter((item) => {
-      if (!matchesInventorySearch(item, quickInventorySearch)) return false;
+      if (!matchesQuickInventorySearch(item, quickInventorySearch)) return false;
       if (inventoryStockFilter === "inStock" && !item.isAvailable) return false;
       if (inventoryStockFilter === "outOfStock" && item.isAvailable) return false;
       if (inventoryTypeFilter !== "all") {

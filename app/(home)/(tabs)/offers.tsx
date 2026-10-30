@@ -1,12 +1,6 @@
 import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import {
-  CheckCircle2,
-  Copy,
-  Heart,
-  Tag,
-  X,
-} from "lucide-react-native";
+import { CheckCircle2, Copy, Heart, Tag, X } from "lucide-react-native";
 import { useState } from "react";
 import {
   Alert,

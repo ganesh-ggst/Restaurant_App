@@ -431,6 +431,14 @@ export const HomeHeader = memo(
                     <Text className="text-xl font-black text-white shadow-md">
                       {featuredReel.title}
                     </Text>
+                    {featuredReel.subtitle?.trim() ? (
+                      <Text
+                        className="mt-1 text-sm font-semibold text-white/90"
+                        numberOfLines={2}
+                      >
+                        {featuredReel.subtitle}
+                      </Text>
+                    ) : null}
                   </View>
                 </View>
               </View>
