@@ -30,11 +30,10 @@ import {
 } from "../../../../services/api/operations";
 import { operationsCache } from "../../../../services/api/operations-cache";
 import {
+  DEFAULT_CUSTOM_TAG_ICON,
   formatCustomTag,
   getCustomTagIcon,
-  getRandomCustomTagIcon,
   saveCustomTag,
-  stripCustomTagIcon,
 } from "../../../../utils/menu-tags";
 
 type CustomizationEditor =
@@ -127,7 +126,7 @@ export default function EditMenuItemScreen() {
   const [foodType, setFoodType] = useState<"veg" | "non_veg">("veg");
   const [marketingTag, setMarketingTag] = useState("auto_discount");
   const [customTag, setCustomTag] = useState("");
-  const [customTagIcon, setCustomTagIcon] = useState(getRandomCustomTagIcon);
+  const [customTagIcon, setCustomTagIcon] = useState(DEFAULT_CUSTOM_TAG_ICON);
   const [customTagEnabled, setCustomTagEnabled] = useState(false);
   const [customizationGroups, setCustomizationGroups] = useState<
     OperationsCustomizationGroup[]
@@ -216,9 +215,9 @@ export default function EditMenuItemScreen() {
               ),
         );
         const foundCustomTag = hasCustomTag ? found.customTag || "" : "";
-        setCustomTag(stripCustomTagIcon(foundCustomTag));
+        setCustomTag(foundCustomTag.trim());
         setCustomTagIcon(
-          getCustomTagIcon(foundCustomTag) ?? getRandomCustomTagIcon(),
+          getCustomTagIcon(foundCustomTag) ?? DEFAULT_CUSTOM_TAG_ICON,
         );
         setCustomTagEnabled(hasCustomTag);
         setCustomizationGroups(found.customizationGroups || []);
@@ -1269,7 +1268,7 @@ export default function EditMenuItemScreen() {
                 onValueChange={(enabled) => {
                   setCustomTagEnabled(enabled);
                   setCustomTag("");
-                  if (enabled) setCustomTagIcon(getRandomCustomTagIcon());
+                  if (enabled) setCustomTagIcon(DEFAULT_CUSTOM_TAG_ICON);
                   setMarketingTag(enabled ? "none" : "auto_discount");
                 }}
                 trackColor={{ false: theme.border, true: theme.primary }}

@@ -40,9 +40,7 @@ export default function ViewCartButton({
             <Text className="text-white font-black text-[17px]">
               {submissionPhase === "submitting"
                 ? "Submitting to kitchen..."
-                : submissionPhase === "sending"
-                  ? "Sending to kitchen..."
-                  : "Preparing order..."}
+                : "Preparing order..."}
             </Text>
             <Text className="text-white font-black text-[17px]">
               {submissionPhase === "submitting"

@@ -8,12 +8,20 @@ import {
   Receipt,
   Search,
   ScrollText,
+  Star,
   X,
 } from "lucide-react-native";
-import { useCallback, useRef, useState } from "react";
+import {
+  type ComponentRef,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   Alert,
   Dimensions,
+  Keyboard,
   Modal,
   Platform,
   Pressable,
@@ -22,6 +30,7 @@ import {
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from "react-native";
 import Animated, {
   FadeIn,
@@ -734,11 +743,147 @@ const BillDetailsAccordion = ({ order, theme }: any) => {
   );
 };
 
+function OrderReviewSection({
+  order,
+  theme,
+  onFeedbackFocus,
+  onReviewSubmitted,
+}: {
+  order: any;
+  theme: ReturnType<typeof useAppTheme>;
+  onFeedbackFocus: () => void;
+  onReviewSubmitted: () => void;
+}) {
+  const [rating, setRating] = useState(
+    Number.isInteger(order.orderReview?.rating)
+      ? order.orderReview.rating
+      : 0,
+  );
+  const [comment, setComment] = useState(order.orderReview?.comment || "");
+  const [hasReview, setHasReview] = useState(
+    order.hasOrderReview === true || Boolean(order.orderReview),
+  );
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const canEdit = order.canEditOrderReview !== false;
+  const canReview = order.canReviewOrder !== false;
+  const isEditable = hasReview ? canEdit : canReview;
+
+  const submitReview = async () => {
+    if (rating < 1 || rating > 5) {
+      Alert.alert("Rating required", "Choose a star rating before submitting.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const savedReview = hasReview
+        ? await api.updateOrderReview(order.orderId, rating, comment.trim())
+        : await api.createOrderReview(order.orderId, rating, comment.trim());
+      setRating(savedReview.rating);
+      setComment(savedReview.comment);
+      setHasReview(true);
+      Alert.alert(
+        hasReview ? "Review updated" : "Review submitted",
+        hasReview
+          ? "Your order review has been updated."
+          : "Thank you for sharing your feedback.",
+      );
+      onReviewSubmitted();
+    } catch (error) {
+      Alert.alert(
+        "Unable to submit review",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <View
+      className="mb-5 rounded-2xl border p-4"
+      style={{ backgroundColor: theme.card, borderColor: theme.border }}
+    >
+      <Text className="mb-1 text-base font-black" style={{ color: theme.text }}>
+        Rate this order
+      </Text>
+      <Text className="mb-3 text-xs" style={{ color: theme.muted }}>
+        How was your order?
+      </Text>
+      <View className="mb-4 flex-row">
+        {[1, 2, 3, 4, 5].map((starRating) => (
+          <Pressable
+            key={starRating}
+            onPress={() => setRating(starRating)}
+            disabled={!isEditable || isSubmitting}
+            className="mr-2 p-1"
+            accessibilityRole="button"
+            accessibilityLabel={`${starRating} star${starRating === 1 ? "" : "s"}`}
+            accessibilityState={{ selected: rating === starRating }}
+          >
+            <Star
+              size={30}
+              color={rating >= starRating ? "#F5A623" : theme.border}
+              fill={rating >= starRating ? "#F5A623" : "transparent"}
+            />
+          </Pressable>
+        ))}
+      </View>
+      <TextInput
+        value={comment}
+        onChangeText={setComment}
+        editable={isEditable && !isSubmitting}
+        placeholder="Tell us about your experience (optional)"
+        placeholderTextColor={theme.muted}
+        multiline
+        maxLength={1000}
+        textAlignVertical="top"
+        onFocus={onFeedbackFocus}
+        className="mb-3 min-h-[96px] rounded-xl border px-3 py-3 text-sm"
+        style={{
+          color: theme.text,
+          borderColor: theme.border,
+          backgroundColor: theme.bg,
+        }}
+        accessibilityLabel="Order feedback"
+      />
+      {!isEditable ? (
+        <Text className="text-xs font-semibold" style={{ color: theme.muted }}>
+          {hasReview
+            ? "Your review has already been submitted."
+            : "This order is not currently eligible for a review."}
+        </Text>
+      ) : (
+        <Pressable
+          onPress={() => void submitReview()}
+          disabled={isSubmitting || rating === 0}
+          className="items-center rounded-xl py-3"
+          style={{
+            backgroundColor: theme.primary,
+            opacity: isSubmitting || rating === 0 ? 0.55 : 1,
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={hasReview ? "Update order review" : "Submit order review"}
+        >
+          <Text className="text-sm font-black text-white">
+            {isSubmitting
+              ? "Saving review..."
+              : hasReview
+                ? "Update Review"
+                : "Submit Review"}
+          </Text>
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
 export default function OrdersScreen() {
   const router = useRouter();
   const { tab } = useLocalSearchParams<{ tab?: string }>();
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
 
   const activeTab = tab === "past" ? "Past Orders" : "Active";
   const [branchFilter, setBranchFilter] = useState("all");
@@ -748,6 +893,8 @@ export default function OrdersScreen() {
 
   const [trackingOrder, setTrackingOrder] = useState<any>(null);
   const [detailsOrder, setDetailsOrder] = useState<any>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const detailsScrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
 
   const {
     mode: orderMode,
@@ -769,6 +916,24 @@ export default function OrdersScreen() {
     (sum: number, item: any) => sum + item.quantity,
     0,
   );
+
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const showSubscription = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardHeight(event.endCoordinates.height);
+    });
+    const hideSubscription = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
 
   const loadOrders = useCallback(async () => {
     const token = await authApi.getAccessToken();
@@ -1705,7 +1870,7 @@ export default function OrdersScreen() {
         >
           {Platform.OS !== "android" && (
             <Pressable
-              className="flex-1"
+              className="absolute inset-0"
               onPress={() => setDetailsOrder(null)}
             />
           )}
@@ -1714,11 +1879,12 @@ export default function OrdersScreen() {
             className={
               Platform.OS === "android"
                 ? "flex-1 p-6"
-                : "rounded-t-[32px] p-6 pb-12"
+                : "rounded-t-[32px] p-6 pb-4"
             }
             style={{
               backgroundColor: theme.bg,
-              ...(Platform.OS === "android" ? {} : { maxHeight: "90%" }),
+              flex: 1,
+              maxHeight: windowHeight * 0.9,
             }}
           >
             <View className="flex-row items-center justify-between mb-6">
@@ -1779,14 +1945,17 @@ export default function OrdersScreen() {
             </View>
 
             <ScrollView
+              ref={detailsScrollRef}
               showsVerticalScrollIndicator={false}
-              className="mb-4"
-              style={Platform.OS === "android" ? { flex: 1 } : undefined}
-              contentContainerStyle={
-                Platform.OS === "android"
-                  ? { paddingBottom: insets.bottom + 12 }
-                  : undefined
+              className="mb-1"
+              style={{ flex: 1 }}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode={
+                Platform.OS === "ios" ? "interactive" : "on-drag"
               }
+              contentContainerStyle={{
+                paddingBottom: keyboardHeight > 0 ? 8 : 104,
+              }}
             >
               <Text
                 className="text-xs font-black uppercase tracking-wider mb-3 ml-1"
@@ -1819,27 +1988,50 @@ export default function OrdersScreen() {
                   {formatPrice(calculateOrderTotals(detailsOrder).finalPayable)}
                 </Text>
               </View>
+
+              {detailsOrder &&
+              normalizeOrderStatus(detailsOrder.status) === "completed" ? (
+                <OrderReviewSection
+                  key={`${detailsOrder.orderId}-${detailsOrder.orderReview?.id || (detailsOrder.hasOrderReview ? "review" : "new")}`}
+                  order={detailsOrder}
+                  theme={theme}
+                  onFeedbackFocus={() => {
+                    setTimeout(
+                      () => detailsScrollRef.current?.scrollToEnd({ animated: true }),
+                      300,
+                    );
+                  }}
+                  onReviewSubmitted={() => setDetailsOrder(null)}
+                />
+              ) : null}
             </ScrollView>
 
+            <View
+              pointerEvents="none"
+              style={{ height: keyboardHeight }}
+            />
             <Pressable
               onPress={(e) => {
                 handleReorder(e, detailsOrder);
                 setDetailsOrder(null);
               }}
-              className="py-4 rounded-xl items-center shadow-sm flex-row justify-center"
-              style={{ backgroundColor: theme.primary }}
+              className="absolute items-center justify-center rounded-xl py-4 shadow-sm"
+              style={{
+                backgroundColor: theme.primary,
+                opacity: keyboardHeight > 0 ? 0 : 1,
+                bottom: 12,
+                left: 24,
+                right: 24,
+                flexDirection: "row",
+              }}
+              pointerEvents={keyboardHeight > 0 ? "none" : "auto"}
             >
-              <Package
-                size={20}
-                color="#fff"
-                strokeWidth={2.5}
-                className="mr-2"
-              />
-              <Text className="text-white font-black text-base tracking-wide">
+              <Package size={20} color="#fff" strokeWidth={2.5} />
+              <Text className="ml-2 text-base font-black tracking-wide text-white">
                 Reorder Items
               </Text>
             </Pressable>
-          </Animated.View>
+            </Animated.View>
         </View>
       </Modal>
     </View>

@@ -853,7 +853,7 @@ export default function StoreDetailDetailComponent() {
                   style={{ color: opt.isActive ? theme.text : theme.muted }}
                   numberOfLines={1}
                 >
-                  {opt.value}
+                  {isAddressSection ? `Address: ${opt.value}` : opt.value}
                 </Text>
                 {opt.subValue ? (
                   <Text
@@ -1000,7 +1000,7 @@ export default function StoreDetailDetailComponent() {
                       className="text-xs font-bold mb-1 uppercase"
                       style={{ color: theme.muted }}
                     >
-                      User Readable Address (Street, Landmark, Floor)
+                      Address (Street, Landmark, Floor)
                     </Text>
                     <TextInput
                       placeholder="e.g. Plot 15, Cyber Towers Lane..."

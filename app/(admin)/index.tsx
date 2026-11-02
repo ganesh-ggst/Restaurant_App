@@ -365,15 +365,7 @@ export default function AdminDashboard() {
               style={{ color: theme.muted }}
               numberOfLines={1}
             >
-              {dashboard
-                ? [
-                    dashboard.branch.address,
-                    dashboard.branch.city,
-                    dashboard.branch.state,
-                  ]
-                    .filter(Boolean)
-                    .join(", ")
-                : " "}
+              {dashboard?.branch.area || " "}
             </Text>
           </View>
 
@@ -858,6 +850,7 @@ export default function AdminDashboard() {
             ))}
           </View>
         </Card>
+
       </ScrollView>
     </SafeAreaView>
   );

@@ -410,6 +410,7 @@ export default function OperationsOrdersScreen() {
             ]
               .filter(Boolean)
               .join(" ");
+            const specialInstructions = order.specialInstructions?.trim();
             return (
               <Card
                 key={order._id}
@@ -482,6 +483,23 @@ export default function OperationsOrdersScreen() {
                     ) : null}
                   </View>
                 ))}
+
+                {specialInstructions ? (
+                  <View
+                    className="mt-3 rounded-xl p-3"
+                    style={{ backgroundColor: theme.bg }}
+                  >
+                    <Text
+                      className="mb-1 text-xs font-bold"
+                      style={{ color: theme.text }}
+                    >
+                      Special instructions
+                    </Text>
+                    <Text className="text-sm" style={{ color: theme.muted }}>
+                      {specialInstructions}
+                    </Text>
+                  </View>
+                ) : null}
 
                 {order.createdAt ? (
                   <View className="mt-3 flex-row items-center gap-1">

@@ -1,0 +1,54 @@
+# Learn more https://docs.expo.dev/build-reference/easignore/
+
+# dependencies
+node_modules/
+.claude/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+CLAUDE.md
+.env
+.env.example
+.idea
+
+# Backend
+/backend/
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+app-example
+
+# generated native folders
+/ios
+/android
+
+# Include the local Android Maps key for EAS prebuild; .gitignore still prevents commits.
+!/.env

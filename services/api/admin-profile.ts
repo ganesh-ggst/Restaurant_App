@@ -30,7 +30,7 @@ export interface AdminProfileResponse {
 
 export interface AdminFeaturedContentInput {
   title: string;
-  subtitle: string;
+  subtitle?: string;
   badge: string;
   imageUrl: string;
   displayOrder: number;
@@ -157,6 +157,92 @@ export interface AdminDashboardBranch {
   location: { lat: number; lng: number };
   openingTime: string;
   closingTime: string;
+}
+
+export interface AdminBranchAdmin {
+  id: string;
+  name: string;
+  phone: string;
+  isActive: boolean;
+}
+
+export interface AdminBranch {
+  id: string;
+  name: string;
+  code: string;
+  address: string;
+  city: string;
+  state: string;
+  area: string;
+  location: { lat: number; lng: number };
+  openingTime: string;
+  closingTime: string;
+  isActive: boolean;
+  updatedAt?: string;
+  createdAt?: string;
+  admins?: AdminBranchAdmin[];
+  adminCount?: number;
+  managerCount?: number;
+  canEdit?: boolean;
+  canDelete?: boolean;
+}
+
+export interface AdminBranchesResponse {
+  total: number;
+  branches: AdminBranch[];
+}
+
+export interface CreateAdminBranchInput {
+  adminName: string;
+  adminPhone: string;
+  branchName: string;
+  address: string;
+}
+
+export interface CreateAdminBranchResponse {
+  branch: AdminBranch;
+  admin: AdminBranchAdmin & {
+    role: string;
+    branchId: string;
+    isProfileCompleted: boolean;
+  };
+  loginMethod: string;
+}
+
+export interface AdminBranchDeleteResponse {
+  branchId: string;
+  branchName: string;
+  deleted: boolean;
+  softDeleted: boolean;
+  deletedAdminCount: number;
+}
+
+export interface AdminMapGeocodeResult {
+  results?: AdminMapGeocodePlace[];
+  count?: number;
+  latitude?: number;
+  longitude?: number;
+  address?: string;
+  formattedAddress?: string;
+  displayName?: string;
+  city?: string;
+  state?: string;
+  area?: string;
+  lat?: number;
+  lng?: number;
+  location?: AdminMapGeocodeLocation;
+}
+
+export interface AdminMapGeocodeLocation {
+  lat?: number;
+  lng?: number;
+  latitude?: number;
+  longitude?: number;
+}
+
+export interface AdminMapGeocodePlace {
+  formattedAddress?: string;
+  location?: AdminMapGeocodeLocation;
 }
 
 export interface AdminDashboardData {
@@ -499,6 +585,72 @@ const storefrontSectionPath = (section: string) =>
   `/${storefrontSectionSlug(section)}`;
 
 export const adminProfileApi = {
+  async getBranches(forceRefresh = false): Promise<AdminBranchesResponse> {
+    if (forceRefresh) invalidate("admin-branches");
+    const data = await readCached("admin-branches", () =>
+      request<AdminBranchesResponse>("GET", "/branches"),
+    );
+    if (
+      !data ||
+      !Array.isArray(data.branches) ||
+      !Number.isFinite(data.total)
+    ) {
+      throw new Error("The server returned an invalid branches response.");
+    }
+    return data;
+  },
+
+  async getBranch(branchId: string): Promise<AdminBranch> {
+    if (!branchId.trim()) throw new Error("A valid branch is required.");
+    return requireData(
+      await request<AdminBranch>("GET", `/branches/${encode(branchId)}`),
+      "The server did not return this branch.",
+    );
+  },
+
+  async createBranch(
+    input: CreateAdminBranchInput,
+  ): Promise<CreateAdminBranchResponse> {
+    const data = requireData(
+      await request<CreateAdminBranchResponse>("POST", "/branches", {
+        ...input,
+      }),
+      "The server did not return the created branch.",
+    );
+    invalidate("admin-branches");
+    return data;
+  },
+
+  async updateBranch(
+    branchId: string,
+    input: { branchName: string; address: string },
+  ): Promise<AdminBranch> {
+    if (!branchId.trim()) throw new Error("A valid branch is required.");
+    const data = requireData(
+      await request<AdminBranch>(
+        "PATCH",
+        `/branches/${encode(branchId)}`,
+        input,
+      ),
+      "The server did not return the updated branch.",
+    );
+    invalidate("admin-branches");
+    return data;
+  },
+
+  async deleteBranch(branchId: string): Promise<AdminBranchDeleteResponse> {
+    if (!branchId.trim()) throw new Error("A valid branch is required.");
+    const data = requireData(
+      await request<AdminBranchDeleteResponse>(
+        "DELETE",
+        `/branches/${encode(branchId)}`,
+      ),
+      "The server did not confirm branch deletion.",
+    );
+    invalidate("admin-branches");
+    return data;
+  },
+
   async getProfile(forceRefresh = false): Promise<AdminProfileResponse> {
     if (forceRefresh) invalidate("profile");
     const data = requireData(
@@ -956,6 +1108,42 @@ export const adminNotificationsApi = {
       "/api/admin",
     );
     invalidatePrefix("admin-notifications:");
+  },
+};
+
+export const adminMapsApi = {
+  async reverseGeocode(
+    latitude: number,
+    longitude: number,
+  ): Promise<AdminMapGeocodeResult> {
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      throw new Error("Valid coordinates are required to find an address.");
+    }
+    return requireData(
+      await request<AdminMapGeocodeResult>(
+        "GET",
+        `/reverse-geocode?lat=${encode(String(latitude))}&lng=${encode(String(longitude))}`,
+        undefined,
+        "/api/maps",
+      ),
+      "The server did not return an address for this location.",
+    );
+  },
+
+  async geocode(address: string): Promise<AdminMapGeocodeResult> {
+    const normalizedAddress = address.trim();
+    if (!normalizedAddress) {
+      throw new Error("Enter an address to find its coordinates.");
+    }
+    return requireData(
+      await request<AdminMapGeocodeResult>(
+        "GET",
+        `/geocode?address=${encode(normalizedAddress)}`,
+        undefined,
+        "/api/maps",
+      ),
+      "The server did not return coordinates for this address.",
+    );
   },
 };
 

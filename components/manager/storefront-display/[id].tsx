@@ -58,7 +58,6 @@ export default function StorefrontDisplayDetailComponent() {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
 
   const [val1, setVal1] = useState("");
-  const [val2, setVal2] = useState("");
   const [mediaUri, setMediaUri] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const section = isAdmin ? adminSection : managerSection;
@@ -292,11 +291,9 @@ export default function StorefrontDisplayDetailComponent() {
     if (isFeaturedSection && opt) {
       setVal1(opt.value || "");
       const subParts = opt.subValue ? opt.subValue.split("•") : [];
-      setVal2(subParts[0] ? subParts[0].trim() : "");
-      setMediaUri(subParts[1] ? subParts[1].trim() : "");
+      setMediaUri((subParts[1] || subParts[0] || "").trim());
     } else {
       setVal1(opt ? opt.value : "");
-      setVal2(opt && opt.subValue ? opt.subValue : "");
       setMediaUri("");
     }
     setIsEditorOpen(true);
@@ -304,16 +301,13 @@ export default function StorefrontDisplayDetailComponent() {
 
   const handleSave = async () => {
     const trimmedVal1 = val1.trim();
-    const trimmedVal2 = val2.trim();
     const trimmedMediaUri = mediaUri.trim();
     setVal1(trimmedVal1);
-    setVal2(trimmedVal2);
     setMediaUri(trimmedMediaUri);
 
     const errors: Record<string, string> = {};
     if (isFeaturedSection) {
       if (!trimmedVal1) errors.val1 = "Title is required.";
-      if (!trimmedVal2) errors.val2 = "Subtitle is required.";
       if (!trimmedMediaUri) errors.mediaUri = "Featured image is required.";
       else if (!/^https?:\/\/\S+$/i.test(trimmedMediaUri)) {
         errors.mediaUri = "Attach a valid image from your gallery or camera.";
@@ -339,7 +333,6 @@ export default function StorefrontDisplayDetailComponent() {
       } else if (isFeaturedSection) {
         body = {
           title: val1.trim(),
-          subtitle: val2.trim(),
           imageUrl: mediaUri.trim(),
           ...(!editingOption ? { badge: "FEATURED", displayOrder: 1 } : {}),
         };
@@ -359,7 +352,6 @@ export default function StorefrontDisplayDetailComponent() {
         } else if (isFeaturedSection) {
           await adminProfileApi.createFeaturedContent({
             title: val1.trim(),
-            subtitle: val2.trim(),
             badge: "FEATURED",
             imageUrl: mediaUri.trim(),
             displayOrder: 1,
@@ -392,7 +384,6 @@ export default function StorefrontDisplayDetailComponent() {
     } else if (isFeaturedSection) {
       body = {
         title: val1.trim(),
-        subtitle: val2.trim(),
         imageUrl: mediaUri.trim(),
         ...(!editingOption ? { badge: "FEATURED", displayOrder: 1 } : {}),
       };
@@ -657,36 +648,6 @@ export default function StorefrontDisplayDetailComponent() {
                     ) : null}
 
                     <Text
-                      className="text-xs font-bold mb-1 uppercase"
-                      style={{ color: theme.muted }}
-                    >
-                      Subtitle *
-                    </Text>
-                    <TextInput
-                      placeholder="e.g. Freshly made, just for you"
-                      placeholderTextColor={theme.muted + "44"}
-                      value={val2}
-                      onChangeText={(value) => updateField("val2", value, setVal2)}
-                      onBlur={() => setVal2(val2.trim())}
-                      className="px-4 rounded-xl mb-4 font-semibold"
-                      style={{
-                        ...(fieldInputStyle("val2") || {}),
-                        backgroundColor: theme.bg,
-                        color: theme.text,
-                        fontSize: 16,
-                        height: 52,
-                      }}
-                    />
-                    {fieldErrors.val2 ? (
-                      <Text
-                        className="mb-3 text-xs font-semibold"
-                        style={{ color: theme.danger }}
-                      >
-                        {fieldErrors.val2}
-                      </Text>
-                    ) : null}
-
-                    <Text
                       className="text-xs font-bold mb-2 uppercase"
                       style={{ color: theme.muted }}
                     >
@@ -827,36 +788,6 @@ export default function StorefrontDisplayDetailComponent() {
                         style={{ color: theme.danger }}
                       >
                         {fieldErrors.val1}
-                      </Text>
-                    ) : null}
-
-                    <Text
-                      className="text-xs font-bold mb-1 uppercase"
-                      style={{ color: theme.muted }}
-                    >
-                      Subtitle *
-                    </Text>
-                    <TextInput
-                      placeholder="e.g. Enjoy a fresh meal made to order"
-                      placeholderTextColor={theme.muted + "44"}
-                      value={val2}
-                      onChangeText={(value) => updateField("val2", value, setVal2)}
-                      onBlur={() => setVal2(val2.trim())}
-                      className="px-4 rounded-xl mb-6 font-semibold"
-                      style={{
-                        ...(fieldInputStyle("val2") || {}),
-                        backgroundColor: theme.bg,
-                        color: theme.text,
-                        fontSize: 16,
-                        height: 52,
-                      }}
-                    />
-                    {fieldErrors.val2 ? (
-                      <Text
-                        className="mb-3 text-xs font-semibold"
-                        style={{ color: theme.danger }}
-                      >
-                        {fieldErrors.val2}
                       </Text>
                     ) : null}
                   </>

@@ -1,5 +1,6 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { useFocusEffect, useNavigation, useRouter } from "expo-router";
+import * as Location from "expo-location";
 import {
   ArrowLeft,
   BellRing,
@@ -19,6 +20,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
+  ActivityIndicator,
   AppState,
   FlatList,
   Image,
@@ -43,6 +45,7 @@ import { useAppTheme } from "../../../hooks/useAppTheme";
 import { api } from "../../../services/api";
 import { authApi } from "../../../services/api/auth";
 import {
+  getBranchDistanceKm,
   getDeliveryBranchDistanceKm,
   getDeliveryBranchUnavailableReason,
   MAX_DELIVERY_DISTANCE_KM,
@@ -101,6 +104,13 @@ function matchesSearchText(query: string, value: string): boolean {
 
 const formatPrice = (price: number) => {
   return Number.isInteger(price) ? price : price.toFixed(2);
+};
+
+const DRINKS_CATEGORY_ID = "6ae830cf274e70f1ee2056b1";
+type SelectableBranch = CustomerBranch & { id: string; address: string };
+type BranchWithDistance = {
+  branch: SelectableBranch;
+  distance: number | null;
 };
 
 interface ScannedTablePayload {
@@ -246,6 +256,16 @@ export default function HomeScreen() {
   const [addressModalSelection, setAddressModalSelection] = useState<
     "address" | "branch"
   >("address");
+  const [customerLocation, setCustomerLocation] = useState<{
+    lat: number;
+    lng: number;
+  } | null>(null);
+  const [isLoadingCustomerLocation, setIsLoadingCustomerLocation] =
+    useState(false);
+  const [customerLocationError, setCustomerLocationError] = useState<
+    string | null
+  >(null);
+  const customerLocationRequestId = useRef(0);
 
   const [pendingModeSetup, setPendingModeSetup] = useState<string | null>(null);
   const [lastMode, setLastMode] = useState("Delivery");
@@ -277,6 +297,11 @@ export default function HomeScreen() {
   const [serviceError, setServiceError] = useState<string | null>(null);
   const [serviceRequestSent, setServiceRequestSent] = useState(false);
   const [serviceRequests, setServiceRequests] = useState<unknown[]>([]);
+  const [waterItems, setWaterItems] = useState<CustomerMenuItem[]>([]);
+  const [waterAdded, setWaterAdded] = useState(false);
+  const [addingWaterItemId, setAddingWaterItemId] = useState<string | null>(
+    null,
+  );
   const [dineInWaiter, setDineInWaiter] = useState<CustomerDineInWaiter | null>(
     null,
   );
@@ -290,6 +315,29 @@ export default function HomeScreen() {
   const activeCart = carts[orderMode] || [];
   const selectedBranchId = activeBranch?.id;
   const isSelectedBranchOnline = branchesLoaded && isBranchOnline(activeBranch);
+  const nearbyOpenBranches = useMemo(
+    () =>
+      branches
+        .filter(isBranchOnline)
+        .map((branch: SelectableBranch): BranchWithDistance => ({
+          branch,
+          distance: getBranchDistanceKm(branch, customerLocation),
+        }))
+        .sort((first: BranchWithDistance, second: BranchWithDistance) => {
+          if (first.distance === null && second.distance !== null) return 1;
+          if (first.distance !== null && second.distance === null) return -1;
+          if (
+            first.distance !== null &&
+            second.distance !== null &&
+            first.distance !== second.distance
+          ) {
+            return first.distance - second.distance;
+          }
+          return first.branch.name.localeCompare(second.branch.name);
+        })
+        .map(({ branch }: BranchWithDistance) => branch),
+    [branches, customerLocation],
+  );
 
   const loadAvailableDineInTables = useCallback(async (branchId = selectedBranchId) => {
     const requestId = ++dineInTablesRequestId.current;
@@ -495,6 +543,43 @@ export default function HomeScreen() {
   const isOrderLocked =
     confirmedOrders.length > 0 || dineInCartState === "waiting";
 
+  const loadCustomerLocation = useCallback(async () => {
+    const requestId = ++customerLocationRequestId.current;
+    setCustomerLocation(null);
+    setCustomerLocationError(null);
+    setIsLoadingCustomerLocation(true);
+
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        throw new Error(
+          "Allow location access to find restaurants near your current location.",
+        );
+      }
+
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      if (requestId !== customerLocationRequestId.current) return;
+
+      setCustomerLocation({
+        lat: location.coords.latitude,
+        lng: location.coords.longitude,
+      });
+    } catch (error) {
+      if (requestId !== customerLocationRequestId.current) return;
+      setCustomerLocationError(
+        error instanceof Error
+          ? error.message
+          : "Unable to get your current location.",
+      );
+    } finally {
+      if (requestId === customerLocationRequestId.current) {
+        setIsLoadingCustomerLocation(false);
+      }
+    }
+  }, []);
+
   const handleSelectMode = (selectedMode: string) => {
     if (isOrderLocked || selectedMode === orderMode) return;
     setLastMode(orderMode);
@@ -505,9 +590,11 @@ export default function HomeScreen() {
       if (selectedMode === "Dine-in" && !activeTable) {
         setPendingModeSetup("Dine-in");
         setShowAddressModal(true);
+        void loadCustomerLocation();
       } else if (selectedMode === "Takeaway") {
         setPendingModeSetup("Takeaway");
         setShowAddressModal(true);
+        void loadCustomerLocation();
       }
     }, 300);
   };
@@ -766,7 +853,7 @@ export default function HomeScreen() {
   };
 
   const handleServiceRequest = async (
-    serviceType: "waiter" | "water" | "wifi" | "bill",
+    serviceType: "waiter" | "wifi" | "bill",
   ) => {
     if (!activeTable || !dineInSession?._id) {
       setTableNumber("");
@@ -847,6 +934,59 @@ export default function HomeScreen() {
       );
     } finally {
       setServiceLoading(false);
+    }
+  };
+
+  const handleRequestWater = async () => {
+    if (!activeTable || !dineInSession?._id) {
+      setTableNumber("");
+      void loadAvailableDineInTables();
+      setShowDineInCheckInModal(true);
+      return;
+    }
+
+    setActiveServiceModal("water");
+    setServiceLoading(true);
+    setServiceError(null);
+    setWaterItems([]);
+    setWaterAdded(false);
+
+    try {
+      if (!activeBranch?.id) {
+        throw new Error("Choose a restaurant branch before adding water.");
+      }
+
+      const items = await api.getCategoryItems(
+        DRINKS_CATEGORY_ID,
+        activeBranch.id,
+      );
+      setWaterItems(
+        items.filter(
+          (item) =>
+            /water/i.test(item.name) && isMenuItemInStock(item),
+        ),
+      );
+    } catch (error) {
+      setServiceError(
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setServiceLoading(false);
+    }
+  };
+
+  const handleAddWaterToBill = async (item: CustomerMenuItem) => {
+    if (orderMode !== "Dine-in" || !activeTable || !dineInSession?._id) {
+      setServiceError("Check in to a dine-in table before adding water.");
+      return;
+    }
+
+    setAddingWaterItemId(item._id);
+    try {
+      const added = await handleAddToCart(item, 1, [], item.price);
+      if (added) setWaterAdded(true);
+    } finally {
+      setAddingWaterItemId(null);
     }
   };
 
@@ -1153,8 +1293,16 @@ export default function HomeScreen() {
 
   const offerCardHeight = offersViewportWidth * 0.4;
   const offersCarousel =
-    (orderMode === "Delivery" || orderMode === "Takeaway") && !searchQuery ? (
+    (orderMode === "Delivery" || orderMode === "Takeaway") &&
+    !searchQuery &&
+    branchOffers.length > 0 ? (
       <View className="w-full px-4" style={{ overflow: "hidden" }}>
+        <Text
+          className="mb-3 text-xl font-black"
+          style={{ color: theme.text }}
+        >
+          Exclusive Offers
+        </Text>
         <ScrollView
           horizontal
           pagingEnabled
@@ -1286,13 +1434,30 @@ export default function HomeScreen() {
       orderMode === "Delivery" && addressModalSelection === "address";
     const isDeliveryBranch =
       orderMode === "Delivery" && addressModalSelection === "branch";
-    const branchIsOnline = isBranchOnline(item);
     const deliveryBranchUnavailableReason = isDeliveryBranch
       ? getDeliveryBranchUnavailableReason(item, activeAddress)
       : null;
+    const nearbyBranchDistance = !isDeliveryAddress && !isDeliveryBranch
+      ? getBranchDistanceKm(item, customerLocation)
+      : null;
+    const nearbyBranchUnavailableReason = isDeliveryAddress
+      ? null
+      : isDeliveryBranch
+        ? null
+        : !customerLocation
+          ? "location-unavailable"
+          : !item.isActive
+            ? "inactive"
+            : nearbyBranchDistance === null
+              ? "distance-unavailable"
+              : nearbyBranchDistance > MAX_DELIVERY_DISTANCE_KM
+                ? "outside-range"
+                : item.isOnline === false
+                  ? "offline"
+                  : null;
     const isBranchSelectable = isDeliveryBranch
       ? deliveryBranchUnavailableReason === null
-      : branchIsOnline;
+      : nearbyBranchUnavailableReason === null;
     const isActive = isDeliveryAddress
       ? activeAddress?.id === item.id
       : activeBranch?.id === item.id;
@@ -1338,13 +1503,25 @@ export default function HomeScreen() {
               className="mt-1 text-xs font-bold"
               style={{ color: theme.danger }}
             >
-              {deliveryBranchUnavailableReason === "inactive"
-                ? "BRANCH IS INACTIVE"
-                : deliveryBranchUnavailableReason === "outside-delivery-area"
-                  ? `OUTSIDE ${MAX_DELIVERY_DISTANCE_KM} KM DELIVERY AREA`
-                  : deliveryBranchUnavailableReason === "distance-unavailable"
-                    ? "DELIVERY DISTANCE UNAVAILABLE"
-                    : "BRANCH IS OFFLINE"}
+              {isDeliveryBranch
+                ? deliveryBranchUnavailableReason === "inactive"
+                  ? "BRANCH IS INACTIVE"
+                  : deliveryBranchUnavailableReason === "outside-delivery-area"
+                    ? `OUTSIDE ${MAX_DELIVERY_DISTANCE_KM} KM DELIVERY AREA`
+                    : deliveryBranchUnavailableReason === "distance-unavailable"
+                      ? "DELIVERY DISTANCE UNAVAILABLE"
+                      : "BRANCH IS OFFLINE"
+                : nearbyBranchUnavailableReason === "location-unavailable"
+                  ? isLoadingCustomerLocation
+                    ? "CHECKING YOUR LOCATION"
+                    : "CURRENT LOCATION UNAVAILABLE"
+                  : nearbyBranchUnavailableReason === "inactive"
+                    ? "RESTAURANT INACTIVE"
+                    : nearbyBranchUnavailableReason === "outside-range"
+                      ? `OUTSIDE ${MAX_DELIVERY_DISTANCE_KM} KM RANGE`
+                      : nearbyBranchUnavailableReason === "distance-unavailable"
+                        ? "DISTANCE UNAVAILABLE"
+                        : "RESTAURANT CLOSED"}
             </Text>
           ) : null}
           {isDeliveryBranch && isBranchSelectable ? (
@@ -1356,11 +1533,21 @@ export default function HomeScreen() {
               away
             </Text>
           ) : null}
+          {!isDeliveryAddress &&
+          !isDeliveryBranch &&
+          nearbyBranchDistance !== null ? (
+            <Text
+              className="mt-1 text-xs font-bold"
+              style={{ color: theme.muted }}
+            >
+              {nearbyBranchDistance.toFixed(1)} km from your current location
+            </Text>
+          ) : null}
           <Text
             className="text-sm font-semibold mt-1"
             style={{ color: theme.muted }}
           >
-            {item.address}
+            {isDeliveryAddress ? item.address : item.area}
           </Text>
         </View>
         {isActive && <CheckCircle2 size={24} color={theme.primary} />}
@@ -1385,6 +1572,7 @@ export default function HomeScreen() {
               orderMode === "Delivery" ? "address" : "branch",
             );
             setShowAddressModal(true);
+            if (orderMode !== "Delivery") void loadCustomerLocation();
           }}
         >
           {orderMode === "Delivery" ? (
@@ -1545,7 +1733,7 @@ export default function HomeScreen() {
               }}
               onLeaveTable={() => void handleLeaveTable()}
               onCallWaiter={() => handleServiceRequest("waiter")}
-              onRequestWater={() => handleServiceRequest("water")}
+              onRequestWater={() => void handleRequestWater()}
               onRequestWifi={() => handleServiceRequest("wifi")}
               onRequestBill={() => handleServiceRequest("bill")}
               onOrderTakeaway={() => router.push("/(home)/orders" as any)}
@@ -1662,14 +1850,76 @@ export default function HomeScreen() {
               })}
             </View>
           )}
+          {orderMode !== "Delivery" &&
+            addressModalSelection === "branch" && (
+              <View
+                className="mx-6 mb-3 flex-row items-center rounded-xl border p-3"
+                style={{
+                  borderColor: theme.border,
+                  backgroundColor: theme.card,
+                }}
+              >
+                {isLoadingCustomerLocation ? (
+                  <>
+                    <ActivityIndicator color={theme.primary} />
+                    <Text
+                      className="ml-3 flex-1 text-sm font-semibold"
+                      style={{ color: theme.muted }}
+                    >
+                      Checking restaurants near your current location...
+                    </Text>
+                  </>
+                ) : customerLocationError ? (
+                  <>
+                    <Text
+                      className="flex-1 text-sm font-semibold"
+                      style={{ color: theme.danger }}
+                    >
+                      {customerLocationError}
+                    </Text>
+                    <Pressable
+                      onPress={() => void loadCustomerLocation()}
+                      className="ml-3 rounded-lg px-3 py-2"
+                      style={{ backgroundColor: theme.primary }}
+                    >
+                      <Text className="text-xs font-black text-white">
+                        Retry
+                      </Text>
+                    </Pressable>
+                  </>
+                ) : (
+                  <Text
+                    className="text-sm font-semibold"
+                    style={{ color: theme.muted }}
+                  >
+                    Open restaurants are sorted by distance. Restaurants
+                    beyond {MAX_DELIVERY_DISTANCE_KM} km cannot be selected.
+                  </Text>
+                )}
+              </View>
+            )}
           <FlatList
             data={
               orderMode === "Delivery" && addressModalSelection === "address"
                 ? addresses
-                : branches
+                : orderMode === "Delivery"
+                  ? branches
+                  : nearbyOpenBranches
             }
             keyExtractor={(item: any) => item.id.toString()}
             renderItem={renderAddressModalItem}
+            ListEmptyComponent={
+              orderMode !== "Delivery" && !isLoadingCustomerLocation ? (
+                <View className="items-center px-6 py-10">
+                  <Text
+                    className="text-center font-semibold"
+                    style={{ color: theme.muted }}
+                  >
+                    No open restaurants are currently available.
+                  </Text>
+                </View>
+              ) : undefined
+            }
             refreshControl={
               orderMode === "Delivery" ? (
                 <RefreshControl
@@ -2116,12 +2366,12 @@ export default function HomeScreen() {
                   style={{ color: theme.text }}
                 >
                   {serviceLoading
-                    ? "Requesting Water..."
-                    : serviceError && !serviceRequestSent
-                      ? "Unable to Request Water"
-                      : serviceRequestSent
-                        ? "Water Requested"
-                        : "Request Water"}
+                    ? "Loading Water Bottles..."
+                    : serviceError
+                      ? "Unable to Load Water"
+                      : waterAdded
+                        ? "Added to Your Bill"
+                        : "Choose a Water Bottle"}
                 </Text>
                 <Text
                   className="text-base text-center font-semibold mb-6"
@@ -2129,21 +2379,93 @@ export default function HomeScreen() {
                 >
                   {serviceError ||
                     (serviceLoading
-                      ? "Sending your request to the restaurant..."
-                      : serviceRequestSent
-                        ? `Your water request for Table ${activeTable} was sent.`
-                        : `Request water for Table ${activeTable}.`)}
+                      ? "Finding available water bottles for this branch..."
+                      : waterAdded
+                        ? `The water bottle was added to the bill for Table ${activeTable}.`
+                        : `Select a water bottle to add it to the bill for Table ${activeTable}.`)}
                 </Text>
-                <Pressable
-                  onPress={() => setActiveServiceModal(null)}
-                  disabled={serviceLoading}
-                  className="w-full h-14 rounded-2xl items-center justify-center shadow-sm"
-                  style={{ backgroundColor: theme.primary }}
-                >
-                  <Text className="text-white font-black text-lg tracking-wide">
-                    Got it
-                  </Text>
-                </Pressable>
+                {!serviceLoading && !serviceError && !waterAdded && (
+                  <ScrollView
+                    className="w-full"
+                    style={{ maxHeight: 280 }}
+                    showsVerticalScrollIndicator={false}
+                  >
+                    {waterItems.length > 0 ? (
+                      waterItems.map((item) => (
+                        <View
+                          key={item._id}
+                          className="w-full flex-row items-center rounded-2xl border p-4 mb-3"
+                          style={{
+                            borderColor: theme.border,
+                            backgroundColor: theme.card,
+                          }}
+                        >
+                          {hasImageUri(item.imageUrl) ? (
+                            <Image
+                              source={{ uri: item.imageUrl }}
+                              className="h-20 w-20 rounded-2xl mr-4"
+                              resizeMode="cover"
+                            />
+                          ) : (
+                            <View
+                              className="h-20 w-20 rounded-2xl mr-4 items-center justify-center"
+                              style={{
+                                backgroundColor: "rgba(59, 130, 246, 0.15)",
+                              }}
+                            >
+                              <GlassWater size={26} color="#3B82F6" />
+                            </View>
+                          )}
+                          <View className="flex-1 mr-2">
+                            <Text
+                              className="text-lg font-black"
+                              style={{ color: theme.text }}
+                            >
+                              {item.name}
+                            </Text>
+                            <Text
+                              className="mt-1 text-lg font-black"
+                              style={{ color: theme.primary }}
+                            >
+                              ₹{formatPrice(item.price)}
+                            </Text>
+                          </View>
+                          <Pressable
+                            onPress={() => void handleAddWaterToBill(item)}
+                            disabled={addingWaterItemId !== null}
+                            className="rounded-2xl px-4 py-3"
+                            style={{ backgroundColor: theme.primary }}
+                          >
+                            <Text className="text-white font-black">
+                              {addingWaterItemId === item._id
+                                ? "Adding..."
+                                : "Add to Bill"}
+                            </Text>
+                          </Pressable>
+                        </View>
+                      ))
+                    ) : (
+                      <Text
+                        className="text-center font-semibold mb-4"
+                        style={{ color: theme.muted }}
+                      >
+                        No available water bottles were found in Drinks.
+                      </Text>
+                    )}
+                  </ScrollView>
+                )}
+                {(serviceError || waterAdded || waterItems.length === 0) &&
+                  !serviceLoading && (
+                    <Pressable
+                      onPress={() => setActiveServiceModal(null)}
+                      className="w-full h-14 rounded-2xl items-center justify-center shadow-sm"
+                      style={{ backgroundColor: theme.primary }}
+                    >
+                      <Text className="text-white font-black text-lg tracking-wide">
+                        Got it
+                      </Text>
+                    </Pressable>
+                  )}
               </>
             )}
 

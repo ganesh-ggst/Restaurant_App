@@ -19,6 +19,7 @@ import { useAppTheme } from "../../../../hooks/useAppTheme";
 import {
   OperationsCategory,
   OperationsMenuItem,
+  isOperationsItemAvailable,
   operationsApi,
 } from "../../../../services/api/operations";
 import { operationsCache } from "../../../../services/api/operations-cache";
@@ -103,9 +104,10 @@ export default function CategoryDetailScreen() {
     () =>
       currentItems.filter((item) => {
         const matchesSearch = matchesItemSearch(item.name, search);
+        const isAvailable = isOperationsItemAvailable(item);
         const matchesStock =
           stockFilter === "all" ||
-          (stockFilter === "inStock" ? item.isAvailable : !item.isAvailable);
+          (stockFilter === "inStock" ? isAvailable : !isAvailable);
         const foodType = item.foodType?.toLowerCase();
         const matchesFood =
           foodFilter === "all" ||
@@ -118,9 +120,22 @@ export default function CategoryDetailScreen() {
   );
 
   const toggleAvailability = async (item: OperationsMenuItem) => {
+    const isAvailable = !isOperationsItemAvailable(item);
+    if (
+      isAvailable &&
+      item.availableQuantity !== undefined &&
+      Number.isFinite(item.availableQuantity) &&
+      item.availableQuantity <= 0
+    ) {
+      Alert.alert(
+        "No quantity available",
+        "Increase the available quantity before marking this item in stock.",
+      );
+      return;
+    }
+
     setBusyItemId(item._id);
     try {
-      const isAvailable = !item.isAvailable;
       if (activeTab === "items") {
         await operationsApi.setItemAvailability(item._id, isAvailable);
         operationsCache.invalidateCategory(id);
@@ -374,13 +389,15 @@ export default function CategoryDetailScreen() {
                     <Text>Type unknown</Text>
                   )}{" "}
                   •{" "}
-                  {item.isAvailable ? "In stock" : "Out of stock"}
+                  {isOperationsItemAvailable(item)
+                    ? "In stock"
+                    : "Out of stock"}
                 </Text>
               </Pressable>
               <View className="w-32 items-end">
                 <View className="flex-row items-center justify-end">
                   <Switch
-                    value={item.isAvailable}
+                    value={isOperationsItemAvailable(item)}
                     onValueChange={() => void toggleAvailability(item)}
                     disabled={busyItemId === item._id}
                     trackColor={{
@@ -389,8 +406,8 @@ export default function CategoryDetailScreen() {
                     }}
                     thumbColor="#ffffff"
                     accessibilityLabel={`${
-                      item.isAvailable ? "Mark" : "Make"
-                    } ${item.name} ${item.isAvailable ? "out of stock" : "in stock"}`}
+                      isOperationsItemAvailable(item) ? "Mark" : "Make"
+                    } ${item.name} ${isOperationsItemAvailable(item) ? "out of stock" : "in stock"}`}
                     style={{ transform: [{ scale: 0.85 }], marginRight: 2 }}
                   />
                   <Pressable
@@ -415,10 +432,12 @@ export default function CategoryDetailScreen() {
                 <Text
                   className="mt-0.5 text-[10px] font-bold"
                   style={{
-                    color: item.isAvailable ? theme.primary : theme.muted,
+                    color: isOperationsItemAvailable(item)
+                      ? theme.primary
+                      : theme.muted,
                   }}
                 >
-                  {item.isAvailable ? "IN STOCK" : "OUT OF STOCK"}
+                  {isOperationsItemAvailable(item) ? "IN STOCK" : "OUT OF STOCK"}
                 </Text>
               </View>
             </Card>
