@@ -42,6 +42,7 @@ import {
   OperationsMenuItem,
   OperationsOrder,
   OperationsOffer,
+  isOperationsItemAvailable,
   operationsApi,
 } from "../../../services/api/operations";
 import { operationsCache } from "../../../services/api/operations-cache";
@@ -659,8 +660,9 @@ export default function OperationsDashboardScreen() {
   const filteredInventory = useMemo(() => {
     return inventory.filter((item) => {
       if (!matchesQuickInventorySearch(item, quickInventorySearch)) return false;
-      if (inventoryStockFilter === "inStock" && !item.isAvailable) return false;
-      if (inventoryStockFilter === "outOfStock" && item.isAvailable) return false;
+      const isAvailable = isOperationsItemAvailable(item);
+      if (inventoryStockFilter === "inStock" && !isAvailable) return false;
+      if (inventoryStockFilter === "outOfStock" && isAvailable) return false;
       if (inventoryTypeFilter !== "all") {
         const foodType = item.foodType?.trim().toLowerCase() || "";
         const isVeg = foodType.startsWith("veg");
@@ -1725,7 +1727,7 @@ export default function OperationsDashboardScreen() {
                     ) : (
                       <Text>Type unknown</Text>
                     )}{" "}
-                    • {item.isAvailable ? "In stock" : "Out of stock"}
+                    • {isOperationsItemAvailable(item) ? "In stock" : "Out of stock"}
                   </Text>
                 </Pressable>
                 <Pressable

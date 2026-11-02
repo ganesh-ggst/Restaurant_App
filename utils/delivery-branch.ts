@@ -5,6 +5,7 @@ export const MAX_DELIVERY_DISTANCE_KM = 5;
 type DeliveryAddressLocation = Partial<
   Pick<CustomerAddress, "_id" | "lat" | "lng">
 > & { id?: string };
+type Coordinates = { lat?: number; lng?: number };
 
 export type DeliveryBranchUnavailableReason =
   | "inactive"
@@ -30,30 +31,37 @@ export function getDeliveryBranchDistanceKm(
     }
   }
 
+  return getBranchDistanceKm(branch, address);
+}
+
+export function getBranchDistanceKm(
+  branch: CustomerBranch,
+  location: Coordinates | null | undefined,
+): number | null {
   const branchLatitude = branch.location?.lat;
   const branchLongitude = branch.location?.lng;
-  const addressLatitude = address?.lat;
-  const addressLongitude = address?.lng;
+  const locationLatitude = location?.lat;
+  const locationLongitude = location?.lng;
   if (
     typeof branchLatitude !== "number" ||
     typeof branchLongitude !== "number" ||
-    typeof addressLatitude !== "number" ||
-    typeof addressLongitude !== "number" ||
+    typeof locationLatitude !== "number" ||
+    typeof locationLongitude !== "number" ||
     !Number.isFinite(branchLatitude) ||
     !Number.isFinite(branchLongitude) ||
-    !Number.isFinite(addressLatitude) ||
-    !Number.isFinite(addressLongitude)
+    !Number.isFinite(locationLatitude) ||
+    !Number.isFinite(locationLongitude)
   ) {
     return null;
   }
 
   const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
-  const latitudeDifference = toRadians(addressLatitude - branchLatitude);
-  const longitudeDifference = toRadians(addressLongitude - branchLongitude);
+  const latitudeDifference = toRadians(locationLatitude - branchLatitude);
+  const longitudeDifference = toRadians(locationLongitude - branchLongitude);
   const haversine =
     Math.sin(latitudeDifference / 2) ** 2 +
     Math.cos(toRadians(branchLatitude)) *
-      Math.cos(toRadians(addressLatitude)) *
+      Math.cos(toRadians(locationLatitude)) *
       Math.sin(longitudeDifference / 2) ** 2;
 
   return 6371 * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));

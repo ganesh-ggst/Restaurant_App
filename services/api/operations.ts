@@ -67,6 +67,26 @@ export interface OperationsMenuItem {
   customizationGroups?: OperationsCustomizationGroup[];
 }
 
+export function isOperationsItemAvailable(
+  item: Pick<OperationsMenuItem, "availableQuantity" | "isAvailable">,
+): boolean {
+  const quantity = item.availableQuantity;
+  return (
+    item.isAvailable &&
+    (quantity === undefined || !Number.isFinite(quantity) || quantity > 0)
+  );
+}
+
+function withOutOfStockStatus(
+  body: Record<string, unknown>,
+): Record<string, unknown> {
+  return typeof body.availableQuantity === "number" &&
+    Number.isFinite(body.availableQuantity) &&
+    body.availableQuantity <= 0
+    ? { ...body, isAvailable: false }
+    : body;
+}
+
 export interface OperationsOffer {
   id?: string;
   _id?: string;
@@ -129,6 +149,7 @@ export interface OperationsOrder {
   fulfillmentType?: string;
   createdAt?: string;
   total?: number;
+  specialInstructions?: string;
   items?: {
     name: string;
     quantity: number;
@@ -397,7 +418,11 @@ export const operationsApi = {
     categoryId: string,
     body: Record<string, unknown>,
   ): Promise<void> {
-    await request("POST", `/categories/${encode(categoryId)}/items`, body);
+    await request(
+      "POST",
+      `/categories/${encode(categoryId)}/items`,
+      withOutOfStockStatus(body),
+    );
   },
 
   async createCrossSell(
@@ -407,7 +432,7 @@ export const operationsApi = {
     await request(
       "POST",
       `/categories/${encode(categoryId)}/cross-sells`,
-      body,
+      withOutOfStockStatus(body),
     );
   },
 
@@ -422,7 +447,7 @@ export const operationsApi = {
   },
 
   async updateItem(id: string, body: Record<string, unknown>): Promise<void> {
-    await request("PATCH", `/items/${encode(id)}`, body);
+    await request("PATCH", `/items/${encode(id)}`, withOutOfStockStatus(body));
   },
 
   async deleteItem(id: string): Promise<void> {
@@ -548,7 +573,11 @@ export const operationsApi = {
     id: string,
     body: Record<string, unknown>,
   ): Promise<void> {
-    await request("PATCH", `/cross-sells/${encode(id)}`, body);
+    await request(
+      "PATCH",
+      `/cross-sells/${encode(id)}`,
+      withOutOfStockStatus(body),
+    );
   },
 
   async setCrossSellAvailability(

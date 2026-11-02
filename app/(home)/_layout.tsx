@@ -42,7 +42,6 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import ViewCartButton from "../../components/home/ViewCartButton";
-import { CATEGORIES as CATEGORY_PRESENTATION } from "../../constants/mockData";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { api } from "../../services/api";
 import { authApi } from "../../services/api/auth";
@@ -151,18 +150,26 @@ function toMenuCardItem(
     typeof selectedTag === "string" && selectedTag.trim().toLowerCase() !== "none"
       ? selectedTag.trim().toUpperCase()
       : "";
+  const deliveryEstimateMinutes = item.deliveryEstimateMinutes;
+  const ratingAverage =
+    typeof item.ratingAverage === "number" &&
+    Number.isFinite(item.ratingAverage)
+      ? item.ratingAverage
+      : 0;
+  const ratingCount =
+    typeof item.ratingCount === "number" && Number.isFinite(item.ratingCount)
+      ? item.ratingCount
+      : 0;
 
   return {
     ...item,
     id: item._id,
     price: `₹${item.price}`,
-    time:
-      item.estimatedDeliveryRange ||
-      `${item.deliveryEstimateMinutes ?? item.prepTimeMinutes ?? 0} mins`,
-    rating:
-      item.ratingAverage && item.ratingAverage > 0
-        ? item.ratingAverage.toFixed(1)
-        : "New",
+    time: Number.isFinite(deliveryEstimateMinutes)
+      ? `${deliveryEstimateMinutes} min`
+      : item.estimatedDeliveryRange ||
+        `${item.prepTimeMinutes ?? 0} mins`,
+    rating: `${ratingAverage.toFixed(1)}(${ratingCount})`,
     offer: marketingTag,
     image: item.imageUrl || imageUrls[0] || "",
     gallery: imageUrls.length > 0 ? imageUrls : [item.imageUrl || ""],
@@ -543,10 +550,7 @@ export default function HomeLayout() {
   const deliveryMenuRequestId = useRef(0);
   const [isRefreshingHome, setIsRefreshingHome] = useState(false);
   const [categories, setCategories] = useState<
-    (CustomerCategory & {
-      id: string;
-      displayIcon: (typeof CATEGORY_PRESENTATION)[number]["icon"];
-    })[]
+    (CustomerCategory & { id: string })[]
   >([]);
   const [offers, setOffers] = useState<
     (CustomerOffer & {
@@ -597,14 +601,14 @@ export default function HomeLayout() {
   >("idle");
   const [pendingOrderSnapshot, setPendingOrderSnapshot] = useState<any[]>([]);
   const [dineInSubmissionPhase, setDineInSubmissionPhase] = useState<
-    "preparing" | "sending" | "submitting" | null
+    "preparing" | "submitting" | null
   >(null);
   const [dineInSubmissionSecondsLeft, setDineInSubmissionSecondsLeft] =
     useState<number | null>(null);
   const isDineInSubmissionInProgress = useRef(false);
   const dineInSubmissionId = useRef(0);
   const dineInSubmissionPhaseRef = useRef<
-    "preparing" | "sending" | "submitting" | null
+    "preparing" | "submitting" | null
   >(null);
   const [showDineInCartModal, setShowDineInCartModal] = useState(false);
 
@@ -616,6 +620,17 @@ export default function HomeLayout() {
     (sum: number, item: any) => sum + item.quantity,
     0,
   );
+
+  const closeDineInCartModalIfEmpty = (remainingItemCount: number) => {
+    if (
+      mode === "Dine-in" &&
+      showDineInCartModal &&
+      dineInCartState === "idle" &&
+      remainingItemCount === 0
+    ) {
+      setShowDineInCartModal(false);
+    }
+  };
 
   const activeCartSubtotal = activeCart.reduce(
     (sum: number, item: any) =>
@@ -703,10 +718,6 @@ export default function HomeLayout() {
     }
 
     if (categoryResult.status === "fulfilled") {
-      const iconForCategory = (name: string) =>
-        CATEGORY_PRESENTATION.find(
-          (category) => category.name.toLowerCase() === name.toLowerCase(),
-        )?.icon || CATEGORY_PRESENTATION[0].icon;
       setCategories(
         categoryResult.value
           .filter((category: any) => category.isActive)
@@ -717,7 +728,6 @@ export default function HomeLayout() {
           .map((category: any) => ({
             ...category,
             id: category._id,
-            displayIcon: iconForCategory(category.name),
           })),
       );
     } else {
@@ -1210,10 +1220,10 @@ export default function HomeLayout() {
     quantity: number,
     addons: CustomerCustomizationSelection[],
     totalAmount: number,
-  ) => {
+  ): Promise<boolean> => {
     if (mode === "Dine-in" && dineInCartState === "waiting") {
       Alert.alert("Order Being Submitted", "Please wait for the order to finish.");
-      return;
+      return false;
     }
     const menuItemId = item?._id || item?.id;
     const branchId = activeBranch?.id;
@@ -1228,6 +1238,7 @@ export default function HomeLayout() {
         : activeCart.find((cartItem) => cartItem.id === menuItemId);
     const cartItemId = existing?.cartItemId;
 
+    let remainingCartTotalItems: number | null = null;
     try {
       const cartContext = branchId
         ? getCartContext(branchId, mode, activeAddress?.id)
@@ -1242,6 +1253,10 @@ export default function HomeLayout() {
           );
         }
         const updatedQuantity = existing.quantity + quantity;
+        remainingCartTotalItems =
+          activeCartTotalItems -
+          existing.quantity +
+          Math.max(updatedQuantity, 0);
         if (updatedQuantity <= 0) {
           await api.removeCartItem(cartItemId, cartContext);
         } else {
@@ -1262,6 +1277,10 @@ export default function HomeLayout() {
         });
       }
       await reloadCart(branchId);
+      if (remainingCartTotalItems !== null) {
+        closeDineInCartModalIfEmpty(remainingCartTotalItems);
+      }
+      return true;
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Please try again.";
@@ -1276,6 +1295,7 @@ export default function HomeLayout() {
           : "Unable to Update Cart",
         message,
       );
+      return false;
     }
   };
 
@@ -1319,6 +1339,9 @@ export default function HomeLayout() {
         await api.removeCartItem(existing.cartItemId, cartContext);
       }
       await reloadCart(branchId);
+      closeDineInCartModalIfEmpty(
+        activeCartTotalItems - existing.quantity,
+      );
     } catch (error) {
       Alert.alert(
         "Unable to Update Cart",
@@ -1474,12 +1497,10 @@ export default function HomeLayout() {
     setCarts((prev) => ({ ...prev, [mode]: [] }));
 
     try {
-      const waitForMinute = async (
-        phase: "preparing" | "sending",
-      ): Promise<boolean> => {
+      const waitForMinute = async (): Promise<boolean> => {
         const deadline = Date.now() + 60_000;
-        dineInSubmissionPhaseRef.current = phase;
-        setDineInSubmissionPhase(phase);
+        dineInSubmissionPhaseRef.current = "preparing";
+        setDineInSubmissionPhase("preparing");
         setDineInSubmissionSecondsLeft(60);
 
         while (Date.now() < deadline) {
@@ -1504,8 +1525,7 @@ export default function HomeLayout() {
         return true;
       };
 
-      if (!(await waitForMinute("preparing"))) return;
-      if (!(await waitForMinute("sending"))) return;
+      if (!(await waitForMinute())) return;
       dineInSubmissionPhaseRef.current = "submitting";
       setDineInSubmissionPhase("submitting");
       setDineInSubmissionSecondsLeft(null);
@@ -1518,6 +1538,7 @@ export default function HomeLayout() {
         orderPricing?.tax,
         orderPricing?.total,
       );
+      if (dineInSubmissionId.current !== submissionId) return;
       dineInSubmissionPhaseRef.current = null;
       setDineInSubmissionPhase(null);
       setDineInCartState("approved");
@@ -1579,6 +1600,7 @@ export default function HomeLayout() {
     setDineInCartState("idle");
     setDineInSubmissionPhase(null);
     setDineInSubmissionSecondsLeft(null);
+    setShowDineInCartModal(false);
   };
 
   const shouldShowGlobalCartButton =
@@ -1800,11 +1822,9 @@ export default function HomeLayout() {
                         {isDineInCartAccepted
                           ? "Order submitted to the kitchen."
                           : dineInCartState === "waiting"
-                            ? dineInSubmissionPhase === "sending"
-                              ? `Your order will be sent to the kitchen in ${formatCountdown(dineInSubmissionSecondsLeft)}.`
-                              : dineInSubmissionPhase === "submitting"
-                                ? "Submitting your order to the kitchen..."
-                              : `Preparing your order. Sending starts in ${formatCountdown(dineInSubmissionSecondsLeft)}.`
+                            ? dineInSubmissionPhase === "submitting"
+                              ? "Submitting your order to the kitchen..."
+                              : `Your order will be sent to the kitchen in ${formatCountdown(dineInSubmissionSecondsLeft)}.`
                             : "Items added to your cart. Submit the order to send them to the kitchen."}
                       </Text>
 

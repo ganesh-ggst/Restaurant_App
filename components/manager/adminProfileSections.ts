@@ -48,16 +48,17 @@ function activeOf(item: DataRecord): boolean {
 
 function formatAddress(item: DataRecord): { value: string; subValue: string } {
   const location = record(item.location);
-  const address = [
-    item.address,
-    item.area,
-    item.city,
-    item.state,
-    item.pincode,
-  ]
-    .map(text)
-    .filter(Boolean)
-    .join(", ");
+  const address =
+    text(item.area) ||
+    [
+      item.address,
+      item.city,
+      item.state,
+      item.pincode,
+    ]
+      .map(text)
+      .filter(Boolean)
+      .join(", ");
   const latitude = location.lat;
   const longitude = location.lng;
   return {

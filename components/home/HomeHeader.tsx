@@ -185,7 +185,21 @@ export const HomeHeader = memo(
           className="h-16 w-16 items-center justify-center rounded-2xl shadow-sm border mb-2"
           style={{ backgroundColor: theme.card, borderColor: theme.border }}
         >
-          <item.displayIcon size={26} color={theme.primary} strokeWidth={2} />
+          {hasImageUri(item.iconUrl) ? (
+            <Image
+              source={{ uri: item.iconUrl }}
+              className="h-10 w-10"
+              resizeMode="contain"
+            />
+          ) : item.icon?.trim() ? (
+            <Text className="text-3xl">{item.icon}</Text>
+          ) : (
+            <UtensilsCrossed
+              size={26}
+              color={theme.primary}
+              strokeWidth={2}
+            />
+          )}
         </View>
         <Text
           className="text-xs font-bold"

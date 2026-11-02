@@ -272,8 +272,30 @@ export interface CustomerOrder {
     note?: string;
     changedAt?: string;
   }[];
+  orderReview?: {
+    id?: string;
+    rating: number;
+    comment?: string;
+    status?: string;
+  } | null;
+  hasOrderReview?: boolean;
+  canReviewOrder?: boolean;
+  canEditOrderReview?: boolean;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface CustomerOrderReview {
+  id?: string;
+  orderId: string;
+  orderNumber?: string;
+  rating: number;
+  comment: string;
+  itemCount?: number;
+}
+
+interface CustomerOrderReviewResponse {
+  orderReview: CustomerOrderReview;
 }
 
 export type CartFulfillmentType = "delivery" | "takeaway" | "dine-in";
@@ -295,6 +317,22 @@ export type CustomerCartItemInput = CustomerCartContext & {
   quantity: number;
   selectedCustomizations: CustomerCustomizationSelection[];
 };
+
+type CustomerCartApiContext = Omit<CustomerCartContext, "fulfillmentType"> & {
+  fulfillmentType: "delivery" | "takeaway" | "dine_in";
+};
+
+function toCustomerCartApiContext(
+  context: CustomerCartContext,
+): CustomerCartApiContext {
+  return {
+    ...context,
+    fulfillmentType:
+      context.fulfillmentType === "dine-in"
+        ? "dine_in"
+        : context.fulfillmentType,
+  };
+}
 
 export interface CustomerCustomizationSelection {
   groupId: string;
@@ -716,11 +754,15 @@ export const customerApi = {
     );
   },
 
-  async getCategoryItems(id: string): Promise<CustomerMenuItem[]> {
+  async getCategoryItems(
+    id: string,
+    branchId?: string,
+  ): Promise<CustomerMenuItem[]> {
+    const query = branchId ? `?branchId=${encode(branchId)}` : "";
     return requireArray(
       await request<CustomerMenuItem[]>(
         "GET",
-        `/categories/${encode(id)}/items`,
+        `/categories/${encode(id)}/items${query}`,
       ),
       "The server did not return items for this category.",
     );
@@ -795,11 +837,12 @@ export const customerApi = {
   },
 
   async getCart(context: CustomerCartContext): Promise<CustomerCart> {
+    const apiContext = toCustomerCartApiContext(context);
     const query = new URLSearchParams({
-      branchId: context.branchId,
-      fulfillmentType: context.fulfillmentType,
+      branchId: apiContext.branchId,
+      fulfillmentType: apiContext.fulfillmentType,
     });
-    if (context.addressId) query.set("addressId", context.addressId);
+    if (apiContext.addressId) query.set("addressId", apiContext.addressId);
     return requireData(
       await request<CustomerCart>(
         "GET",
@@ -824,17 +867,23 @@ export const customerApi = {
   },
 
   async addCartItem(item: CustomerCartItemInput): Promise<void> {
-    await request("POST", "/cart/items", item, true);
+    await request(
+      "POST",
+      "/cart/items",
+      { ...item, ...toCustomerCartApiContext(item) },
+      true,
+    );
   },
 
   async addCrossSellCartItem(
     item: Pick<CustomerCartItemInput, "menuItemId" | "quantity"> &
       CustomerCartContext,
   ): Promise<void> {
+    const apiContext = toCustomerCartApiContext(item);
     await request(
       "POST",
       "/cart/items",
-      { ...item, selectedCustomizations: [] },
+      { ...item, ...apiContext, selectedCustomizations: [] },
       true,
     );
   },
@@ -844,11 +893,12 @@ export const customerApi = {
     quantity: number,
     context: CustomerCartContext,
   ): Promise<void> {
+    const apiContext = toCustomerCartApiContext(context);
     const query = new URLSearchParams({
-      branchId: context.branchId,
-      fulfillmentType: context.fulfillmentType,
+      branchId: apiContext.branchId,
+      fulfillmentType: apiContext.fulfillmentType,
     });
-    if (context.addressId) query.set("addressId", context.addressId);
+    if (apiContext.addressId) query.set("addressId", apiContext.addressId);
     await request(
       "PATCH",
       `/cart/items/${encode(itemId)}?${query.toString()}`,
@@ -861,11 +911,12 @@ export const customerApi = {
     itemId: string,
     context: CustomerCartContext,
   ): Promise<void> {
+    const apiContext = toCustomerCartApiContext(context);
     const query = new URLSearchParams({
-      branchId: context.branchId,
-      fulfillmentType: context.fulfillmentType,
+      branchId: apiContext.branchId,
+      fulfillmentType: apiContext.fulfillmentType,
     });
-    if (context.addressId) query.set("addressId", context.addressId);
+    if (apiContext.addressId) query.set("addressId", apiContext.addressId);
     await request(
       "DELETE",
       `/cart/items/${encode(itemId)}?${query.toString()}`,
@@ -878,12 +929,12 @@ export const customerApi = {
     code: string,
     context: CustomerCartContext,
   ): Promise<void> {
+    const apiContext = toCustomerCartApiContext(context);
     await request(
       "POST",
       "/cart/coupon",
       {
-        branchId: context.branchId,
-        fulfillmentType: context.fulfillmentType,
+        ...apiContext,
         code,
       },
       true,
@@ -891,11 +942,12 @@ export const customerApi = {
   },
 
   async removeCartCoupon(context: CustomerCartContext): Promise<void> {
+    const apiContext = toCustomerCartApiContext(context);
     const query = new URLSearchParams({
-      branchId: context.branchId,
-      fulfillmentType: context.fulfillmentType,
+      branchId: apiContext.branchId,
+      fulfillmentType: apiContext.fulfillmentType,
     });
-    if (context.addressId) query.set("addressId", context.addressId);
+    if (apiContext.addressId) query.set("addressId", apiContext.addressId);
     await request(
       "DELETE",
       `/cart/coupon?${query.toString()}`,
@@ -905,11 +957,12 @@ export const customerApi = {
   },
 
   async clearCart(context: CustomerCartContext): Promise<void> {
+    const apiContext = toCustomerCartApiContext(context);
     const query = new URLSearchParams({
-      branchId: context.branchId,
-      fulfillmentType: context.fulfillmentType,
+      branchId: apiContext.branchId,
+      fulfillmentType: apiContext.fulfillmentType,
     });
-    if (context.addressId) query.set("addressId", context.addressId);
+    if (apiContext.addressId) query.set("addressId", apiContext.addressId);
     await request(
       "DELETE",
       `/cart?${query.toString()}`,
@@ -948,6 +1001,46 @@ export const customerApi = {
     return requireData(
       await request("GET", `/orders/${encode(id)}/tracking`, undefined, true),
       "The server did not return order tracking details.",
+    );
+  },
+
+  async createOrderReview(
+    orderId: string,
+    rating: number,
+    comment: string,
+  ): Promise<CustomerOrderReview> {
+    const response = requireData(
+      await request<CustomerOrderReviewResponse>(
+        "POST",
+        `/reviews/orders/${encode(orderId)}`,
+        { rating, comment },
+        true,
+      ),
+      "The server did not return the submitted order review.",
+    );
+    return requireData(
+      response.orderReview,
+      "The server did not return the submitted order review.",
+    );
+  },
+
+  async updateOrderReview(
+    orderId: string,
+    rating: number,
+    comment: string,
+  ): Promise<CustomerOrderReview> {
+    const response = requireData(
+      await request<CustomerOrderReviewResponse>(
+        "PATCH",
+        `/reviews/orders/${encode(orderId)}`,
+        { rating, comment },
+        true,
+      ),
+      "The server did not return the updated order review.",
+    );
+    return requireData(
+      response.orderReview,
+      "The server did not return the updated order review.",
     );
   },
 

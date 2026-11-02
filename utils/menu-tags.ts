@@ -1,6 +1,13 @@
 export const CUSTOM_TAG_ICONS = ["🎉", "🥳", "🤩", "🤯", "😶‍🌫️", "🥶"] as const;
 
-export type CustomTagIcon = (typeof CUSTOM_TAG_ICONS)[number];
+export type CustomTagIcon = string;
+export const DEFAULT_CUSTOM_TAG_ICON: CustomTagIcon = "✨";
+
+const RANDOM_CUSTOM_TAG_ICON_SET: ReadonlySet<string> = new Set(
+  CUSTOM_TAG_ICONS,
+);
+const CUSTOM_TAG_EMOJI_PATTERN =
+  /(?:[#*0-9]\uFE0F?\u20E3|\p{Regional_Indicator}{2}|\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?\p{Emoji_Modifier}?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?\p{Emoji_Modifier}?)*)/gu;
 
 export function getRandomCustomTagIcon(): CustomTagIcon {
   return CUSTOM_TAG_ICONS[
@@ -9,21 +16,23 @@ export function getRandomCustomTagIcon(): CustomTagIcon {
 }
 
 export function getCustomTagIcon(tag: string): CustomTagIcon | undefined {
-  const trimmedTag = tag.trim();
-  return CUSTOM_TAG_ICONS.find((icon) => trimmedTag.startsWith(icon));
+  const emojis = tag.match(CUSTOM_TAG_EMOJI_PATTERN);
+  return (
+    emojis?.find((emoji) => !RANDOM_CUSTOM_TAG_ICON_SET.has(emoji)) ??
+    emojis?.[0]
+  );
 }
 
 export function stripCustomTagIcon(tag: string): string {
-  const trimmedTag = tag.trim();
-  const icon = getCustomTagIcon(trimmedTag);
-  return icon ? trimmedTag.slice(icon.length).trim() : trimmedTag;
+  return tag.replace(CUSTOM_TAG_EMOJI_PATTERN, "").replace(/\s+/g, " ").trim();
 }
 
 export function formatCustomTag(tag: string, fallbackIcon: CustomTagIcon) {
   const text = stripCustomTagIcon(tag).toUpperCase();
-  return text ? `${getCustomTagIcon(tag) ?? fallbackIcon} ${text}` : "";
+  const icon = getCustomTagIcon(tag) ?? fallbackIcon;
+  return text ? `${icon} ${text}` : "";
 }
 
 export function saveCustomTag(tag: string, icon: CustomTagIcon): string {
-  return `${icon} ${stripCustomTagIcon(tag)}`;
+  return `${getCustomTagIcon(tag) ?? icon} ${stripCustomTagIcon(tag)}`;
 }

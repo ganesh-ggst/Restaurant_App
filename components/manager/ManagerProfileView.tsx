@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ChevronRight,
   FileText,
+  GitBranch,
   Globe,
   HelpCircle,
   LogOut,
@@ -452,6 +453,15 @@ export default function ManagerProfileView({
                 icon={TableProperties}
                 label="Manage Tables"
                 onPress={() => router.push("/(admin)/profile/tables" as any)}
+                theme={theme}
+              />
+            )}
+
+            {isAdmin && (
+              <SettingsRow
+                icon={GitBranch}
+                label="Manage branches"
+                onPress={() => router.push("/(admin)/branches" as any)}
                 theme={theme}
               />
             )}
