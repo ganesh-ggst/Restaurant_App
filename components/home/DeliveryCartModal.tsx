@@ -1487,6 +1487,8 @@ export const DeliveryCartModal = memo(
                         <Pressable
                           key={opt.id}
                           onPress={() => onSelectDeliveryOption(opt.speed)}
+                          accessibilityRole="radio"
+                          accessibilityState={{ checked: isSelected }}
                           style={{
                             borderBottomWidth:
                               index === deliveryOptions.length - 1 ? 0 : 1,
@@ -1499,7 +1501,10 @@ export const DeliveryCartModal = memo(
                           ) : (
                             <Circle size={24} color={theme.muted} />
                           )}
-                          <View className="ml-3 flex-1 min-w-0">
+                          <View
+                            className="ml-3 flex-1 min-w-0"
+                            pointerEvents="none"
+                          >
                             <View className="flex-row flex-wrap items-center">
                               <Text
                                 style={{

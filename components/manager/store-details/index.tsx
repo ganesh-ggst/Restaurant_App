@@ -11,14 +11,14 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import {
-  type StoreDetailSection,
-} from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { adminProfileApi } from "../../../services/api/admin-profile";
 import { managerProfileApi } from "../../../services/api/manager-profile";
 import { Card } from "../../ui/Card";
-import { mapAdminStoreDetails } from "../adminProfileSections";
+import {
+  mapAdminStoreDetails,
+  type StoreDetailSection,
+} from "../adminProfileSections";
 
 const adminStoreDetailKeys = [
   "restaurantNames",

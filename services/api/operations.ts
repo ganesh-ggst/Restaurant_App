@@ -117,6 +117,16 @@ interface ManagerOffersResponse {
   };
 }
 
+interface OperationsOfferWriteBody extends Record<string, unknown> {
+  title: string;
+  description: string;
+  code: string;
+  applicableMenuItemIds: string[];
+  imageUrl?: string;
+  discountType?: string;
+  discountValue?: number;
+}
+
 export interface OperationsDashboard {
   branch: {
     _id: string;
@@ -326,25 +336,13 @@ export const operationsApi = {
     return requireArray(response?.offers, "The server did not return offers.");
   },
 
-  async createOffer(body: {
-    title: string;
-    description: string;
-    code: string;
-    applicableMenuItemIds: string[];
-  }): Promise<void> {
+  async createOffer(body: OperationsOfferWriteBody): Promise<void> {
     await request("POST", "/", body, "offers");
   },
 
   async updateOffer(
     id: string,
-    body: {
-      title: string;
-      description: string;
-      code: string;
-      discountType?: string;
-      discountValue?: number;
-      applicableMenuItemIds: string[];
-    },
+    body: OperationsOfferWriteBody,
   ): Promise<void> {
     await request("PATCH", `/${encode(id)}`, body, "offers");
   },
@@ -456,7 +454,7 @@ export const operationsApi = {
 
   async uploadMenuImages(
     files: { uri: string; fileName: string; mimeType: string }[],
-    folder: "menu item" | "cross-sells" | "storefront-display",
+    folder: "menu item" | "cross-sells" | "storefront-display" | "offers",
     branchId?: string,
   ): Promise<string[]> {
     if (files.length === 0) return [];

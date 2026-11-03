@@ -7,6 +7,17 @@ export type AuthDestination =
   | "/(admin)"
   | "/(home)/(tabs)";
 
+export function isAuthDestination(
+  value: string | undefined,
+): value is AuthDestination {
+  return (
+    value === "/(manager)/floor" ||
+    value === "/(manager)/operations" ||
+    value === "/(admin)" ||
+    value === "/(home)/(tabs)"
+  );
+}
+
 export function normalizeManagerType(managerType?: string | null): string {
   return managerType?.trim().toLowerCase().replace(/[^a-z]/g, "") || "";
 }

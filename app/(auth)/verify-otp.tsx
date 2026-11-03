@@ -26,7 +26,10 @@ export default function VerifyOtpScreen() {
   const router = useRouter();
   const theme = useAppTheme();
 
-  const { phone } = useLocalSearchParams<{ phone: string }>();
+  const { phone, branchId } = useLocalSearchParams<{
+    phone: string;
+    branchId?: string;
+  }>();
   const normalizedPhone = phone?.replace(/\s/g, "+") || "";
 
   const [code, setCode] = useState("");
@@ -53,9 +56,13 @@ export default function VerifyOtpScreen() {
         const { user } = await api.verifyOtp(normalizedPhone, verificationCode);
 
         if (!user.isProfileCompleted) {
-          router.replace(
-            `/(auth)/basic-details?phone=${encodeURIComponent(normalizedPhone)}` as any,
-          );
+          router.replace({
+            pathname: "/(auth)/basic-details",
+            params: {
+              phone: normalizedPhone,
+              ...(branchId ? { branchId } : {}),
+            },
+          });
         } else {
           const managerType =
             user.role.toLowerCase() === "manager"
@@ -64,9 +71,14 @@ export default function VerifyOtpScreen() {
                   : null) ||
                 (await managerProfileApi.getProfile()).manager.managerType
               : user.managerType;
-          router.replace(
-            `${getAuthDestination(user.role, managerType)}?phone=${encodeURIComponent(normalizedPhone)}` as any,
-          );
+          router.replace({
+            pathname: "/splash",
+            params: {
+              destination: getAuthDestination(user.role, managerType),
+              phone: normalizedPhone,
+              ...(branchId ? { branchId } : {}),
+            },
+          });
         }
       } catch (err) {
         setError(
@@ -80,7 +92,7 @@ export default function VerifyOtpScreen() {
         setLoading(false);
       }
     },
-    [normalizedPhone, router],
+    [branchId, normalizedPhone, router],
   );
 
   useEffect(() => {

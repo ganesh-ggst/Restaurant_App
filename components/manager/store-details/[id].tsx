@@ -27,10 +27,6 @@ import MapView, {
 } from "react-native-maps";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import {
-  type StoreDetailOption,
-  type StoreDetailSection,
-} from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { adminProfileApi } from "../../../services/api/admin-profile";
 import { managerProfileApi } from "../../../services/api/manager-profile";
@@ -44,6 +40,8 @@ import { Card } from "../../ui/Card";
 import {
   getStoreDetailDefinition,
   mapAdminStoreDetailSection,
+  type StoreDetailOption,
+  type StoreDetailSection,
 } from "../adminProfileSections";
 
 const DEFAULT_MAP_REGION: Region = {

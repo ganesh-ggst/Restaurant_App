@@ -3,6 +3,7 @@ import { StatusBar } from "expo-status-bar";
 import { Bell, CheckCheck, Trash2 } from "lucide-react-native";
 import { useCallback, useState } from "react";
 import {
+  Alert,
   ActivityIndicator,
   Pressable,
   ScrollView,
@@ -80,6 +81,52 @@ export default function NotificationsScreen() {
     } finally {
       setUpdating(false);
     }
+  };
+
+  const deleteAllNotifications = async () => {
+    setUpdating(true);
+    setError("");
+    try {
+      await api.deleteAllNotifications();
+      setPage((current) =>
+        current
+          ? {
+              ...current,
+              notifications: [],
+              unreadCount: 0,
+              pagination: {
+                ...current.pagination,
+                page: 1,
+                total: 0,
+                pages: 0,
+              },
+            }
+          : current,
+      );
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Unable to delete your notifications.",
+      );
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const confirmDeleteAllNotifications = () => {
+    Alert.alert(
+      "Delete All Notifications",
+      "Are you sure you want to delete all notifications?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete All",
+          style: "destructive",
+          onPress: () => void deleteAllNotifications(),
+        },
+      ],
+    );
   };
 
   const loadMore = async () => {
@@ -215,6 +262,23 @@ export default function NotificationsScreen() {
             )}
             <Text className="font-bold" style={{ color: theme.primary }}>
               Mark all as read
+            </Text>
+          </Pressable>
+        ) : null}
+        {page && page.notifications.length > 0 ? (
+          <Pressable
+            onPress={confirmDeleteAllNotifications}
+            disabled={updating}
+            className="mb-5 flex-row items-center justify-center gap-2 rounded-2xl p-4"
+            style={{ backgroundColor: theme.secondaryBg }}
+          >
+            {updating ? (
+              <ActivityIndicator size="small" color={theme.danger} />
+            ) : (
+              <Trash2 size={18} color={theme.danger} />
+            )}
+            <Text className="font-bold" style={{ color: theme.danger }}>
+              Delete all notifications
             </Text>
           </Pressable>
         ) : null}

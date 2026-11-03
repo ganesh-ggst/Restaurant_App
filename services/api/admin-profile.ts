@@ -42,6 +42,22 @@ export interface AdminFeaturedContent extends AdminFeaturedContentInput {
   branchId: string;
 }
 
+export type AdminAuthScreen = "splash" | "login";
+
+export interface AdminAuthScreenMedia {
+  id: string;
+  url: string;
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface AdminAuthScreenUpload {
+  uri: string;
+  fileName: string;
+  mimeType: string;
+}
+
 export interface AdminPerson {
   id: string;
   name: string;
@@ -583,6 +599,74 @@ const storefrontSectionSlug = (section: string) => {
 };
 const storefrontSectionPath = (section: string) =>
   `/${storefrontSectionSlug(section)}`;
+const authScreenPaths: Record<AdminAuthScreen, string> = {
+  splash: "/storefront-display/splash-screens",
+  login: "/storefront-display/login-screens",
+};
+
+async function uploadAuthScreenMedia(
+  screen: AdminAuthScreen,
+  file: AdminAuthScreenUpload,
+  id?: string,
+): Promise<AdminAuthScreenMedia> {
+  if (!API_BASE_URL) {
+    throw new Error(
+      "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+    );
+  }
+
+  const accessToken = await authApi.getAccessToken();
+  if (!accessToken) {
+    throw new Error("Your login session is missing. Please sign in again.");
+  }
+
+  const formData = new FormData();
+  formData.append(screen === "splash" ? "video" : "image", {
+    uri: file.uri,
+    name: file.fileName,
+    type: file.mimeType,
+  } as unknown as Blob);
+
+  try {
+    const response = await axios.request<ApiEnvelope<AdminAuthScreenMedia>>({
+      method: id ? "PATCH" : "POST",
+      url: `${API_BASE_URL}/api/admin/profile${authScreenPaths[screen]}${id ? `/${encode(id)}` : ""}`,
+      data: formData,
+      timeout: 120_000,
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!response.data?.success || !response.data.data?.id) {
+      throw new Error(
+        response.data?.message || "The server did not save the screen media.",
+      );
+    }
+
+    return response.data.data;
+  } catch (error) {
+    if (isAxiosError<ApiEnvelope<unknown>>(error)) {
+      const message = error.response?.data?.message;
+      if (message) throw new Error(message);
+      if (error.response?.status === 401) {
+        throw new Error("Your login session has expired. Please sign in again.");
+      }
+      if (error.code === "ECONNABORTED") {
+        throw new Error("The video upload took too long. Please try again.");
+      }
+      if (error.response) {
+        throw new Error(
+          `The server returned an error (${error.response.status}).`,
+        );
+      }
+      throw new Error(
+        "Unable to reach the server. Check your connection and try again.",
+      );
+    }
+    throw error instanceof Error
+      ? error
+      : new Error("The screen media upload failed. Please try again.");
+  }
+}
 
 export const adminProfileApi = {
   async getBranches(forceRefresh = false): Promise<AdminBranchesResponse> {
@@ -778,6 +862,58 @@ export const adminProfileApi = {
       ),
       "The server did not return this storefront section.",
     );
+  },
+
+  async getAuthScreenMedia(
+    screen: AdminAuthScreen,
+    forceRefresh = false,
+  ): Promise<AdminAuthScreenMedia[]> {
+    const cacheKey = `auth-screen-media:${screen}`;
+    if (forceRefresh) invalidate(cacheKey);
+    return requireArray(
+      await readCached(cacheKey, () =>
+        request<AdminAuthScreenMedia[]>("GET", authScreenPaths[screen]),
+      ),
+      "The server did not return screen media.",
+    );
+  },
+
+  async createAuthScreenMedia(
+    screen: AdminAuthScreen,
+    file: AdminAuthScreenUpload,
+  ): Promise<AdminAuthScreenMedia> {
+    const media = await uploadAuthScreenMedia(screen, file);
+    invalidate(`auth-screen-media:${screen}`);
+    return media;
+  },
+
+  async updateAuthScreenMedia(
+    screen: AdminAuthScreen,
+    id: string,
+    update: { file?: AdminAuthScreenUpload; isActive?: boolean },
+  ): Promise<AdminAuthScreenMedia> {
+    if (!id.trim()) throw new Error("A valid screen media ID is required.");
+    const media = update.file
+      ? await uploadAuthScreenMedia(screen, update.file, id)
+      : requireData(
+          await request<AdminAuthScreenMedia>(
+            "PATCH",
+            `${authScreenPaths[screen]}/${encode(id)}`,
+            { isActive: update.isActive },
+          ),
+          "The server did not return the updated screen media.",
+        );
+    invalidate(`auth-screen-media:${screen}`);
+    return media;
+  },
+
+  async deleteAuthScreenMedia(
+    screen: AdminAuthScreen,
+    id: string,
+  ): Promise<void> {
+    if (!id.trim()) throw new Error("A valid screen media ID is required.");
+    await request("DELETE", `${authScreenPaths[screen]}/${encode(id)}`);
+    invalidate(`auth-screen-media:${screen}`);
   },
 
   async createStorefrontItem(
@@ -1104,6 +1240,16 @@ export const adminNotificationsApi = {
     await request(
       "DELETE",
       `/notifications/${encode(id)}`,
+      undefined,
+      "/api/admin",
+    );
+    invalidatePrefix("admin-notifications:");
+  },
+
+  async deleteAllAdminNotifications(): Promise<void> {
+    await request(
+      "DELETE",
+      "/notifications/delete-all",
       undefined,
       "/api/admin",
     );

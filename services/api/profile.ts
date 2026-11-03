@@ -453,4 +453,8 @@ export const profileApi = {
   async deleteNotification(id: string): Promise<void> {
     await request("DELETE", `/notifications/${encodeURIComponent(id)}`);
   },
+
+  async deleteAllNotifications(): Promise<void> {
+    await request("DELETE", "/notifications/delete-all");
+  },
 };

@@ -26,7 +26,10 @@ import {
 export default function BasicDetailsScreen() {
   const router = useRouter();
   const theme = useAppTheme();
-  const { phone } = useLocalSearchParams<{ phone: string }>();
+  const { phone, branchId } = useLocalSearchParams<{
+    phone: string;
+    branchId?: string;
+  }>();
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -51,9 +54,14 @@ export default function BasicDetailsScreen() {
             (await managerProfileApi.getProfile()).manager.managerType
           : result.user.managerType;
 
-      router.replace(
-        `${getAuthDestination(result.user.role, managerType)}?phone=${encodeURIComponent(phone)}` as any,
-      );
+      router.replace({
+        pathname: "/splash",
+        params: {
+          destination: getAuthDestination(result.user.role, managerType),
+          phone,
+          ...(branchId ? { branchId } : {}),
+        },
+      });
     } catch (saveError) {
       setError(
         saveError instanceof Error

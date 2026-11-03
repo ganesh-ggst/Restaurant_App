@@ -84,6 +84,19 @@ function isUnavailableRestaurantError(error: unknown): boolean {
   );
 }
 
+function getCouponReference(coupon: unknown): string | null {
+  if (typeof coupon === "string") return coupon.trim() || null;
+  if (!coupon || typeof coupon !== "object") return null;
+
+  const couponData = coupon as Record<string, unknown>;
+  for (const key of ["code", "couponCode", "offerCode", "offerId", "id", "_id"]) {
+    const value = couponData[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+
+  return getCouponReference(couponData.offer);
+}
+
 function getCartContext(
   branchId: string,
   mode: string,
@@ -1337,6 +1350,21 @@ export default function HomeLayout() {
         );
       } else {
         await api.removeCartItem(existing.cartItemId, cartContext);
+        const remainingCart = activeCart.filter(
+          (item) => item.cartItemId !== existing.cartItemId,
+        );
+        let couponRemovalError: unknown;
+        try {
+          await removeCouponIfNoEligibleItems(remainingCart, cartContext);
+        } catch (error) {
+          couponRemovalError = error;
+        }
+        await reloadCart(branchId);
+        if (couponRemovalError) throw couponRemovalError;
+        closeDineInCartModalIfEmpty(
+          activeCartTotalItems - existing.quantity,
+        );
+        return;
       }
       await reloadCart(branchId);
       closeDineInCartModalIfEmpty(
@@ -1348,6 +1376,31 @@ export default function HomeLayout() {
         error instanceof Error ? error.message : "Please try again.",
       );
     }
+  };
+
+  const removeCouponIfNoEligibleItems = async (
+    remainingCart: any[],
+    cartContext: CustomerCartContext,
+  ) => {
+    const couponReference = getCouponReference(cartPricing?.coupon);
+    if (!couponReference) return;
+
+    const normalizedReference = couponReference.toUpperCase();
+    const appliedOffer = offers.find((offer) =>
+      [offer.code, offer.id, offer._id].some(
+        (value) =>
+          typeof value === "string" &&
+          value.toUpperCase() === normalizedReference,
+      ),
+    );
+    if (!appliedOffer) return;
+
+    const hasEligibleItem = remainingCart.some(
+      (item) =>
+        appliedOffer.appliesToAllItems === true ||
+        (appliedOffer.applicableMenuItemIds || []).includes(item.id),
+    );
+    if (!hasEligibleItem) await api.removeCartCoupon(cartContext);
   };
 
   const handleRemoveCartItems = async (
@@ -1402,6 +1455,22 @@ export default function HomeLayout() {
         results.push({ status: "rejected", reason });
       }
     }
+    const removedCartItemIds = new Set(
+      results.flatMap((result, index) =>
+        result.status === "fulfilled"
+          ? [cartItemRemovals[index].cartItemId]
+          : [],
+      ),
+    );
+    const remainingCart = activeCart.filter(
+      (item) => !removedCartItemIds.has(item.cartItemId),
+    );
+    let couponRemovalError: unknown;
+    try {
+      await removeCouponIfNoEligibleItems(remainingCart, cartContext);
+    } catch (error) {
+      couponRemovalError = error;
+    }
     await reloadCart(branchId);
 
     const failures = results.flatMap((result, index) =>
@@ -1415,9 +1484,23 @@ export default function HomeLayout() {
           ]
         : [],
     );
-    if (failures.length > 0) {
+    if (failures.length > 0 || couponRemovalError) {
+      const couponFailure = couponRemovalError
+        ? `Coupon: ${
+            couponRemovalError instanceof Error
+              ? couponRemovalError.message
+              : "Unable to remove the coupon."
+          }`
+        : null;
       throw new Error(
-        `Some items could not be removed:\n${failures.join("\n")}`,
+        [
+          failures.length > 0
+            ? `Some items could not be removed:\n${failures.join("\n")}`
+            : null,
+          couponFailure,
+        ]
+          .filter(Boolean)
+          .join("\n"),
       );
     }
   };

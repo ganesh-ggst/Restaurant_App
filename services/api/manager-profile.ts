@@ -120,8 +120,10 @@ async function request<T>(
   try {
     const response = await axios.request<ApiEnvelope<T>>({
       method,
-      url: path.startsWith("/operations/notifications")
-        ? `${API_BASE_URL}/api${path}`
+      url:
+        path.startsWith("/operations/notifications") ||
+        path.startsWith("/dine-in/manager/notifications")
+          ? `${API_BASE_URL}/api${path}`
         : path.startsWith("/notifications")
         ? `${API_BASE_URL}/api${path}`
         : `${API_BASE_URL}/api/manager-profile${path}`,
@@ -405,5 +407,16 @@ export const managerProfileApi = {
 
   async deleteNotification(id: string): Promise<void> {
     await request("DELETE", `/notifications/${encode(id)}`);
+  },
+
+  async deleteAllNotifications(): Promise<void> {
+    await request("DELETE", "/operations/notifications/delete-all");
+  },
+
+  async deleteAllFloorManagerNotifications(): Promise<void> {
+    await request(
+      "DELETE",
+      "/dine-in/manager/notifications/delete-all",
+    );
   },
 };

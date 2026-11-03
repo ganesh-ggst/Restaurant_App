@@ -56,6 +56,7 @@ export default function RootLayout() {
         },
       }}
     >
+      <Stack.Screen name="splash" options={{ animation: "fade" }} />
       <Stack.Screen name="(auth)" />
       <Stack.Screen name="(home)" />
     </Stack>

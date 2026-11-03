@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { useFocusEffect, useRouter, useSegments } from "expo-router";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import {
   Alert,
   Pressable,
@@ -11,36 +11,85 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import {
-  type StoreDetailSection,
-} from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { adminProfileApi } from "../../../services/api/admin-profile";
 import { managerProfileApi } from "../../../services/api/manager-profile";
+import {
+  createAuthScreenMediaSection,
+  getAuthScreenMediaState,
+  getScreenMediaFileName,
+  getScreenMediaType,
+  subscribeToAuthScreenMedia,
+  updateAuthScreenVideos,
+} from "../../../services/auth-screen-media";
 import { Card } from "../../ui/Card";
-import { mapAdminStorefrontDisplay } from "../adminProfileSections";
+import {
+  mapAdminStorefrontDisplay,
+  type StoreDetailSection,
+} from "../adminProfileSections";
 
 export default function StorefrontDisplayIndexComponent() {
   const router = useRouter();
   const segments = useSegments();
   const insets = useSafeAreaInsets();
   const theme = useAppTheme();
+  const authScreenMedia = useSyncExternalStore(
+    subscribeToAuthScreenMedia,
+    getAuthScreenMediaState,
+    getAuthScreenMediaState,
+  );
   const isAdmin = segments[0] === "(admin)";
   const isFloor = segments[1] === "floor";
 
   const [displayItems, setDisplayItems] = useState<StoreDetailSection[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const hasLoadedManagerData = useRef(false);
+  const adminDisplayItems = isAdmin
+    ? [
+        ...displayItems,
+        createAuthScreenMediaSection("splash", authScreenMedia.splash),
+        createAuthScreenMediaSection("login", authScreenMedia.login),
+      ]
+    : displayItems;
 
   const loadStorefrontDisplay = useCallback(
     async (isRefresh = false) => {
       if (isRefresh) setRefreshing(true);
       try {
-        const data = await (isAdmin
-        ? adminProfileApi.getStorefrontDisplay(isRefresh)
-        : managerProfileApi.getStorefrontDisplay());
+        const data = isAdmin
+          ? await adminProfileApi.getStorefrontDisplay(isRefresh)
+          : await managerProfileApi.getStorefrontDisplay();
         setDisplayItems(mapAdminStorefrontDisplay(data));
-        if (!isAdmin) hasLoadedManagerData.current = true;
+        if (isAdmin) {
+          const [splash, login] = await Promise.all([
+            adminProfileApi.getAuthScreenMedia("splash", isRefresh),
+            adminProfileApi.getAuthScreenMedia("login", isRefresh),
+          ]);
+          updateAuthScreenVideos(
+            "splash",
+            splash.map((media) => ({
+              id: media.id,
+              uri: media.url,
+              fileName: getScreenMediaFileName(media.url),
+              mediaType: getScreenMediaType("splash", media.url),
+              durationMs: null,
+              isActive: media.isActive,
+            })),
+          );
+          updateAuthScreenVideos(
+            "login",
+            login.map((media) => ({
+              id: media.id,
+              uri: media.url,
+              fileName: getScreenMediaFileName(media.url),
+              mediaType: getScreenMediaType("login", media.url),
+              durationMs: null,
+              isActive: media.isActive,
+            })),
+          );
+        } else {
+          hasLoadedManagerData.current = true;
+        }
       } catch (error: unknown) {
         Alert.alert(
           "Unable to load storefront display",
@@ -94,10 +143,11 @@ export default function StorefrontDisplayIndexComponent() {
           />
         }
       >
-        {displayItems.map((section) => {
+        {adminDisplayItems.map((section) => {
           const activeOptions = section.options.filter((o) => o.isActive);
-          let displayValue = "None Active";
-          if (activeOptions.length > 0) {
+          let displayValue =
+            "summary" in section ? section.summary : "None Active";
+          if (!("summary" in section) && activeOptions.length > 0) {
             displayValue =
               section.selectionType === "single"
                 ? activeOptions[0].value

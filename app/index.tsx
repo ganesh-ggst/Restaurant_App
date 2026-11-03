@@ -1,4 +1,4 @@
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 
@@ -22,6 +22,9 @@ function isExpiredSessionError(error: unknown): boolean {
 
 export default function RootRedirect() {
   const router = useRouter();
+  const { branchId: routeBranchId } = useLocalSearchParams<{
+    branchId?: string;
+  }>();
   const theme = useAppTheme();
   const [error, setError] = useState("");
 
@@ -29,7 +32,10 @@ export default function RootRedirect() {
     try {
       const accessToken = await authApi.getAccessToken();
       if (!accessToken) {
-        router.replace("/(auth)/login");
+        router.replace({
+          pathname: "/(auth)/login",
+          params: routeBranchId ? { branchId: routeBranchId } : {},
+        });
         return;
       }
 
@@ -43,7 +49,14 @@ export default function RootRedirect() {
         managerType = manager.managerType;
       }
 
-      router.replace(getAuthDestination(profile.role, managerType));
+      const branchId = routeBranchId || profile.branchId;
+      router.replace({
+        pathname: "/splash",
+        params: {
+          destination: getAuthDestination(profile.role, managerType),
+          ...(branchId ? { branchId } : {}),
+        },
+      });
     } catch (restoreError) {
       if (isExpiredSessionError(restoreError)) {
         try {
@@ -66,7 +79,7 @@ export default function RootRedirect() {
           : "Unable to restore your login session.",
       );
     }
-  }, [router]);
+  }, [routeBranchId, router]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {

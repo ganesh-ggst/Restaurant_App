@@ -22,19 +22,18 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import {
-  type StoreDetailOption,
-  type StoreDetailSection,
-} from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { adminProfileApi } from "../../../services/api/admin-profile";
 import { managerProfileApi } from "../../../services/api/manager-profile";
 import { operationsApi } from "../../../services/api/operations";
 import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
+import AuthScreenMedia from "./AuthScreenMedia";
 import {
   getStorefrontDefinition,
   mapAdminStorefrontSection,
+  type StoreDetailOption,
+  type StoreDetailSection,
 } from "../adminProfileSections";
 
 export default function StorefrontDisplayDetailComponent() {
@@ -96,6 +95,13 @@ export default function StorefrontDisplayDetailComponent() {
       isCurrent = false;
     };
   }, [id, isAdmin]);
+
+  if (isAdmin && id === "sf_splash") {
+    return <AuthScreenMedia screen="splash" />;
+  }
+  if (isAdmin && id === "sf_login") {
+    return <AuthScreenMedia screen="login" />;
+  }
 
   if (!section) {
     if (loading) {
