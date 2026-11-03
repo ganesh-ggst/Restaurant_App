@@ -1,13 +1,7 @@
-import {
-  INITIAL_FLOOR_TABLES,
-  MANAGER_MOCK_DATA,
-  MANAGER_PHONES,
-} from "@/constants/managerMockData";
 import { Feather } from "@expo/vector-icons";
 import {
   useFocusEffect,
   useLocalSearchParams,
-  usePathname,
   useRouter,
   useSegments,
 } from "expo-router";
@@ -121,7 +115,6 @@ async function getStableManagerNumbers(
 
 export default function AddManagerModal() {
   const router = useRouter();
-  const pathname = usePathname();
   const segments = useSegments();
   const params = useLocalSearchParams<{ phone?: string }>();
   const insets = useSafeAreaInsets();
@@ -129,19 +122,9 @@ export default function AddManagerModal() {
   const { currentManager } = useCurrentManager();
   const isAdmin = segments[0] === "(admin)";
 
-  const resolvedPathPhone = isAdmin
-    ? ""
-    : pathname?.includes("floor")
-      ? MANAGER_MOCK_DATA.managers?.find(
-          (m: any) => m.managerType === "floor" || m.role === "floor",
-        )?.phone || MANAGER_PHONES.floor_1
-      : MANAGER_MOCK_DATA.managers?.find(
-          (m: any) => m.managerType === "operations" || m.role === "operations",
-        )?.phone || MANAGER_PHONES.ops_1;
-
   const loggedInPhone = isAdmin
     ? params.phone || ""
-    : params.phone || currentManager?.phone || resolvedPathPhone;
+    : params.phone || currentManager?.phone || "";
 
   const [activeTab, setActiveTab] = useState<"add" | "showAll">("add");
   const [managerFirstName, setManagerFirstName] = useState("");
@@ -230,32 +213,8 @@ export default function AddManagerModal() {
         return;
       }
       if (isAdmin) return;
-
-      let isCurrent = true;
-      getStableManagerNumbers(
-        (MANAGER_MOCK_DATA.managers || []).filter(
-          (manager: any) =>
-            manager.role !== "admin" && manager.managerType !== "admin",
-        ),
-      )
-        .then((numbers) => {
-          if (isCurrent) setManagerNumbersById(numbers);
-        })
-        .catch((error: unknown) => {
-          if (isCurrent) {
-            Alert.alert(
-              "Unable to load manager IDs",
-              error instanceof Error ? error.message : "Please try again.",
-            );
-          }
-        });
-
-      return () => {
-        isCurrent = false;
-      };
     }, [isAdmin, loadAdminStaff]),
   );
-  const [, forceUpdate] = useState({});
 
   const getTableNumber = (str: string) => {
     const match = String(str).match(/\d+/);
@@ -349,100 +308,46 @@ export default function AddManagerModal() {
     return /^\d+$/.test(number) ? `Table ${number}` : value;
   };
 
-  const otherManagers = isAdmin
-    ? adminManagers
-        .filter((manager) => manager.id !== editingId)
-        .map((manager) => ({
-          ...manager,
-          assignedTables:
-            manager.assignedTables?.map((table) => table.id) || [],
-          assignedWaiters:
-            manager.relatedWaiters?.map((waiter) => waiter.id) || [],
-        }))
-    : (MANAGER_MOCK_DATA.managers || []).filter(
-        (manager: any) =>
-          manager.id !== editingId &&
-          manager.role !== "admin" &&
-          manager.managerType !== "admin",
-      );
-
-  const takenTableNumbers = new Set(
-    otherManagers
-      .flatMap((m: any) => m.assignedTables || [])
-      .map((val: unknown) => getTableNumber(getAssignmentId(val))),
+  const managerBeingEdited = adminManagers.find(
+    (manager) => manager.id === editingId,
+  );
+  const currentAssignedTables = (managerBeingEdited?.assignedTables || []).map(
+    (table: unknown) => getAssignmentId(table),
+  );
+  const assignedActiveTables =
+    managerBeingEdited?.assignedTables ||
+    adminTables.filter(
+      (table) =>
+        Boolean(editingId) &&
+        table.isActive !== false &&
+        tableAssignedManagerId(table) === editingId,
+    );
+  const tableOptions = [
+    ...(managerBeingEdited?.availableTables ?? adminAvailableTables),
+    ...assignedActiveTables,
+  ].filter(
+    (table: AdminTable, index: number, all: AdminTable[]) =>
+      all.findIndex(
+        (candidate) =>
+          getAssignmentId(candidate) === getAssignmentId(table),
+      ) === index,
   );
 
-  const managerBeingEdited = isAdmin
-    ? adminManagers.find((manager) => manager.id === editingId)
-    : MANAGER_MOCK_DATA.managers?.find(
-        (manager: any) => manager.id === editingId,
-      );
-  const currentAssignedTables = isAdmin && managerBeingEdited
-    ? (managerBeingEdited.assignedTables || []).map((table: unknown) =>
-        getAssignmentId(table),
-      )
-    : (managerBeingEdited?.assignedTables || []).map((table: unknown) =>
-        getAssignmentId(table),
-      );
-  const assignedActiveTables = isAdmin && managerBeingEdited
-    ? managerBeingEdited.assignedTables || []
-    : adminTables.filter(
-        (table) =>
-          Boolean(editingId) &&
-          table.isActive !== false &&
-          tableAssignedManagerId(table) === editingId,
-      );
-  const tableOptions = isAdmin
-    ? [
-        ...(managerBeingEdited?.availableTables ?? adminAvailableTables),
-        ...assignedActiveTables,
-      ].filter(
-        (table: AdminTable, index: number, all: AdminTable[]) =>
-          all.findIndex(
-            (candidate) =>
-              getAssignmentId(candidate) === getAssignmentId(table),
-          ) === index,
-      )
-    : INITIAL_FLOOR_TABLES.filter((table: any) => {
-        const tableNumber = getTableNumber(
-          table.id || table.tableName || table.number || "",
-        );
-        return !takenTableNumbers.has(tableNumber);
-      });
-
-  const takenWaiterIds = new Set(
-    [
-      ...adminWaiters
-        .filter((waiter) => waiterAssignedManagerId(waiter))
-        .map((waiter) => waiter.id),
-      ...otherManagers.flatMap((manager: any) =>
-        (manager.assignedWaiters || []).map(getAssignmentId),
-      ),
-    ],
+  const availableWaiters = adminWaiters.filter(isWaiterUnassigned);
+  const waiterOptions = [
+    ...(managerBeingEdited?.availableWaiters ?? availableWaiters),
+    ...(managerBeingEdited
+      ? getManagerAssignedWaiters(managerBeingEdited)
+      : adminWaiters.filter(
+          (waiter) =>
+            Boolean(editingId) &&
+            waiter.isActive !== false &&
+            waiterAssignedManagerId(waiter) === editingId,
+        )),
+  ].filter(
+    (waiter: AdminWaiter, index: number, all: AdminWaiter[]) =>
+      all.findIndex((candidate) => candidate.id === waiter.id) === index,
   );
-
-  const availableWaiters = isAdmin
-    ? adminWaiters.filter(isWaiterUnassigned)
-    : (MANAGER_MOCK_DATA.waiters || []).filter(
-        (waiter: any) =>
-          waiter.isActive !== false && !takenWaiterIds.has(waiter.id),
-      );
-  const waiterOptions = isAdmin
-    ? [
-        ...(managerBeingEdited?.availableWaiters ?? availableWaiters),
-        ...(managerBeingEdited
-          ? getManagerAssignedWaiters(managerBeingEdited)
-          : adminWaiters.filter(
-              (waiter) =>
-                Boolean(editingId) &&
-                waiter.isActive !== false &&
-                waiterAssignedManagerId(waiter) === editingId,
-            )),
-      ].filter(
-        (waiter: AdminWaiter, index: number, all: AdminWaiter[]) =>
-          all.findIndex((candidate) => candidate.id === waiter.id) === index,
-      )
-    : availableWaiters;
 
   const isTableFree = (status: string | undefined) =>
     status?.toLowerCase() === "available" || status?.toLowerCase() === "free";
@@ -816,59 +721,7 @@ export default function AddManagerModal() {
       return;
     }
 
-    const fullPhoneNumber = `${selectedCountry.code} ${phoneNumber.trim()}`;
-    const newId = `mgr_${Date.now()}`;
-
-    const newManagerObj = {
-      id: newId,
-      name: [managerFirstName.trim(), managerLastName.trim()]
-        .filter(Boolean)
-        .join(" "),
-      firstName: managerFirstName.trim(),
-      lastName: managerLastName.trim(),
-      phone: fullPhoneNumber,
-      role: "manager",
-      managerType: managerRole,
-      isActive: true,
-      assignedTables:
-        managerRole === "floor"
-          ? selectedTables.map((tName) => {
-              const match = INITIAL_FLOOR_TABLES.find(
-                (t: any) => t.tableName === tName || t.id === tName,
-              );
-              if (match) {
-                const num = getTableNumber(match.id || match.tableName);
-                return `T${num}`;
-              }
-              return tName;
-            })
-          : [],
-      assignedWaiters: managerRole === "floor" ? selectedWaiters : [],
-    };
-
-    if (!MANAGER_MOCK_DATA.managers) {
-      MANAGER_MOCK_DATA.managers = [];
-    }
-    MANAGER_MOCK_DATA.managers.push(newManagerObj as any);
-
-    Alert.alert(
-      "Success",
-      `Manager "${[managerFirstName.trim(), managerLastName.trim()].filter(Boolean).join(" ")}" added successfully!`,
-      [
-        {
-          text: "OK",
-          onPress: () => {
-            setManagerFirstName("");
-            setManagerLastName("");
-            setPhoneNumber("");
-            setSelectedTables([]);
-            setSelectedWaiters([]);
-            setActiveTab("showAll");
-            forceUpdate({});
-          },
-        },
-      ],
-    );
+    return;
   };
 
   const handleStartEdit = async (mgr: any) => {
@@ -877,9 +730,9 @@ export default function AddManagerModal() {
     let initialTables: string[] = (mgr.assignedTables || []).map(
       (assignment: unknown) => getAssignmentId(assignment),
     );
-    let initialWaiters: string[] = (
-      isAdmin ? mgr.relatedWaiters || [] : mgr.assignedWaiters || []
-    ).map((assignment: unknown) => getAssignmentId(assignment));
+    let initialWaiters: string[] = (mgr.relatedWaiters || []).map(
+      (assignment: unknown) => getAssignmentId(assignment),
+    );
 
     if (isAdmin) {
       setAssignmentLoading(true);
@@ -1015,36 +868,40 @@ export default function AddManagerModal() {
     }
     setEditValidationErrors({});
 
-    const mgr = isAdmin
-      ? adminManagers.find((manager) => manager.id === mgrId)
-      : MANAGER_MOCK_DATA.managers?.find((m: any) => m.id === mgrId);
-    if (mgr) {
-      if (
-        editedRole === "floor" &&
-        (editedIsActive || mgr.isActive !== false) &&
-        editedTables.length === 0
-      ) {
-        Alert.alert(
-          "Error",
-          "Please assign at least one table for the Floor Manager!",
-        );
-        return;
-      }
+    if (!isAdmin) return;
+    const mgr = adminManagers.find((manager) => manager.id === mgrId);
+    if (!mgr) {
+      Alert.alert(
+        "Manager unavailable",
+        "Refresh the manager list and try again.",
+      );
+      return;
+    }
+    if (
+      editedRole === "floor" &&
+      (editedIsActive || mgr.isActive !== false) &&
+      editedTables.length === 0
+    ) {
+      Alert.alert(
+        "Error",
+        "Please assign at least one table for the Floor Manager!",
+      );
+      return;
+    }
 
-      if (
-        editedRole === "floor" &&
-        (editedIsActive || mgr.isActive !== false) &&
-        editedWaiters.length === 0
-      ) {
-        Alert.alert(
-          "Error",
-          "Please assign at least one waiter for the Floor Manager!",
-        );
-        return;
-      }
+    if (
+      editedRole === "floor" &&
+      (editedIsActive || mgr.isActive !== false) &&
+      editedWaiters.length === 0
+    ) {
+      Alert.alert(
+        "Error",
+        "Please assign at least one waiter for the Floor Manager!",
+      );
+      return;
+    }
 
-      if (isAdmin) {
-        const firstName = editedFirstName.trim();
+    const firstName = editedFirstName.trim();
         const lastName = editedLastName.trim();
         setSaving(true);
         try {
@@ -1179,46 +1036,9 @@ export default function AddManagerModal() {
             "Unable to update manager",
             error instanceof Error ? error.message : "Please try again.",
           );
-        } finally {
-          setSaving(false);
-        }
-        return;
-      }
-
-      mgr.firstName = editedFirstName.trim();
-      mgr.lastName = editedLastName.trim();
-      mgr.name = [editedFirstName.trim(), editedLastName.trim()]
-        .filter(Boolean)
-        .join(" ");
-      const isAdminRecord = mgr.role === "admin" || mgr.managerType === "admin";
-      if (!isAdminRecord) {
-        mgr.managerType = editedRole;
-        mgr.role = editedRole === "admin" ? "admin" : "manager";
-        mgr.assignedTables =
-          editedRole === "floor"
-            ? editedTables.map((tName) => {
-                const match = INITIAL_FLOOR_TABLES.find(
-                  (t: any) => t.tableName === tName || t.id === tName,
-                );
-                if (match) {
-                  const num = getTableNumber(match.id || match.tableName);
-                  return `T${num}`;
-                }
-                return tName;
-              })
-            : [];
-        mgr.assignedWaiters = editedRole === "floor" ? editedWaiters : [];
-      }
+    } finally {
+      setSaving(false);
     }
-
-    setEditingId(null);
-    setEditedFirstName("");
-    setEditedLastName("");
-    setEditedPhone("");
-    setEditedRole("operations");
-    setEditedTables([]);
-    setEditedWaiters([]);
-    forceUpdate({});
   };
 
   const handleDeleteManager = (mgrId: string) => {
@@ -1231,72 +1051,49 @@ export default function AddManagerModal() {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
-            if (isAdmin) {
-              try {
-                await adminProfileApi.deleteManager(mgrId);
-                if (editingId === mgrId) setEditingId(null);
-                await loadAdminStaff();
-              } catch (error) {
-                Alert.alert(
-                  "Unable to delete manager",
-                  error instanceof Error ? error.message : "Please try again.",
-                );
-              }
-              return;
+            if (!isAdmin) return;
+            try {
+              await adminProfileApi.deleteManager(mgrId);
+              if (editingId === mgrId) setEditingId(null);
+              await loadAdminStaff();
+            } catch (error) {
+              Alert.alert(
+                "Unable to delete manager",
+                error instanceof Error ? error.message : "Please try again.",
+              );
             }
-
-            MANAGER_MOCK_DATA.managers = (
-              MANAGER_MOCK_DATA.managers || []
-            ).filter((m: any) => m.id !== mgrId);
-            if (editingId === mgrId) setEditingId(null);
-            forceUpdate({});
           },
         },
       ],
     );
   };
 
-  const rawManagersList: any[] = isAdmin
-    ? adminManagers.map((manager) => {
-        const tablesFromAssignments = adminTables.filter(
-          (table) =>
-            table.isActive !== false &&
-            tableAssignedManagerId(table) === manager.id,
-        );
-        const waitersFromAssignments = adminWaiters.filter(
-          (waiter) =>
-            waiter.isActive !== false &&
-            waiterAssignedManagerId(waiter) === manager.id,
-        );
-        const assignedTables = manager.assignedTables ?? tablesFromAssignments;
-        const relatedWaiters =
-          manager.relatedWaiters !== undefined
-            ? getManagerAssignedWaiters(manager)
-            : waitersFromAssignments;
+  const rawManagersList: any[] = adminManagers.map((manager) => {
+    const tablesFromAssignments = adminTables.filter(
+      (table) =>
+        table.isActive !== false &&
+        tableAssignedManagerId(table) === manager.id,
+    );
+    const waitersFromAssignments = adminWaiters.filter(
+      (waiter) =>
+        waiter.isActive !== false &&
+        waiterAssignedManagerId(waiter) === manager.id,
+    );
+    const assignedTables = manager.assignedTables ?? tablesFromAssignments;
+    const relatedWaiters =
+      manager.relatedWaiters !== undefined
+        ? getManagerAssignedWaiters(manager)
+        : waitersFromAssignments;
 
-        return {
-          ...manager,
-          role: "manager",
-          assignedTableLabels: assignedTables.map(formatTableLabel),
-          assignedTables,
-          assignedWaiters: relatedWaiters.map((waiter) => waiter.id),
-          assignedWaiterLabels: relatedWaiters.map((waiter) => waiter.name),
-        };
-      })
-    : (MANAGER_MOCK_DATA.managers || [])
-        .filter((m: any) => m.role !== "admin" && m.managerType !== "admin")
-        .map((manager: any) => ({
-          ...manager,
-          assignedTableLabels: (manager.assignedTables || []).map(
-            formatTableLabel,
-          ),
-          assignedWaiterLabels: (manager.assignedWaiters || []).map(
-            (waiterId: string) =>
-              MANAGER_MOCK_DATA.waiters?.find(
-                (waiter: any) => waiter.id === waiterId,
-              )?.name || waiterId,
-          ),
-        }));
+    return {
+      ...manager,
+      role: "manager",
+      assignedTableLabels: assignedTables.map(formatTableLabel),
+      assignedTables,
+      assignedWaiters: relatedWaiters.map((waiter) => waiter.id),
+      assignedWaiterLabels: relatedWaiters.map((waiter) => waiter.name),
+    };
+  });
 
   const managersList = [...rawManagersList].sort((first: any, second: any) => {
     const selfOrder =

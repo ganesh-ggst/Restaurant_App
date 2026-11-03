@@ -3,6 +3,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useState } from "react";
 import {
+  Alert,
   ActivityIndicator,
   Pressable,
   RefreshControl,
@@ -48,6 +49,7 @@ export default function AdminNotificationsScreen() {
     action: "read" | "delete";
   } | null>(null);
   const [updatingAll, setUpdatingAll] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
   const [error, setError] = useState("");
 
   const loadNotifications = useCallback(async (isRefresh = false) => {
@@ -77,7 +79,7 @@ export default function AdminNotificationsScreen() {
   );
 
   const markAsRead = async (item: AdminRevenueNotification) => {
-    if (item.isRead || updatingNotification || updatingAll) return;
+    if (item.isRead || updatingNotification || updatingAll || deletingAll) return;
     setUpdatingNotification({ id: item.id, action: "read" });
     setError("");
     try {
@@ -107,7 +109,14 @@ export default function AdminNotificationsScreen() {
   };
 
   const markAllAsRead = async () => {
-    if (!page?.unreadCount || updatingNotification || updatingAll) return;
+    if (
+      !page?.unreadCount ||
+      updatingNotification ||
+      updatingAll ||
+      deletingAll
+    ) {
+      return;
+    }
     setUpdatingAll(true);
     setError("");
     try {
@@ -138,7 +147,7 @@ export default function AdminNotificationsScreen() {
   };
 
   const deleteNotification = async (item: AdminRevenueNotification) => {
-    if (updatingNotification || updatingAll) return;
+    if (updatingNotification || updatingAll || deletingAll) return;
     setUpdatingNotification({ id: item.id, action: "delete" });
     setError("");
     try {
@@ -170,6 +179,61 @@ export default function AdminNotificationsScreen() {
     } finally {
       setUpdatingNotification(null);
     }
+  };
+
+  const deleteAllNotifications = async () => {
+    if (
+      !page?.notifications.length ||
+      updatingNotification ||
+      updatingAll ||
+      deletingAll
+    ) {
+      return;
+    }
+
+    setDeletingAll(true);
+    setError("");
+    try {
+      await adminNotificationsApi.deleteAllAdminNotifications();
+      setPage((current) =>
+        current
+          ? {
+              ...current,
+              notifications: [],
+              unreadCount: 0,
+              pagination: {
+                ...current.pagination,
+                page: 1,
+                total: 0,
+                pages: 0,
+              },
+            }
+          : current,
+      );
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Unable to delete admin notifications.",
+      );
+    } finally {
+      setDeletingAll(false);
+    }
+  };
+
+  const confirmDeleteAllNotifications = () => {
+    Alert.alert(
+      "Delete All Notifications",
+      "Are you sure you want to delete all admin notifications?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete All",
+          style: "destructive",
+          onPress: () => void deleteAllNotifications(),
+        },
+      ],
+    );
   };
 
   const loadMore = async () => {
@@ -235,14 +299,20 @@ export default function AdminNotificationsScreen() {
         <Pressable
           onPress={() => void markAllAsRead()}
           disabled={
-            !page?.unreadCount || updatingAll || Boolean(updatingNotification)
+            !page?.unreadCount ||
+            updatingAll ||
+            deletingAll ||
+            Boolean(updatingNotification)
           }
           className="rounded-xl border px-3 py-2"
           style={{
             borderColor: theme.border,
             backgroundColor: theme.bg,
             opacity:
-              !page?.unreadCount || updatingAll || updatingNotification
+              !page?.unreadCount ||
+              updatingAll ||
+              deletingAll ||
+              updatingNotification
                 ? 0.55
                 : 1,
           }}
@@ -276,6 +346,32 @@ export default function AdminNotificationsScreen() {
         >
           Automated Periodic Revenue Audits
         </Text>
+
+        {page && page.notifications.length > 0 ? (
+          <Pressable
+            onPress={confirmDeleteAllNotifications}
+            disabled={
+              deletingAll || updatingAll || Boolean(updatingNotification)
+            }
+            className="mb-5 flex-row items-center justify-center rounded-2xl border p-4"
+            style={{
+              backgroundColor: theme.card,
+              borderColor: theme.border,
+              opacity: deletingAll || updatingAll || updatingNotification ? 0.55 : 1,
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Delete all admin notifications"
+          >
+            {deletingAll ? (
+              <ActivityIndicator size="small" color={theme.danger} />
+            ) : (
+              <Feather name="trash-2" size={17} color={theme.danger} />
+            )}
+            <Text className="ml-2 font-bold" style={{ color: theme.danger }}>
+              Delete All Notifications
+            </Text>
+          </Pressable>
+        ) : null}
 
         {error ? (
           <View
@@ -361,7 +457,9 @@ export default function AdminNotificationsScreen() {
                     ) : null}
                     <Pressable
                       onPress={() => void deleteNotification(item)}
-                      disabled={Boolean(updatingNotification) || updatingAll}
+                      disabled={
+                        Boolean(updatingNotification) || updatingAll || deletingAll
+                      }
                       hitSlop={8}
                       accessibilityRole="button"
                       accessibilityLabel={`Delete ${item.title}`}

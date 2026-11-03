@@ -17,9 +17,6 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Card } from "../../../components/ui/Card";
-import {
-  FloorTable,
-} from "../../../constants/managerMockData";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { useCurrentManager } from "../../../hooks/useCurrentManager";
 import { getManagerDestination } from "../../../services/authRouting";
@@ -35,7 +32,11 @@ import {
   hasRunningOrders,
 } from "../../../services/api/floor-manager";
 
-interface FloorDisplayTable extends FloorTable {
+interface FloorDisplayTable {
+  id: string;
+  tableName: string;
+  capacity: number;
+  status: "available" | "occupied" | "reserved" | "billed";
   waiterName?: string;
   isBlocked?: boolean;
 }
@@ -421,7 +422,7 @@ export default function FloorDashboard() {
     return matchesSearch && matchesStatus;
   });
 
-  const getStatusColor = (status: FloorTable["status"]) => {
+  const getStatusColor = (status: FloorDisplayTable["status"]) => {
     switch (status) {
       case "available":
         return "#22c55e";

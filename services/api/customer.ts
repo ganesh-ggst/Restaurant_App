@@ -855,8 +855,10 @@ export const customerApi = {
   },
 
   async updateCartDeliveryOption(
-    deliverySpeed: DeliverySpeed,
-    branchId: string,
+    {
+      branchId,
+      deliverySpeed,
+    }: { branchId: string; deliverySpeed: DeliverySpeed },
   ): Promise<void> {
     await request(
       "PATCH",

@@ -1,9 +1,21 @@
-import type {
-  StoreDetailOption,
-  StoreDetailSection,
-} from "../../constants/managerMockData";
-
 type DataRecord = Record<string, unknown>;
+
+export interface StoreDetailOption {
+  id: string;
+  value: string;
+  subValue?: string;
+  isActive: boolean;
+  area?: string;
+  phone?: string;
+}
+
+export interface StoreDetailSection {
+  id: string;
+  title: string;
+  selectionType: "single" | "multiple";
+  isSectionActive: boolean;
+  options: StoreDetailOption[];
+}
 
 const storeDetailDefinitions = [
   { id: "sd_rest", key: "restaurantNames", title: "Restaurant Name", selectionType: "single" },

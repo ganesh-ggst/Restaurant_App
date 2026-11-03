@@ -1,4 +1,5 @@
 import { Feather } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
 import { Redirect, useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import {
@@ -36,6 +37,7 @@ import {
 import { Card } from "../../../components/ui/Card";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { useCurrentManager } from "../../../hooks/useCurrentManager";
+import { customerApi } from "../../../services/api/customer";
 import {
   OperationsCategory,
   OperationsDashboard,
@@ -204,6 +206,9 @@ const ExclusiveOffersSection = memo(function ExclusiveOffersSection({
   onModify,
   onSelectOffer,
 }: ExclusiveOffersSectionProps) {
+  const [activeOfferIndex, setActiveOfferIndex] = useState(0);
+  const offerCardHeight = cardWidth * 0.4;
+
   return (
     <>
       <View className="mb-3 mt-6 flex-row items-center justify-between">
@@ -232,9 +237,16 @@ const ExclusiveOffersSection = memo(function ExclusiveOffersSection({
           horizontal
           style={{ width: cardWidth }}
           showsHorizontalScrollIndicator={false}
-          snapToInterval={cardWidth}
+          pagingEnabled
           decelerationRate="fast"
-          disableIntervalMomentum
+          onMomentumScrollEnd={(event) => {
+            const nextIndex = Math.round(
+              event.nativeEvent.contentOffset.x / cardWidth,
+            );
+            setActiveOfferIndex(
+              Math.max(0, Math.min(nextIndex, offers.length - 1)),
+            );
+          }}
           contentContainerStyle={{ width: cardWidth * offers.length }}
         >
           {offers.map((offer) => (
@@ -243,68 +255,59 @@ const ExclusiveOffersSection = memo(function ExclusiveOffersSection({
               onPress={() => onSelectOffer(offer)}
               accessibilityRole="button"
               accessibilityLabel={`View and edit ${offer.title}`}
-              style={{ width: cardWidth }}
+              className="relative overflow-hidden rounded-[24px]"
+              style={{ width: cardWidth, height: offerCardHeight }}
             >
-              <Card
-                variant="default"
-                className="mb-3 h-[150px] w-full rounded-3xl border p-4"
-                style={{
-                  width: cardWidth,
-                  height: 150,
-                  borderColor,
-                }}
-              >
-                <View className="flex-1 justify-between">
-                  <View>
-                    <Text
-                      className="text-2xl font-black"
-                      style={{ color: textColor }}
-                      numberOfLines={1}
-                    >
-                      {offer.title}
-                    </Text>
-                    <Text
-                      className="mt-2 text-sm"
-                      style={{ color: mutedColor }}
-                      numberOfLines={2}
-                    >
-                      {offer.description || "Exclusive store offer"}
-                    </Text>
-                  </View>
-                  <View className="flex-row items-end justify-between gap-3">
-                    <View
-                      className="max-w-[75%] rounded-full border border-dashed px-4 py-2"
-                      style={{ borderColor }}
-                    >
-                      <Text
-                        className="text-xs font-black tracking-wider"
-                        style={{ color: textColor }}
-                        numberOfLines={1}
-                      >
-                        CODE: {offer.code}
-                      </Text>
-                    </View>
-                    <Text
-                      className="mb-1 text-xs font-black"
-                      style={{ color: primaryColor }}
-                    >
-                      {offer.applicableItemCount ??
-                        offer.applicableMenuItemIds?.length ??
-                        0}{" "}
-                      ITEMS
-                    </Text>
-                  </View>
+              {offer.imageUrl ? (
+                <Image
+                  source={{ uri: offer.imageUrl }}
+                  className="absolute h-full w-full"
+                  resizeMode="cover"
+                  accessibilityLabel={`${offer.title} offer image`}
+                />
+              ) : null}
+              <View className="absolute inset-0 bg-black/20" />
+              <View className="absolute inset-0 bg-gradient-to-r from-black/75 to-black/10" />
+              <View className="absolute inset-0 justify-center p-4">
+                <Text
+                  className="text-3xl font-black tracking-tighter text-white"
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                >
+                  {offer.title}
+                </Text>
+                <Text
+                  className="mt-1 text-base font-bold text-gray-200"
+                  numberOfLines={2}
+                >
+                  {offer.description || "Exclusive store offer"}
+                </Text>
+                <View className="mt-3 self-start rounded-full bg-white px-5 py-2.5">
+                  <Text
+                    className="text-sm font-black"
+                    style={{ color: primaryColor }}
+                  >
+                    CODE: {offer.code}
+                  </Text>
                 </View>
-              </Card>
+              </View>
             </Pressable>
           ))}
         </ScrollView>
         {offers.length > 1 ? (
-          <View className="mb-3 -mt-1 flex-row items-center justify-end">
-            <Text className="mr-1 text-xs font-semibold" style={{ color: mutedColor }}>
-              Swipe to view more offers
-            </Text>
-            <Feather name="arrow-right" size={14} color={primaryColor} />
+          <View className="mb-3 -mt-1 flex-row items-center justify-center">
+            {offers.map((offer, index) => (
+              <View
+                key={offer.id || offer._id || offer.code}
+                className="mx-1 h-1.5 rounded-full"
+                style={{
+                  width: activeOfferIndex === index ? 16 : 6,
+                  backgroundColor:
+                    activeOfferIndex === index ? primaryColor : borderColor,
+                }}
+              />
+            ))}
           </View>
         ) : null}
         </>
@@ -377,6 +380,8 @@ export default function OperationsDashboardScreen() {
   const [offerTitle, setOfferTitle] = useState("");
   const [offerDescription, setOfferDescription] = useState("");
   const [offerCode, setOfferCode] = useState("");
+  const [offerImageUrl, setOfferImageUrl] = useState("");
+  const [uploadingOfferImage, setUploadingOfferImage] = useState(false);
   const [hasAttemptedOfferSave, setHasAttemptedOfferSave] = useState(false);
   const [offerDiscountMissing, setOfferDiscountMissing] = useState(false);
   const [offerDiscountType, setOfferDiscountType] = useState("flat");
@@ -387,6 +392,7 @@ export default function OperationsDashboardScreen() {
   const [savingOfferId, setSavingOfferId] = useState("");
   const [togglingOfferId, setTogglingOfferId] = useState("");
   const [offerError, setOfferError] = useState("");
+  const [offerItemsError, setOfferItemsError] = useState("");
   const [offerManagerError, setOfferManagerError] = useState("");
   const [isCheckedIn, setIsCheckedIn] = useState<boolean | null>(null);
   const [checkInStatusLoading, setCheckInStatusLoading] = useState(true);
@@ -489,6 +495,7 @@ export default function OperationsDashboardScreen() {
         notificationsResult,
         managerOffersResult,
         ordersResult,
+        branchMenuItemsResult,
       ] =
         await Promise.allSettled([
           operationsApi.getInventory(),
@@ -496,6 +503,10 @@ export default function OperationsDashboardScreen() {
           managerProfileApi.getNotifications(1, 20, true),
           operationsApi.getManagerOffers(),
           operationsApi.getAllOrders(),
+          customerApi.getMenuItems({
+            branchId: currentManager?.branchId || dashboardData.branch._id,
+            stock: "all",
+          }),
         ]);
       const supportingErrors: string[] = [];
 
@@ -525,22 +536,19 @@ export default function OperationsDashboardScreen() {
           `Inventory candidates: ${candidateResult.reason instanceof Error ? candidateResult.reason.message : "Unable to load."}`,
         );
       }
-      const uniqueOfferItems = new Map<string, OperationsMenuItem>();
-      if (inventoryResult.status === "fulfilled") {
-        inventoryResult.value
-          .filter(isOperationsMenuItem)
-          .forEach((item) => uniqueOfferItems.set(item._id, item));
-      }
-      if (candidateResult.status === "fulfilled") {
-        candidateResult.value
-          .filter(isOperationsMenuItem)
-          .forEach((item) => uniqueOfferItems.set(item._id, item));
-      }
-      if (
-        inventoryResult.status === "fulfilled" ||
-        candidateResult.status === "fulfilled"
-      ) {
-        setOfferItems([...uniqueOfferItems.values()]);
+      if (branchMenuItemsResult.status === "fulfilled") {
+        setOfferItems(branchMenuItemsResult.value);
+        setOfferItemsError("");
+      } else {
+        setOfferItems([]);
+        setOfferItemsError(
+          branchMenuItemsResult.reason instanceof Error
+            ? branchMenuItemsResult.reason.message
+            : "Unable to load branch menu items.",
+        );
+        supportingErrors.push(
+          `Offer items: ${branchMenuItemsResult.reason instanceof Error ? branchMenuItemsResult.reason.message : "Unable to load branch menu items."}`,
+        );
       }
       if (notificationsResult.status === "fulfilled") {
         setUnreadCount(notificationsResult.value.unreadCount);
@@ -551,12 +559,17 @@ export default function OperationsDashboardScreen() {
       }
       if (managerOffersResult.status === "fulfilled") {
         setOffers(managerOffersResult.value);
+        setActiveOffers(
+          managerOffersResult.value.filter((offer) => offer.isActive === true),
+        );
+        setOfferError("");
         setOfferManagerError("");
       } else {
         const managerOffersError =
           managerOffersResult.reason instanceof Error
             ? managerOffersResult.reason.message
             : "Unable to load offers.";
+        setOfferError(managerOffersError);
         setOfferManagerError(managerOffersError);
         supportingErrors.push(`Offer manager: ${managerOffersError}`);
       }
@@ -686,36 +699,21 @@ export default function OperationsDashboardScreen() {
   );
 
   const reloadOffers = async () => {
-    const branchId = currentManager?.branchId || dashboard?.branch._id;
-    if (!branchId) throw new Error("Your branch could not be identified.");
-    const [activeResult, managerResult] = await Promise.allSettled([
-      operationsApi.getActiveOffers(branchId),
-      operationsApi.getManagerOffers(),
-    ]);
-    if (activeResult.status === "fulfilled") {
+    try {
+      const managerOffers = await operationsApi.getManagerOffers();
+      setOffers(managerOffers);
       setActiveOffers(
-        activeResult.value.filter((offer) => offer.isActive === true),
+        managerOffers.filter((offer) => offer.isActive === true),
       );
       setOfferError("");
-    } else {
-      setOfferError(
-        activeResult.reason instanceof Error
-          ? activeResult.reason.message
-          : "Unable to load active offers.",
-      );
-    }
-    if (managerResult.status === "fulfilled") {
-      setOffers(managerResult.value);
       setOfferManagerError("");
-    } else {
-      setOfferManagerError(
-        managerResult.reason instanceof Error
-          ? managerResult.reason.message
-          : "Unable to load offers.",
-      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to load offers.";
+      setOfferError(message);
+      setOfferManagerError(message);
+      throw error;
     }
-    if (activeResult.status === "rejected") throw activeResult.reason;
-    if (managerResult.status === "rejected") throw managerResult.reason;
   };
 
   const openNewOfferForm = () => {
@@ -725,6 +723,7 @@ export default function OperationsDashboardScreen() {
     setOfferTitle("");
     setOfferDescription("");
     setOfferCode("");
+    setOfferImageUrl("");
     setHasAttemptedOfferSave(false);
     setOfferDiscountMissing(false);
     setOfferDiscountType("flat");
@@ -746,15 +745,21 @@ export default function OperationsDashboardScreen() {
     setOfferTitle(offer.title);
     setOfferDescription(offer.description || "");
     setOfferCode(offer.code);
+    setOfferImageUrl(offer.imageUrl || "");
     setHasAttemptedOfferSave(false);
     setOfferDiscountMissing(false);
     setOfferDiscountType(offer.discountType || "flat");
     setOfferItemSearch("");
-    setOfferApplicableItemIds(offer.applicableMenuItemIds || []);
+    const branchItemIds = new Set(offerItems.map((item) => item._id));
+    setOfferApplicableItemIds(
+      (offer.applicableMenuItemIds || []).filter((itemId) =>
+        branchItemIds.has(itemId),
+      ),
+    );
     setReturnToOfferManager(returnToManager);
     setIsOfferManagerOpen(false);
     setIsOfferFormOpen(true);
-  }, []);
+  }, [offerItems]);
 
   const handleOpenOfferManager = useCallback(() => {
     setIsOfferManagerOpen(true);
@@ -771,8 +776,68 @@ export default function OperationsDashboardScreen() {
     setReturnToOfferManager(false);
   };
 
+  const pickOfferImage = async () => {
+    if (uploadingOfferImage) return;
+    try {
+      const permission =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert(
+          "Photo access required",
+          "Allow photo library access to attach an offer image.",
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [16, 9],
+        quality: 0.85,
+      });
+      const asset = result.assets?.[0];
+      if (result.canceled || !asset) return;
+
+      setUploadingOfferImage(true);
+      const mimeType = asset.mimeType || "image/jpeg";
+      const extension = mimeType.split("/")[1] || "jpg";
+      const [uploadedUrl] = await operationsApi.uploadMenuImages(
+        [
+          {
+            uri: asset.uri,
+            fileName: asset.fileName || `offer-${Date.now()}.${extension}`,
+            mimeType,
+          },
+        ],
+        "offers",
+      );
+      setOfferImageUrl(uploadedUrl);
+    } catch (error) {
+      Alert.alert(
+        "Unable to upload offer image",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setUploadingOfferImage(false);
+    }
+  };
+
   const handleSaveOffer = async () => {
     setHasAttemptedOfferSave(true);
+    if (uploadingOfferImage) {
+      Alert.alert(
+        "Image upload in progress",
+        "Wait for the offer image to finish uploading before saving.",
+      );
+      return;
+    }
+    if (offerItemsError) {
+      Alert.alert(
+        "Unable to load applicable items",
+        "Refresh the operations screen and try again before saving this offer.",
+      );
+      return;
+    }
     const offerText = `${offerTitle} ${offerDescription}`;
     const missingTitle = !offerTitle.trim();
     const missingCode = !offerCode.trim();
@@ -819,6 +884,7 @@ export default function OperationsDashboardScreen() {
         description: offerDescription.trim(),
         code: offerCode.trim(),
         applicableMenuItemIds: offerApplicableItemIds,
+        imageUrl: offerImageUrl || (editingOfferId ? "" : undefined),
       };
       if (editingOfferId) {
         const discountType = /\d+(?:\.\d+)?\s*%/i.test(offerText)
@@ -2026,9 +2092,10 @@ export default function OperationsDashboardScreen() {
           }}
         >
           <View
-            className="flex-1 justify-center rounded-3xl border p-5"
+            className="justify-center rounded-3xl border p-5"
             style={{
-              maxHeight: "82%",
+              height: categoryManagerModalHeight,
+              maxHeight: categoryManagerModalHeight,
               backgroundColor: theme.card,
               borderColor: theme.border,
             }}
@@ -2060,7 +2127,7 @@ export default function OperationsDashboardScreen() {
               style={{ backgroundColor: theme.bg }}
               contentContainerStyle={{ paddingBottom: 8 }}
               keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
+              showsVerticalScrollIndicator
             >
               {offerManagerError ? (
                 <Text
@@ -2211,29 +2278,45 @@ export default function OperationsDashboardScreen() {
             >
               PREVIEW
             </Text>
-            <Card
-              variant="default"
-              className="mb-8 rounded-3xl border p-5"
-              style={{ borderColor: theme.border }}
+            <View
+              className="relative mb-8 w-full overflow-hidden rounded-[24px]"
+              style={{ aspectRatio: 2.5, backgroundColor: theme.card }}
             >
-              <Text className="text-3xl font-black" style={{ color: theme.text }}>
-                {offerTitle.trim() || "Enter Offer Title"}
-              </Text>
-              <Text className="mt-2 text-base" style={{ color: theme.muted }}>
-                {offerDescription.trim() || "Enter subtitle description here"}
-              </Text>
-              <View
-                className="mt-5 self-start rounded-full border border-dashed px-4 py-2"
-                style={{ borderColor: theme.border }}
-              >
+              {offerImageUrl ? (
+                <Image
+                  source={{ uri: offerImageUrl }}
+                  className="absolute h-full w-full"
+                  resizeMode="cover"
+                  accessibilityLabel="Offer preview image"
+                />
+              ) : null}
+              <View className="absolute inset-0 bg-black/20" />
+              <View className="absolute inset-0 bg-gradient-to-r from-black/75 to-black/10" />
+              <View className="absolute inset-0 justify-center p-4">
                 <Text
-                  className="text-xs font-black tracking-wider"
-                  style={{ color: theme.text }}
+                  className="text-3xl font-black tracking-tighter text-white"
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
                 >
-                  CODE: {offerCode.trim() || "PROMOCODE"}
+                  {offerTitle.trim() || "Enter Offer Title"}
                 </Text>
+                <Text
+                  className="mt-1 text-base font-bold text-gray-200"
+                  numberOfLines={2}
+                >
+                  {offerDescription.trim() || "Enter subtitle description here"}
+                </Text>
+                <View className="mt-3 self-start rounded-full bg-white px-5 py-2.5">
+                  <Text
+                    className="text-sm font-black"
+                    style={{ color: theme.primary }}
+                  >
+                    CODE: {offerCode.trim() || "PROMOCODE"}
+                  </Text>
+                </View>
               </View>
-            </Card>
+            </View>
 
             {[
               {
@@ -2319,6 +2402,65 @@ export default function OperationsDashboardScreen() {
               </View>
             ))}
 
+            <View className="mb-5">
+              <Text
+                className="mb-2 text-sm font-black"
+                style={{ color: theme.muted }}
+              >
+                OFFER IMAGE
+              </Text>
+              {offerImageUrl ? (
+                <View className="mb-3 overflow-hidden rounded-2xl">
+                  <Image
+                    source={{ uri: offerImageUrl }}
+                    className="h-44 w-full"
+                    resizeMode="cover"
+                    accessibilityLabel="Offer image preview"
+                  />
+                </View>
+              ) : null}
+              <View className="flex-row gap-3">
+                <Pressable
+                  onPress={() => void pickOfferImage()}
+                  disabled={uploadingOfferImage}
+                  accessibilityRole="button"
+                  className="flex-1 flex-row items-center justify-center rounded-2xl border py-4"
+                  style={{ borderColor: theme.border }}
+                >
+                  {uploadingOfferImage ? (
+                    <ActivityIndicator size="small" color={theme.primary} />
+                  ) : (
+                    <Feather
+                      name={offerImageUrl ? "image" : "upload"}
+                      size={18}
+                      color={theme.primary}
+                    />
+                  )}
+                  <Text
+                    className="ml-2 text-sm font-bold"
+                    style={{ color: theme.primary }}
+                  >
+                    {uploadingOfferImage
+                      ? "Uploading image..."
+                      : offerImageUrl
+                        ? "Change image"
+                        : "Upload image"}
+                  </Text>
+                </Pressable>
+                {offerImageUrl ? (
+                  <Pressable
+                    onPress={() => setOfferImageUrl("")}
+                    accessibilityRole="button"
+                    accessibilityLabel="Remove offer image"
+                    className="items-center justify-center rounded-2xl border px-4"
+                    style={{ borderColor: theme.border }}
+                  >
+                    <Feather name="trash-2" size={18} color={theme.danger} />
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+
             <View
               onLayout={(event) => {
                 applicableItemsOffset.current = event.nativeEvent.layout.y;
@@ -2366,7 +2508,11 @@ export default function OperationsDashboardScreen() {
               className="rounded-2xl border-2 border-dashed p-3"
               style={{ borderColor: theme.border }}
             >
-              {filteredOfferItems.length ? (
+              {offerItemsError ? (
+                <Text className="py-6 text-center" style={{ color: theme.danger }}>
+                  {offerItemsError}
+                </Text>
+              ) : filteredOfferItems.length ? (
                 filteredOfferItems.map((item) => {
                   const selected = offerApplicableItemIds.includes(item._id);
                   const isVeg = item.foodType?.toLowerCase().startsWith("veg");
@@ -2446,11 +2592,11 @@ export default function OperationsDashboardScreen() {
                 Keyboard.dismiss();
                 void handleSaveOffer();
               }}
-              disabled={savingOffer}
+              disabled={savingOffer || uploadingOfferImage}
               className="flex-1 items-center justify-center rounded-2xl py-4"
               style={{ backgroundColor: theme.primary }}
             >
-              {savingOffer ? (
+              {savingOffer || uploadingOfferImage ? (
                 <ActivityIndicator color="#ffffff" />
               ) : (
                 <Text className="text-base font-black text-white">

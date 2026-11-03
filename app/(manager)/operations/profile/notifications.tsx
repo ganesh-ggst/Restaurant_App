@@ -23,7 +23,11 @@ function notificationId(notification: ManagerNotification): string | undefined {
   return notification.id || notification._id;
 }
 
-export default function OperationsNotificationsScreen() {
+export default function OperationsNotificationsScreen({
+  deleteAllNotifications: deleteAllNotificationsRequest,
+}: {
+  deleteAllNotifications?: () => Promise<void>;
+} = {}) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const theme = useAppTheme();
@@ -32,6 +36,7 @@ export default function OperationsNotificationsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState("");
+  const [deletingAll, setDeletingAll] = useState(false);
   const hasLoaded = useRef(false);
 
   const loadNotifications = useCallback(async (isRefresh = false) => {
@@ -60,6 +65,7 @@ export default function OperationsNotificationsScreen() {
   );
 
   const markRead = async (id: string) => {
+    if (busyId || deletingAll) return;
     setBusyId(id);
     try {
       await managerProfileApi.markNotificationRead(id);
@@ -75,6 +81,7 @@ export default function OperationsNotificationsScreen() {
   };
 
   const markAllRead = async () => {
+    if (busyId || deletingAll) return;
     setBusyId("all");
     try {
       await managerProfileApi.markAllNotificationsRead();
@@ -90,6 +97,7 @@ export default function OperationsNotificationsScreen() {
   };
 
   const deleteNotification = async (id: string) => {
+    if (busyId || deletingAll) return;
     setBusyId(id);
     try {
       await managerProfileApi.deleteNotification(id);
@@ -102,6 +110,41 @@ export default function OperationsNotificationsScreen() {
     } finally {
       setBusyId("");
     }
+  };
+
+  const deleteAllNotifications = async () => {
+    if (!notifications.length || busyId || deletingAll) return;
+    setDeletingAll(true);
+    try {
+      await (
+        deleteAllNotificationsRequest ??
+        managerProfileApi.deleteAllNotifications
+      )();
+      setNotifications([]);
+      setUnreadCount(0);
+    } catch (error) {
+      Alert.alert(
+        "Unable to delete notifications",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setDeletingAll(false);
+    }
+  };
+
+  const confirmDeleteAllNotifications = () => {
+    Alert.alert(
+      "Delete All Notifications",
+      "Are you sure you want to delete all notifications?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete All",
+          style: "destructive",
+          onPress: () => void deleteAllNotifications(),
+        },
+      ],
+    );
   };
 
   return (
@@ -123,22 +166,45 @@ export default function OperationsNotificationsScreen() {
             Notifications
           </Text>
         </View>
-        {unreadCount > 0 ? (
-          <Pressable
-            onPress={() => void markAllRead()}
-            disabled={busyId !== ""}
-            className="flex-row items-center gap-1"
-          >
-            {busyId === "all" ? (
-              <ActivityIndicator size="small" color={theme.primary} />
-            ) : (
-              <Check size={16} color={theme.primary} />
-            )}
-            <Text className="text-xs font-bold" style={{ color: theme.primary }}>
-              Mark all read
-            </Text>
-          </Pressable>
-        ) : null}
+        <View className="flex-row items-center gap-4">
+          {unreadCount > 0 ? (
+            <Pressable
+              onPress={() => void markAllRead()}
+              disabled={busyId !== "" || deletingAll}
+              className="flex-row items-center gap-1"
+            >
+              {busyId === "all" ? (
+                <ActivityIndicator size="small" color={theme.primary} />
+              ) : (
+                <Check size={16} color={theme.primary} />
+              )}
+              <Text
+                className="text-xs font-bold"
+                style={{ color: theme.primary }}
+              >
+                Mark all read
+              </Text>
+            </Pressable>
+          ) : null}
+          {notifications.length > 0 ? (
+            <Pressable
+              onPress={confirmDeleteAllNotifications}
+              disabled={busyId !== "" || deletingAll}
+              className="flex-row items-center gap-1"
+              accessibilityRole="button"
+              accessibilityLabel="Delete all notifications"
+            >
+              {deletingAll ? (
+                <ActivityIndicator size="small" color={theme.danger} />
+              ) : (
+                <Trash2 size={16} color={theme.danger} />
+              )}
+              <Text className="text-xs font-bold" style={{ color: theme.danger }}>
+                Delete all
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
       </View>
 
       {loading ? (
@@ -209,7 +275,7 @@ export default function OperationsNotificationsScreen() {
                     ) : null}
                     <Pressable
                       onPress={() => void deleteNotification(id)}
-                      disabled={busyId === id}
+                      disabled={busyId !== "" || deletingAll}
                       accessibilityRole="button"
                       accessibilityLabel="Delete notification"
                     >

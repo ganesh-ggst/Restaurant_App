@@ -1,16 +1,20 @@
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { type ComponentRef, useCallback, useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Image,
   Keyboard,
   Platform,
   Pressable,
+  StyleSheet,
   Text,
   TextInput,
   View,
   useWindowDimensions,
 } from "react-native";
+import { VideoView, useVideoPlayer } from "expo-video";
+import { useEvent } from "expo";
 import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import {
@@ -23,9 +27,46 @@ import { Card } from "../../components/ui/Card";
 import { Input } from "../../components/ui/Input";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { api } from "../../services/api";
+import {
+  authScreenMediaApi,
+  type ActiveAuthScreenMedia,
+} from "../../services/api/auth-screen-media";
+
+function LoginScreenVideo({
+  uri,
+  onError,
+}: {
+  uri: string;
+  onError: (message: string) => void;
+}) {
+  const player = useVideoPlayer({ uri }, (videoPlayer) => {
+    videoPlayer.loop = true;
+    videoPlayer.muted = true;
+    videoPlayer.play();
+  });
+  const { status, error } = useEvent(player, "statusChange", {
+    status: player.status,
+  });
+
+  useEffect(() => {
+    if (status === "error") {
+      onError(error?.message ?? "Unable to load login screen media.");
+    }
+  }, [error?.message, onError, status]);
+
+  return (
+    <VideoView
+      player={player}
+      contentFit="cover"
+      nativeControls={false}
+      style={StyleSheet.absoluteFill}
+    />
+  );
+}
 
 export default function LoginScreen() {
   const router = useRouter();
+  const { branchId } = useLocalSearchParams<{ branchId?: string }>();
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
@@ -34,6 +75,15 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [loginMediaResult, setLoginMediaResult] = useState<{
+    branchId?: string;
+    media: ActiveAuthScreenMedia | null;
+    error?: string;
+  } | null>(null);
+  const [loginMediaLoadError, setLoginMediaLoadError] = useState<{
+    url: string;
+    message: string;
+  } | null>(null);
 
   const inputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
   const otpRequestVersion = useRef(0);
@@ -78,6 +128,57 @@ export default function LoginScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    let isCurrent = true;
+
+    void authScreenMediaApi
+      .getActive("login", branchId)
+      .then((media) => {
+        if (isCurrent) {
+          setLoginMediaResult({
+            branchId,
+            media,
+            ...(!media
+              ? { error: "No login screen media is configured." }
+              : {}),
+          });
+        }
+      })
+      .catch((mediaError: unknown) => {
+        console.error("Unable to load the active login screen media.", mediaError);
+        if (isCurrent) {
+          setLoginMediaResult({
+            branchId,
+            media: null,
+            error:
+              mediaError instanceof Error
+                ? mediaError.message
+                : "Unable to load login screen media.",
+          });
+        }
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [branchId]);
+
+  const currentLoginMediaResult =
+    loginMediaResult?.branchId === branchId ? loginMediaResult : null;
+  const loginScreenMedia = currentLoginMediaResult?.media ?? null;
+  const loginMediaError =
+    loginMediaLoadError && loginScreenMedia?.url === loginMediaLoadError.url
+      ? loginMediaLoadError.message
+      : currentLoginMediaResult?.error;
+  const handleLoginMediaError = useCallback(
+    (message: string) => {
+      if (loginScreenMedia) {
+        setLoginMediaLoadError({ url: loginScreenMedia.url, message });
+      }
+    },
+    [loginScreenMedia],
+  );
+
   const handleSendOtp = async () => {
     if (!validatePhone(phone)) {
       setError("Please enter a valid 10-digit mobile number");
@@ -95,9 +196,13 @@ export default function LoginScreen() {
 
       if (otpRequestVersion.current !== requestVersion) return;
 
-      router.push(
-        `/(auth)/verify-otp?phone=${encodeURIComponent(fullPhoneNumber)}` as any,
-      );
+      router.push({
+        pathname: "/(auth)/verify-otp",
+        params: {
+          phone: fullPhoneNumber,
+          ...(branchId ? { branchId } : {}),
+        },
+      });
     } catch (err) {
       if (otpRequestVersion.current !== requestVersion) return;
 
@@ -180,11 +285,40 @@ export default function LoginScreen() {
               marginTop: 4,
             }}
           >
-            <Image
-              source={require("../../assets/images/auth/login-hero.jpg")}
-              className="w-full h-full rounded-[28px]"
-              resizeMode="cover"
-            />
+            <View className="h-full w-full overflow-hidden rounded-[28px]">
+              {loginScreenMedia?.mediaType === "video" ? (
+                <LoginScreenVideo
+                  key={loginScreenMedia.url}
+                  uri={loginScreenMedia.url}
+                  onError={handleLoginMediaError}
+                />
+              ) : loginScreenMedia?.mediaType === "image" ? (
+                <Image
+                  source={{ uri: loginScreenMedia.url }}
+                  className="h-full w-full"
+                  resizeMode="cover"
+                  onError={() =>
+                    handleLoginMediaError("Unable to load login screen media.")
+                  }
+                />
+              ) : (
+                <View
+                  className="h-full w-full items-center justify-center px-6"
+                  style={{ backgroundColor: theme.card }}
+                >
+                  {!currentLoginMediaResult ? (
+                    <ActivityIndicator color={theme.primary} />
+                  ) : (
+                    <Text
+                      className="text-center text-sm"
+                      style={{ color: theme.muted }}
+                    >
+                      {loginMediaError || "Login screen media is unavailable."}
+                    </Text>
+                  )}
+                </View>
+              )}
+            </View>
           </View>
 
           <Animated.View

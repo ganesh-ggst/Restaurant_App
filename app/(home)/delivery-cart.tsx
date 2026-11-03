@@ -46,6 +46,8 @@ export default function DeliveryCartScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [crossSellItems, setCrossSellItems] = useState<any[]>([]);
   const [knownCrossSellItems, setKnownCrossSellItems] = useState<any[]>([]);
+  const [selectedDeliverySpeedByBranch, setSelectedDeliverySpeedByBranch] =
+    useState<Record<string, DeliverySpeed>>({});
   const categoryIds = useMemo<string[]>(() => {
     const crossSellIds = new Set(knownCrossSellItems.map((item) => item.id));
     const ids = activeCart.flatMap((cartItem: any) => {
@@ -137,7 +139,14 @@ export default function DeliveryCartScreen() {
       return;
     }
     try {
-      await api.updateCartDeliveryOption(deliverySpeed, activeBranch.id);
+      await api.updateCartDeliveryOption({
+        branchId: activeBranch.id,
+        deliverySpeed,
+      });
+      setSelectedDeliverySpeedByBranch((previous) => ({
+        ...previous,
+        [activeBranch.id]: deliverySpeed,
+      }));
       await reloadCart(activeBranch.id);
     } catch (error) {
       Alert.alert(
@@ -296,7 +305,10 @@ export default function DeliveryCartScreen() {
       branches={branches}
       offers={offers}
       selectedDeliveryOptionId={
-        activeBranch?.id ? deliveryOptionByBranch[activeBranch.id] : undefined
+        activeBranch?.id
+          ? selectedDeliverySpeedByBranch[activeBranch.id] ??
+            deliveryOptionByBranch[activeBranch.id]
+          : undefined
       }
       onSelectDeliveryOption={handleSelectDeliveryOption}
       crossSellItems={relevantCrossSellItems}

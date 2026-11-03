@@ -40,7 +40,6 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { TAX_DETAILS } from "../../../constants/mockData";
 import { ProfileAvatarButton } from "../../../components/profile/ProfileAvatarButton";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { api } from "../../../services/api";
@@ -163,6 +162,8 @@ function mapCustomerOrder(order: CustomerOrder) {
       quantity: item.quantity,
       name: item.name,
       price: `₹${item.unitPrice}`,
+      unitPrice: item.unitPrice,
+      itemTotal: item.itemTotal,
     })),
   };
 }
@@ -234,7 +235,43 @@ function getOrderStatusTimeline(
   });
 }
 
+function getOrderItemTotal(
+  order: any,
+  numericValue: (value: unknown) => number,
+): number {
+  const items = Array.isArray(order.items) ? order.items : [];
+  if (items.length === 0) return numericValue(order.subtotal);
+
+  return items.reduce((sum: number, item: any) => {
+    const unitPrice =
+      item.unitPrice ??
+      (typeof item.price === "string"
+        ? parseFloat(item.price.replace(/[^\d.]/g, ""))
+        : item.price);
+    const itemTotal =
+      item.itemTotal ?? numericValue(unitPrice) * numericValue(item.quantity);
+    return sum + numericValue(itemTotal);
+  }, 0);
+}
+
 const calculateOrderTotals = (order: any) => {
+  const numericValue = (value: unknown) => {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : 0;
+  };
+  const getGstAmount = (taxableItemTotal: number) => {
+    const rawTaxPercentage =
+      order.resolvedTaxPercentage ?? order.taxPercentage;
+    if (rawTaxPercentage == null) return numericValue(order.tax);
+    const taxPercentage = Number(
+      typeof rawTaxPercentage === "string"
+        ? rawTaxPercentage.replace("%", "").trim()
+        : rawTaxPercentage,
+    );
+    if (!Number.isFinite(taxPercentage)) return numericValue(order.tax);
+    return Math.round(((taxableItemTotal * taxPercentage) / 100) * 100) / 100;
+  };
+
   if (!order) {
     return {
       itemTotal: 0,
@@ -250,17 +287,9 @@ const calculateOrderTotals = (order: any) => {
 
   const fulfillmentType = normalizeFulfillmentType(order.fulfillmentType);
   if (fulfillmentType === "dine-in" || fulfillmentType === "takeaway") {
-    const itemTotal =
-      Number(order.subtotal) ||
-      order.items.reduce((sum: number, item: any) => {
-        const price =
-          typeof item.price === "string"
-            ? parseFloat(item.price.replace(/[^\d.]/g, "")) || 0
-            : Number(item.unitPrice) || 0;
-        return sum + price * item.quantity;
-      }, 0);
-    const discount = Number(order.discount) || 0;
-    const gstAmount = Number(order.tax) || 0;
+    const itemTotal = getOrderItemTotal(order, numericValue);
+    const discount = numericValue(order.discount);
+    const gstAmount = getGstAmount(Math.max(0, itemTotal - discount));
 
     return {
       itemTotal,
@@ -270,47 +299,76 @@ const calculateOrderTotals = (order: any) => {
       platformFee: 0,
       gstAmount,
       totalTaxesAndCharges: gstAmount,
-      finalPayable: Math.max(0, itemTotal - discount + gstAmount),
+      finalPayable:
+        order.total != null
+          ? Math.max(
+              0,
+              numericValue(order.total) -
+                numericValue(order.tax) +
+                gstAmount,
+            )
+          : Math.max(0, itemTotal - discount + gstAmount),
     };
   }
 
   if (typeof order.total === "number") {
-    const itemTotal = order.subtotal ?? 0;
-    const actualDeliveryFee = order.deliveryFee ?? 0;
-    const packagingCharge = order.packagingFee ?? 0;
-    const platformFee = order.platformFee ?? 0;
-    const gstAmount = order.tax ?? 0;
+    const itemTotal = getOrderItemTotal(order, numericValue);
+    const savedDeliveryFee = numericValue(order.deliveryFee);
+    const isFreeDelivery =
+      fulfillmentType === "delivery" && itemTotal >= 99;
+    const actualDeliveryFee = isFreeDelivery ? 0 : savedDeliveryFee;
+    const packagingCharge = numericValue(order.packagingFee);
+    const platformFee = numericValue(order.platformFee);
+    const savedTax = numericValue(order.tax);
+    const gstAmount = getGstAmount(
+      Math.max(0, itemTotal - numericValue(order.discount)),
+    );
     const totalTaxesAndCharges = packagingCharge + platformFee + gstAmount;
     return {
       itemTotal,
       actualDeliveryFee,
-      isFreeDelivery: actualDeliveryFee === 0,
+      isFreeDelivery,
       packagingCharge,
       platformFee,
       gstAmount,
       totalTaxesAndCharges,
-      finalPayable: order.total,
+      finalPayable: Math.max(
+        0,
+        numericValue(order.total) -
+          savedTax -
+          (isFreeDelivery ? savedDeliveryFee : 0) +
+          gstAmount,
+      ),
     };
   }
 
-  const itemTotal = order.items.reduce((sum: number, item: any) => {
-    const basePrice = parseFloat(item.price.replace(/[^\d.]/g, "")) || 0;
-    return sum + basePrice * item.quantity;
-  }, 0);
-
-  const isFreeDelivery = itemTotal >= 99;
-  const actualDeliveryFee = isFreeDelivery
-    ? 0
-    : TAX_DETAILS?.baseDeliveryFee || 40;
-
-  const packagingCharge = TAX_DETAILS?.packagingCharge || 15;
-  const platformFee = TAX_DETAILS?.platformFee || 5;
-  const gstRate = TAX_DETAILS?.gstRate || 0.05;
-
-  const gstAmount = itemTotal * gstRate;
+  const itemTotal = getOrderItemTotal(order, numericValue);
+  const discount = numericValue(order.discount);
+  const taxableItemTotal = Math.max(0, itemTotal - discount);
+  const savedDeliveryFee = numericValue(order.deliveryFee);
+  const isFreeDelivery = fulfillmentType === "delivery" && itemTotal >= 99;
+  const actualDeliveryFee = isFreeDelivery ? 0 : savedDeliveryFee;
+  const packagingCharge = numericValue(order.packagingFee);
+  const platformFee = numericValue(order.platformFee);
+  const gstAmount = getGstAmount(taxableItemTotal);
   const totalTaxesAndCharges = packagingCharge + platformFee + gstAmount;
-
-  const finalPayable = itemTotal + actualDeliveryFee + totalTaxesAndCharges;
+  const finalPayable =
+    order.total != null
+      ? Math.max(
+          0,
+          numericValue(order.total) -
+            numericValue(order.tax) -
+            (isFreeDelivery ? savedDeliveryFee : 0) +
+            gstAmount,
+        )
+      : Math.max(
+          0,
+          itemTotal -
+            discount +
+            actualDeliveryFee +
+            totalTaxesAndCharges +
+            numericValue(order.tipAmount),
+        );
 
   return {
     itemTotal,
@@ -495,17 +553,9 @@ const BillDetailsAccordion = ({ order, theme }: any) => {
                       style={{ color: theme.muted }}
                       className="font-semibold text-[13px]"
                     >
-                      Standard Fee
+                      Delivery Fee
                     </Text>
                     <View className="flex-row items-center">
-                      {totals.isFreeDelivery && (
-                        <Text
-                          style={{ color: theme.muted }}
-                          className="font-semibold line-through mr-2 text-[13px]"
-                        >
-                          ₹{formatPrice(TAX_DETAILS?.baseDeliveryFee || 40)}
-                        </Text>
-                      )}
                       <Text
                         className={
                           totals.isFreeDelivery
@@ -555,18 +605,10 @@ const BillDetailsAccordion = ({ order, theme }: any) => {
                     style={{ color: theme.muted, lineHeight: 18 }}
                     className="font-semibold text-[14px]"
                   >
-                    Delivery Fee | {TAX_DETAILS?.deliveryDistance || "2.5 kms"}
+                    Delivery Fee
                   </Text>
                 </View>
                 <View className="flex-row">
-                  {totals.isFreeDelivery && (
-                    <Text
-                      style={{ color: theme.muted }}
-                      className="font-semibold line-through mr-2"
-                    >
-                      ₹{formatPrice(TAX_DETAILS?.baseDeliveryFee || 40)}
-                    </Text>
-                  )}
                   <Text
                     className={
                       totals.isFreeDelivery
@@ -674,9 +716,10 @@ const BillDetailsAccordion = ({ order, theme }: any) => {
                       style={{ color: theme.muted }}
                       className="text-[13px] font-semibold"
                     >
-                      {isGstOnlyOrder
+                      {isGstOnlyOrder ||
+                      (order.resolvedTaxPercentage ?? order.taxPercentage) == null
                         ? "GST"
-                        : `Restaurant GST (${order.taxPercentage || 5}%)`}
+                        : `Restaurant GST (${order.resolvedTaxPercentage ?? order.taxPercentage}%)`}
                     </Text>
                     <Text
                       style={{ color: theme.text }}
@@ -1001,6 +1044,31 @@ export default function OrdersScreen() {
     return branch?._id || branch?.id || null;
   };
 
+  const getOrderTaxPercentage = (order: any): number | undefined => {
+    const branchId = getOrderBranchId(order);
+    const branch = branches.find(
+      (candidate: any) =>
+        String(candidate.id || candidate._id || "").toLowerCase() ===
+        String(branchId || "").toLowerCase(),
+    );
+    const taxDetails =
+      branch?.taxDetailOptions?.find((option: any) => option.isActive) ??
+      branch?.taxDetails;
+    const activeTaxPercentage =
+      taxDetails?.gstPercentage == null
+        ? Number.NaN
+        : Number(String(taxDetails.gstPercentage).replace("%", "").trim());
+    if (Number.isFinite(activeTaxPercentage)) return activeTaxPercentage;
+
+    if (order.taxPercentage == null) return undefined;
+    const savedTaxPercentage = Number(
+      String(order.taxPercentage).replace("%", "").trim(),
+    );
+    return Number.isFinite(savedTaxPercentage)
+      ? savedTaxPercentage
+      : undefined;
+  };
+
   const getOrderBranchLabel = (order: any) => {
     const orderBranch =
       order.branchId && typeof order.branchId === "object"
@@ -1049,6 +1117,7 @@ export default function OrdersScreen() {
     const status = getEffectiveOrderStatus(order, activeDineInSessionId);
     return {
       ...order,
+      resolvedTaxPercentage: getOrderTaxPercentage(order),
       status: formatOrderStatus(status),
       isActive: ![
         "completed",
