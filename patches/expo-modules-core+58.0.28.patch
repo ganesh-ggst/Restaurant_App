@@ -1,0 +1,6 @@
+diff --git a/node_modules/expo-modules-core/android/build.gradle b/node_modules/expo-modules-core/android/build.gradle
+--- a/node_modules/expo-modules-core/android/build.gradle
++++ b/node_modules/expo-modules-core/android/build.gradle
+@@ -609,1 +609,1 @@
+-def stripBinary = PrebuiltNativeLibs.findLlvmStrip(android.ndkDirectory)
++def stripBinary = PrebuiltNativeLibs.findLlvmStrip(project.extensions.getByName("android").ndkDirectory)

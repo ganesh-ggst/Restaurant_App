@@ -1,0 +1,20 @@
+diff --git a/node_modules/expo-constants/scripts/get-app-config-android.gradle b/node_modules/expo-constants/scripts/get-app-config-android.gradle
+--- a/node_modules/expo-constants/scripts/get-app-config-android.gradle
++++ b/node_modules/expo-constants/scripts/get-app-config-android.gradle
+@@ -14,3 +14,4 @@
+ afterEvaluate {
++  def androidExtension = project.extensions.getByName("android")
+   def expoGradleExtension = gradle.extensions.findByName("expoGradle")
+   def customProjectRoot = expoGradleExtension?.projectRoot
+@@ -20,1 +21,1 @@
+-  project.android.libraryVariants.all { variant ->
++  androidExtension.libraryVariants.all { variant ->
+@@ -52,1 +53,1 @@
+-    project.android.sourceSets.maybeCreate(variant.name).assets.srcDirs += assetsDir
++    androidExtension.sourceSets.maybeCreate(variant.name).assets.srcDirs += assetsDir
+@@ -78,1 +79,1 @@
+-  project.android.libraryVariants.all { variant ->
++  androidExtension.libraryVariants.all { variant ->
+@@ -85,1 +86,1 @@
+-    project.android.sourceSets.maybeCreate(variant.buildType.name).assets.srcDirs += fingerprintAssetsDir
++    androidExtension.sourceSets.maybeCreate(variant.buildType.name).assets.srcDirs += fingerprintAssetsDir
