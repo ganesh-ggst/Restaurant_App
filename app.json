@@ -70,7 +70,6 @@
           }
         }
       ],
-      "@clerk/expo",
       "expo-secure-store",
       "expo-video",
       [
