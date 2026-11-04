@@ -1,3 +1,57 @@
+# Green Spice
+
+Green Spice is a user-friendly app for one restaurant that brings delivery,
+takeaway, and dine-in ordering together with tools for the restaurant team to
+manage service and operations.
+
+The app includes customer ordering and account screens, admin dashboards and
+branch management, and separate floor and operations experiences for managers.
+The client is built with Expo SDK 58, React Native, TypeScript, and Expo Router.
+
+## Start here
+
+For the project architecture, role-by-role screen map, folder guide, package
+overview, and developer hand-off notes
+
+## Local development
+
+1. Install the project dependencies:
+
+   ```sh
+   npm ci
+   ```
+
+2. Set `EXPO_PUBLIC_API_URL` in your local environment to the backend server
+   origin. Do not commit credentials or secret values.
+3. Start the app:
+
+   ```sh
+   npm start
+   ```
+
+   This starts Expo in Expo Go mode. See [Running on Android](#running-on-android)
+   for features that need a native app build.
+
+Other project commands:
+
+```sh
+npm run web
+npm run android
+npm run ios
+npm run lint
+```
+
+## Documentation map
+
+- [Project Handbook](./Green_Spice_Project_Handbook.docx): architecture,
+  application roles, route/folder hierarchy, packages, and developer guidance.
+- [Documentation Starting Guide](./DOCUMENTATION_GUIDE.txt): suggested
+  documentation structure and maintenance tips.
+- [Google Maps build configuration](#google-maps-build-configuration),
+  [Running on Android](#running-on-android), and
+  [Android release builds](#android-release-builds): platform setup and build
+  instructions maintained below.
+
 # Google Maps build configuration
 
 The customer address and admin store-detail maps use `react-native-maps`.
