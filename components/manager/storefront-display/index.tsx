@@ -69,6 +69,7 @@ export default function StorefrontDisplayIndexComponent() {
             "splash",
             splash.map((media) => ({
               id: media.id,
+              title: media.title,
               uri: media.url,
               fileName: getScreenMediaFileName(media.url),
               mediaType: getScreenMediaType("splash", media.url),
@@ -80,6 +81,7 @@ export default function StorefrontDisplayIndexComponent() {
             "login",
             login.map((media) => ({
               id: media.id,
+              title: media.title,
               uri: media.url,
               fileName: getScreenMediaFileName(media.url),
               mediaType: getScreenMediaType("login", media.url),

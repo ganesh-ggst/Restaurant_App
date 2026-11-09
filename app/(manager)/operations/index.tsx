@@ -170,14 +170,7 @@ function matchesQuickInventorySearch(
 
   const itemWords = item.name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
   return searchWords.every((searchWord) =>
-    itemWords.some((itemWord) => {
-      let searchIndex = 0;
-      for (const character of itemWord) {
-        if (character === searchWord[searchIndex]) searchIndex += 1;
-        if (searchIndex === searchWord.length) return true;
-      }
-      return false;
-    }),
+    itemWords.some((itemWord) => itemWord.includes(searchWord)),
   );
 }
 
