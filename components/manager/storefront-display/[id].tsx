@@ -1,14 +1,10 @@
 import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
-import {
-  useLocalSearchParams,
-  useRouter,
-  useSegments,
-} from "expo-router";
+import { useLocalSearchParams, useRouter, useSegments } from "expo-router";
 import { useEffect, useState } from "react";
 import {
-  Alert,
   ActivityIndicator,
+  Alert,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -28,13 +24,13 @@ import { managerProfileApi } from "../../../services/api/manager-profile";
 import { operationsApi } from "../../../services/api/operations";
 import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
-import AuthScreenMedia from "./AuthScreenMedia";
 import {
   getStorefrontDefinition,
   mapAdminStorefrontSection,
   type StoreDetailOption,
   type StoreDetailSection,
 } from "../adminProfileSections";
+import AuthScreenMedia from "./AuthScreenMedia";
 
 export default function StorefrontDisplayDetailComponent() {
   const router = useRouter();
@@ -69,7 +65,8 @@ export default function StorefrontDisplayDetailComponent() {
     let isCurrent = true;
     (isAdmin
       ? adminProfileApi.getStorefrontSection(definition.key, true)
-      : managerProfileApi.getStorefrontSection(definition.key))
+      : managerProfileApi.getStorefrontSection(definition.key)
+    )
       .then((data) => {
         if (!isCurrent) return;
         const nextSection = mapAdminStorefrontSection(id, data);
@@ -140,7 +137,7 @@ export default function StorefrontDisplayDetailComponent() {
     id === "sf_greetings" ? "Greeting Text" : "Search Placeholder";
   const singleInputPlaceholder =
     id === "sf_greetings"
-      ? "e.g. Welcome to Spice Garden!"
+      ? "e.g. Welcome to our Restaurant!"
       : "e.g. Search for 'Chicken'";
   const updateField = (
     field: string,
@@ -343,7 +340,10 @@ export default function StorefrontDisplayDetailComponent() {
           ...(!editingOption ? { badge: "FEATURED", displayOrder: 1 } : {}),
         };
       } else {
-        Alert.alert("Unsupported storefront section", "This section cannot be saved.");
+        Alert.alert(
+          "Unsupported storefront section",
+          "This section cannot be saved.",
+        );
         return;
       }
 
@@ -394,7 +394,10 @@ export default function StorefrontDisplayDetailComponent() {
         ...(!editingOption ? { badge: "FEATURED", displayOrder: 1 } : {}),
       };
     } else {
-      Alert.alert("Unsupported storefront section", "This section cannot be saved.");
+      Alert.alert(
+        "Unsupported storefront section",
+        "This section cannot be saved.",
+      );
       return;
     }
 
@@ -453,7 +456,10 @@ export default function StorefrontDisplayDetailComponent() {
           const definition = getStorefrontDefinition(id);
           if (!definition) return;
           try {
-            await managerProfileApi.deleteStorefrontItem(definition.key, optionId);
+            await managerProfileApi.deleteStorefrontItem(
+              definition.key,
+              optionId,
+            );
             await refreshSection();
           } catch (error) {
             Alert.alert(
@@ -518,79 +524,81 @@ export default function StorefrontDisplayDetailComponent() {
           >
             Loading storefront settings...
           </Text>
-        ) : options.map((opt) => (
-          <Card
-            key={opt.id}
-            variant="default"
-            className="p-4 mb-3 rounded-2xl border-0 flex-row justify-between items-center"
-          >
-            <Pressable
-              className="flex-1 mr-3 flex-row items-center gap-3"
-              onPress={() => toggleOption(opt.id)}
+        ) : (
+          options.map((opt) => (
+            <Card
+              key={opt.id}
+              variant="default"
+              className="p-4 mb-3 rounded-2xl border-0 flex-row justify-between items-center"
             >
-              {section.selectionType === "single" ? (
-                <View
-                  className="w-6 h-6 rounded-full border-2 items-center justify-center"
-                  style={{
-                    borderColor: opt.isActive ? theme.primary : theme.muted,
-                  }}
-                >
-                  {opt.isActive && (
-                    <View
-                      className="w-3 h-3 rounded-full"
-                      style={{ backgroundColor: theme.primary }}
-                    />
-                  )}
-                </View>
-              ) : (
-                <Switch
-                  value={opt.isActive}
-                  onValueChange={() => toggleOption(opt.id)}
-                  trackColor={{ false: theme.border, true: theme.primary }}
-                  thumbColor={"#ffffff"}
-                  style={{ transform: [{ scale: 0.8 }] }}
-                />
-              )}
-              <View className="flex-1">
-                <Text
-                  className="text-base font-bold mb-0.5"
-                  style={{ color: opt.isActive ? theme.text : theme.muted }}
-                  numberOfLines={1}
-                >
-                  {opt.value}
-                </Text>
-                {opt.subValue ? (
+              <Pressable
+                className="flex-1 mr-3 flex-row items-center gap-3"
+                onPress={() => toggleOption(opt.id)}
+              >
+                {section.selectionType === "single" ? (
+                  <View
+                    className="w-6 h-6 rounded-full border-2 items-center justify-center"
+                    style={{
+                      borderColor: opt.isActive ? theme.primary : theme.muted,
+                    }}
+                  >
+                    {opt.isActive && (
+                      <View
+                        className="w-3 h-3 rounded-full"
+                        style={{ backgroundColor: theme.primary }}
+                      />
+                    )}
+                  </View>
+                ) : (
+                  <Switch
+                    value={opt.isActive}
+                    onValueChange={() => toggleOption(opt.id)}
+                    trackColor={{ false: theme.border, true: theme.primary }}
+                    thumbColor={"#ffffff"}
+                    style={{ transform: [{ scale: 0.8 }] }}
+                  />
+                )}
+                <View className="flex-1">
                   <Text
-                    className="text-xs font-medium"
-                    style={{ color: theme.muted }}
+                    className="text-base font-bold mb-0.5"
+                    style={{ color: opt.isActive ? theme.text : theme.muted }}
                     numberOfLines={1}
                   >
-                    {opt.subValue}
+                    {opt.value}
                   </Text>
-                ) : null}
-              </View>
-            </Pressable>
-
-            <View className="flex-row items-center gap-2">
-              <Pressable
-                onPress={() => openEditor(opt)}
-                hitSlop={10}
-                className="p-2"
-              >
-                <Feather name="edit-2" size={18} color={theme.primary} />
+                  {opt.subValue ? (
+                    <Text
+                      className="text-xs font-medium"
+                      style={{ color: theme.muted }}
+                      numberOfLines={1}
+                    >
+                      {opt.subValue}
+                    </Text>
+                  ) : null}
+                </View>
               </Pressable>
-              {options.length > 1 && (
+
+              <View className="flex-row items-center gap-2">
                 <Pressable
-                  onPress={() => handleDelete(opt.id, opt.value)}
+                  onPress={() => openEditor(opt)}
                   hitSlop={10}
                   className="p-2"
                 >
-                  <Feather name="trash-2" size={18} color={theme.danger} />
+                  <Feather name="edit-2" size={18} color={theme.primary} />
                 </Pressable>
-              )}
-            </View>
-          </Card>
-        ))}
+                {options.length > 1 && (
+                  <Pressable
+                    onPress={() => handleDelete(opt.id, opt.value)}
+                    hitSlop={10}
+                    className="p-2"
+                  >
+                    <Feather name="trash-2" size={18} color={theme.danger} />
+                  </Pressable>
+                )}
+              </View>
+            </Card>
+          ))
+        )}
       </ScrollView>
 
       {/* EDITOR MODAL */}
@@ -632,7 +640,9 @@ export default function StorefrontDisplayDetailComponent() {
                       placeholder="e.g. Freshly Crafted Daily"
                       placeholderTextColor={theme.muted + "44"}
                       value={val1}
-                      onChangeText={(value) => updateField("val1", value, setVal1)}
+                      onChangeText={(value) =>
+                        updateField("val1", value, setVal1)
+                      }
                       onBlur={() => setVal1(val1.trim())}
                       className="px-4 rounded-xl mb-4 font-bold"
                       style={{
@@ -705,7 +715,11 @@ export default function StorefrontDisplayDetailComponent() {
                           opacity: uploadingImage ? 0.6 : 1,
                         }}
                       >
-                        <Feather name="camera" size={18} color={theme.primary} />
+                        <Feather
+                          name="camera"
+                          size={18}
+                          color={theme.primary}
+                        />
                         <Text
                           className="text-sm font-bold"
                           style={{ color: theme.primary }}
@@ -743,7 +757,9 @@ export default function StorefrontDisplayDetailComponent() {
                       placeholder={singleInputPlaceholder}
                       placeholderTextColor={theme.muted + "44"}
                       value={val1}
-                      onChangeText={(value) => updateField("val1", value, setVal1)}
+                      onChangeText={(value) =>
+                        updateField("val1", value, setVal1)
+                      }
                       onBlur={() => setVal1(val1.trim())}
                       className="px-4 rounded-xl mb-6 font-bold"
                       style={{
@@ -776,7 +792,9 @@ export default function StorefrontDisplayDetailComponent() {
                       placeholder="e.g. A little something special"
                       placeholderTextColor={theme.muted + "44"}
                       value={val1}
-                      onChangeText={(value) => updateField("val1", value, setVal1)}
+                      onChangeText={(value) =>
+                        updateField("val1", value, setVal1)
+                      }
                       onBlur={() => setVal1(val1.trim())}
                       className="px-4 rounded-xl mb-4 font-bold"
                       style={{

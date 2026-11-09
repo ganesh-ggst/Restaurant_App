@@ -215,10 +215,12 @@ export default function LoginScreen() {
   };
 
   const handleSkip = async () => {
-    const guestPhone = "+910000000000";
     try {
       await api.clearLocalSession();
-      router.replace(`/(home)?phone=${guestPhone}&isGuest=true` as any);
+      router.replace({
+        pathname: "/(home)/(tabs)",
+        params: { isGuest: "true" },
+      });
     } catch (sessionError) {
       setError(
         sessionError instanceof Error

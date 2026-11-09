@@ -1,7 +1,6 @@
 import {
   type Href,
   useFocusEffect,
-  useGlobalSearchParams,
   useRouter,
 } from "expo-router";
 import { Image } from "expo-image";
@@ -13,7 +12,6 @@ import {
   FileText,
   Globe,
   HelpCircle,
-  LogIn,
   LogOut,
   MapPin,
   MessageSquare,
@@ -66,17 +64,19 @@ export default function ProfileScreen() {
   const router = useRouter();
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
-  const { isGuest, phone } = useGlobalSearchParams<{
-    isGuest?: string;
-    phone?: string;
-  }>();
   const { colorScheme, setColorScheme } = useColorScheme();
   const { user, error, reloadProfile, clearUser } = useProfile();
   const [showThemeModal, setShowThemeModal] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [failedAvatarUrl, setFailedAvatarUrl] = useState("");
   const profileScrollRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
-  const { mode, carts, dineInCartState } = useOrderMode();
+  const {
+    mode,
+    carts,
+    dineInCartState,
+    isGuest: guestSession,
+  } = useOrderMode();
+  const isGuestUser = guestSession && !user;
   const cartItems = (carts?.[mode] || []).reduce(
     (total: number, item: { quantity: number }) => total + item.quantity,
     0,
@@ -168,19 +168,18 @@ export default function ProfileScreen() {
       },
     ],
   ];
-  const isGuestUser = isGuest === "true" && !user;
   const visibleSettingsGroups = isGuestUser
     ? settingsGroups.slice(1)
     : settingsGroups;
 
-  const handleSignIn = async () => {
+  const handleSignUp = async () => {
     try {
       await api.clearLocalSession();
       clearUser();
       router.replace("/(auth)/login");
     } catch (sessionError) {
       Alert.alert(
-        "Unable to Sign In",
+        "Unable to Sign Up",
         sessionError instanceof Error
           ? sessionError.message
           : "Please try again.",
@@ -216,16 +215,15 @@ export default function ProfileScreen() {
 
   const displayName = user
     ? `${user.firstName} ${user.lastName}`.trim() || "Your Profile"
-    : isGuest === "true"
-      ? "Guest"
+    : isGuestUser
+      ? "Guest Account"
       : "Your Profile";
   const displayPhone = user?.phone
     ? formatProfilePhone(user.phone)
-    : isGuest === "true" && phone
-      ? formatProfilePhone(phone)
-      : "";
+    : "";
 
   useEffect(() => {
+    if (isGuestUser) return;
     if (!/invalid access token|authentication session has ended/i.test(error)) {
       return;
     }
@@ -255,7 +253,7 @@ export default function ProfileScreen() {
     return () => {
       isActive = false;
     };
-  }, [clearUser, error, router]);
+  }, [clearUser, error, isGuestUser, router]);
 
   useFocusEffect(
     useCallback(() => {
@@ -315,7 +313,7 @@ export default function ProfileScreen() {
           </Text>
         </View>
 
-        {error ? (
+        {!isGuestUser && error ? (
           <View
             className="mx-5 mb-5 rounded-2xl border p-4"
             style={{ backgroundColor: theme.card, borderColor: theme.border }}
@@ -326,6 +324,41 @@ export default function ProfileScreen() {
             <Pressable onPress={() => void reloadProfile()}>
               <Text className="font-bold" style={{ color: theme.primary }}>
                 Try Again
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        {isGuestUser ? (
+          <View
+            className="mx-5 mb-6 rounded-3xl border p-5"
+            style={{ backgroundColor: theme.card, borderColor: theme.border }}
+          >
+            <View className="mb-4 flex-row items-center gap-3">
+              <UserRound size={22} color={theme.primary} />
+              <View className="flex-1">
+                <Text
+                  className="text-base font-bold"
+                  style={{ color: theme.text }}
+                >
+                  Browsing as a guest
+                </Text>
+                <Text className="mt-1 text-sm" style={{ color: theme.muted }}>
+                  Sign up to access your personal profile and saved addresses.
+                </Text>
+              </View>
+            </View>
+            <Pressable
+              onPress={() => void handleSignUp()}
+              className="flex-row items-center justify-center gap-2 rounded-xl p-3"
+              style={{ backgroundColor: theme.primary }}
+            >
+              <UserRoundPen size={18} color={theme.primaryForeground} />
+              <Text
+                className="text-base font-bold"
+                style={{ color: theme.primaryForeground }}
+              >
+                Sign Up
               </Text>
             </Pressable>
           </View>
@@ -361,24 +394,7 @@ export default function ProfileScreen() {
           </View>
         ))}
 
-        {isGuestUser ? (
-          <Pressable
-            onPress={() => void handleSignIn()}
-            className="mx-5 mt-2 flex-row items-center justify-center gap-3 rounded-2xl border p-4"
-            style={{
-              backgroundColor: theme.secondaryBg,
-              borderColor: theme.primary,
-            }}
-          >
-            <LogIn size={20} color={theme.primary} strokeWidth={2.5} />
-            <Text
-              className="text-base font-bold"
-              style={{ color: theme.primary }}
-            >
-              Sign In
-            </Text>
-          </Pressable>
-        ) : (
+        {!isGuestUser ? (
           <Pressable
             onPress={handleLogout}
             className="mx-5 mt-2 flex-row items-center justify-center gap-3 rounded-2xl border p-4"
@@ -395,7 +411,7 @@ export default function ProfileScreen() {
               Sign Out
             </Text>
           </Pressable>
-        )}
+        ) : null}
       </ScrollView>
 
       <Modal

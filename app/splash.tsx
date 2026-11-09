@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 
+import { useAppTheme } from "../hooks/useAppTheme";
 import { authScreenMediaApi } from "../services/api/auth-screen-media";
 import { isAuthDestination } from "../services/authRouting";
 
@@ -52,6 +53,7 @@ function SplashVideo({
 
 export default function AuthSplashScreen() {
   const router = useRouter();
+  const theme = useAppTheme();
   const { destination, phone, branchId } = useLocalSearchParams<{
     destination?: string;
     phone?: string;
@@ -80,7 +82,11 @@ export default function AuthSplashScreen() {
         const media = await authScreenMediaApi.getActive("splash", branchId);
         if (!isCurrent) return;
         if (!media || media.mediaType !== "video") {
-          setErrorMessage("No active splash screen video is available.");
+          if (isAuthDestination(destination)) {
+            continueToDestination();
+          } else {
+            setErrorMessage("No active splash screen video is available.");
+          }
           return;
         }
         setVideoUrl(media.url);
@@ -101,7 +107,7 @@ export default function AuthSplashScreen() {
     return () => {
       isCurrent = false;
     };
-  }, [branchId]);
+  }, [branchId, continueToDestination, destination]);
 
   const handleContinue = isAuthDestination(destination)
     ? continueToDestination
@@ -113,7 +119,7 @@ export default function AuthSplashScreen() {
       : "Unable to determine where to continue. Please sign in again.");
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: theme.bg }]}>
       <StatusBar hidden />
       {videoUrl ? (
         <SplashVideo
@@ -124,16 +130,26 @@ export default function AuthSplashScreen() {
       ) : null}
       {loading ? (
         <ActivityIndicator
-          color="#ffffff"
+          color={theme.primary}
           size="large"
           style={styles.loading}
         />
       ) : null}
       {displayedError ? (
         <View style={styles.errorOverlay}>
-          <Text style={styles.errorText}>{displayedError}</Text>
-          <Pressable onPress={handleContinue} style={styles.continueButton}>
-            <Text style={styles.continueText}>
+          <Text style={[styles.errorText, { color: theme.text }]}>
+            {displayedError}
+          </Text>
+          <Pressable
+            onPress={handleContinue}
+            style={[styles.continueButton, { backgroundColor: theme.primary }]}
+          >
+            <Text
+              style={[
+                styles.continueText,
+                { color: theme.primaryForeground },
+              ]}
+            >
               {isAuthDestination(destination) ? "Continue" : "Back to sign in"}
             </Text>
           </Pressable>
@@ -146,7 +162,6 @@ export default function AuthSplashScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#2c0828",
   },
   video: {
     ...StyleSheet.absoluteFill,
@@ -165,18 +180,15 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   errorText: {
-    color: "#ffffff",
     fontSize: 14,
     textAlign: "center",
   },
   continueButton: {
     borderRadius: 12,
-    backgroundColor: "#ffffff",
     paddingHorizontal: 24,
     paddingVertical: 12,
   },
   continueText: {
-    color: "#2c0828",
     fontSize: 14,
     fontWeight: "700",
   },

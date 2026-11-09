@@ -1,4 +1,3 @@
-import { useGlobalSearchParams } from "expo-router";
 import {
   createContext,
   type ReactNode,
@@ -21,7 +20,6 @@ interface ProfileContextValue {
 const ProfileContext = createContext<ProfileContextValue | null>(null);
 
 export function ProfileProvider({ children }: { children: ReactNode }) {
-  const { isGuest } = useGlobalSearchParams<{ isGuest?: string }>();
   const [user, setUser] = useState<UserProfile | null>(null);
   const [error, setError] = useState("");
 
@@ -29,7 +27,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     setError("");
     try {
       const accessToken = await api.getAccessToken();
-      if (!accessToken && isGuest === "true") {
+      if (!accessToken) {
         setUser(null);
         return;
       }
@@ -41,7 +39,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
           : "Unable to load your profile.",
       );
     }
-  }, [isGuest]);
+  }, []);
 
   const updateUser = useCallback((updatedUser: UserProfile) => {
     setUser(updatedUser);

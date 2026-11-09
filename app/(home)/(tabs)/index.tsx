@@ -96,9 +96,7 @@ function matchesSearchText(query: string, value: string): boolean {
   };
 
   return queryWords.every((searchWord) =>
-    valueWords.some((valueWord) =>
-      matchesWordInOrder(searchWord, valueWord),
-    ),
+    valueWords.some((valueWord) => matchesWordInOrder(searchWord, valueWord)),
   );
 }
 
@@ -206,9 +204,11 @@ export default function HomeScreen() {
 
   const {
     mode: orderMode,
+    isGuest = false,
     setMode: setGlobalOrderMode,
     carts,
     menuItems,
+    menuItemsLoadedForBranchId,
     categories,
     offers,
     featuredReels,
@@ -255,7 +255,7 @@ export default function HomeScreen() {
   const [showAddressModal, setShowAddressModal] = useState(false);
   const [addressModalSelection, setAddressModalSelection] = useState<
     "address" | "branch"
-  >("address");
+  >(isGuest ? "branch" : "address");
   const [customerLocation, setCustomerLocation] = useState<{
     lat: number;
     lng: number;
@@ -318,7 +318,9 @@ export default function HomeScreen() {
   const nearbyOpenBranches = useMemo(
     () =>
       branches
-        .filter(isBranchOnline)
+        .filter((branch: SelectableBranch) =>
+          isGuest ? true : isBranchOnline(branch),
+        )
         .map((branch: SelectableBranch): BranchWithDistance => ({
           branch,
           distance: getBranchDistanceKm(branch, customerLocation),
@@ -336,39 +338,42 @@ export default function HomeScreen() {
           return first.branch.name.localeCompare(second.branch.name);
         })
         .map(({ branch }: BranchWithDistance) => branch),
-    [branches, customerLocation],
+    [branches, customerLocation, isGuest],
   );
 
-  const loadAvailableDineInTables = useCallback(async (branchId = selectedBranchId) => {
-    const requestId = ++dineInTablesRequestId.current;
-    if (!branchId) {
-      setAvailableDineInTables([]);
-      setTablesLoadedForBranchId(null);
-      setTablesError("Choose a restaurant branch to see its tables.");
-      setTablesLoading(false);
-      return;
-    }
-
-    setTablesLoading(true);
-    setTablesError(null);
-    setTablesLoadedForBranchId(null);
-    try {
-      const tables = await api.getAvailableDineInTables(branchId);
-      if (requestId !== dineInTablesRequestId.current) return;
-      setAvailableDineInTables(tables);
-      setTablesLoadedForBranchId(branchId);
-    } catch (error) {
-      if (requestId !== dineInTablesRequestId.current) return;
-      setAvailableDineInTables([]);
-      setTablesError(
-        error instanceof Error ? error.message : "Please try again.",
-      );
-    } finally {
-      if (requestId === dineInTablesRequestId.current) {
+  const loadAvailableDineInTables = useCallback(
+    async (branchId = selectedBranchId) => {
+      const requestId = ++dineInTablesRequestId.current;
+      if (!branchId) {
+        setAvailableDineInTables([]);
+        setTablesLoadedForBranchId(null);
+        setTablesError("Choose a restaurant branch to see its tables.");
         setTablesLoading(false);
+        return;
       }
-    }
-  }, [selectedBranchId]);
+
+      setTablesLoading(true);
+      setTablesError(null);
+      setTablesLoadedForBranchId(null);
+      try {
+        const tables = await api.getAvailableDineInTables(branchId);
+        if (requestId !== dineInTablesRequestId.current) return;
+        setAvailableDineInTables(tables);
+        setTablesLoadedForBranchId(branchId);
+      } catch (error) {
+        if (requestId !== dineInTablesRequestId.current) return;
+        setAvailableDineInTables([]);
+        setTablesError(
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      } finally {
+        if (requestId === dineInTablesRequestId.current) {
+          setTablesLoading(false);
+        }
+      }
+    },
+    [selectedBranchId],
+  );
   const branchCategories = useMemo(
     () =>
       categories.filter(
@@ -589,10 +594,12 @@ export default function HomeScreen() {
 
       if (selectedMode === "Dine-in" && !activeTable) {
         setPendingModeSetup("Dine-in");
+        setAddressModalSelection("branch");
         setShowAddressModal(true);
         void loadCustomerLocation();
       } else if (selectedMode === "Takeaway") {
         setPendingModeSetup("Takeaway");
+        setAddressModalSelection("branch");
         setShowAddressModal(true);
         void loadCustomerLocation();
       }
@@ -780,7 +787,10 @@ export default function HomeScreen() {
 
     if (!activeBranch?.id) {
       setScanned(false);
-      Alert.alert("Choose a Restaurant", "Select a branch before scanning a table QR code.");
+      Alert.alert(
+        "Choose a Restaurant",
+        "Select a branch before scanning a table QR code.",
+      );
       return;
     }
 
@@ -1016,39 +1026,41 @@ export default function HomeScreen() {
     setIsListening(false);
     setIsVoiceSearching(true);
 
-    try {
-      const results = await api.voiceSearch(
-        query,
-        branchId,
-        address,
-        orderMode === "Delivery"
-          ? "delivery"
-          : orderMode === "Takeaway"
-            ? "takeaway"
-            : "dine-in",
-      );
-      if (requestGeneration === voiceSearchGeneration.current) {
-        setVoiceResultIds(
-          results.flatMap((item) =>
-            item._id
-              ? [item._id]
-              : "id" in item && typeof item.id === "string"
-                ? [item.id]
-                : [],
-          ),
+      try {
+        const results = await api.voiceSearch(
+          query,
+          branchId,
+          address,
+          orderMode === "Delivery"
+            ? "delivery"
+            : orderMode === "Takeaway"
+              ? "takeaway"
+              : "dine-in",
         );
+        if (requestGeneration === voiceSearchGeneration.current) {
+          setVoiceResultIds(
+            results.flatMap((item) =>
+              item._id
+                ? [item._id]
+                : "id" in item && typeof item.id === "string"
+                  ? [item.id]
+                  : [],
+            ),
+          );
+        }
+      } catch (error) {
+        Alert.alert(
+          "Voice Search Failed",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      } finally {
+        if (requestGeneration === voiceSearchGeneration.current) {
+          setIsVoiceSearching(false);
+        }
       }
-    } catch (error) {
-      Alert.alert(
-        "Voice Search Failed",
-        error instanceof Error ? error.message : "Please try again.",
-      );
-    } finally {
-      if (requestGeneration === voiceSearchGeneration.current) {
-        setIsVoiceSearching(false);
-      }
-    }
-  }, [activeAddress?.id, activeBranch?.id, orderMode]);
+    },
+    [activeAddress?.id, activeBranch?.id, orderMode],
+  );
 
   useSpeechRecognitionEvent("result", (event) => {
     if (!event.isFinal || voiceResultHandled.current) return;
@@ -1402,20 +1414,38 @@ export default function HomeScreen() {
     ) : null;
 
   const renderEmptyState = () => {
-    if (!searchQuery || !branchesLoaded) return null;
+    if (
+      !selectedBranchId ||
+      !isSelectedBranchOnline ||
+      menuItemsLoadedForBranchId !== selectedBranchId
+    ) {
+      return null;
+    }
+
+    const title = searchQuery
+      ? "No matching dishes found"
+      : isVegOnly
+        ? "No vegetarian items available"
+        : "No menu items available";
+    const description = searchQuery
+      ? `We couldn't find anything matching "${searchQuery.trim()}". Try another search.`
+      : isVegOnly
+        ? "This branch has no vegetarian items available right now."
+        : "This branch has no menu items available right now. Please check back later.";
+
     return (
       <View className="items-center justify-center py-16 px-6">
         <Text
           className="text-2xl font-black mb-2 text-center"
           style={{ color: theme.text }}
         >
-          No Items found
+          {title}
         </Text>
         <Text
           className="text-sm font-semibold text-center leading-5"
           style={{ color: theme.muted }}
         >
-          Try changing your search or location.
+          {description}
         </Text>
       </View>
     );
@@ -1431,18 +1461,24 @@ export default function HomeScreen() {
 
   const renderAddressModalItem = ({ item }: any) => {
     const isDeliveryAddress =
-      orderMode === "Delivery" && addressModalSelection === "address";
+      orderMode === "Delivery" &&
+      !isGuest &&
+      addressModalSelection === "address";
     const isDeliveryBranch =
       orderMode === "Delivery" && addressModalSelection === "branch";
     const deliveryBranchUnavailableReason = isDeliveryBranch
-      ? getDeliveryBranchUnavailableReason(item, activeAddress)
+      ? isGuest
+        ? isBranchOnline(item)
+          ? null
+          : "offline"
+        : getDeliveryBranchUnavailableReason(item, activeAddress)
       : null;
-    const nearbyBranchDistance = !isDeliveryAddress && !isDeliveryBranch
-      ? getBranchDistanceKm(item, customerLocation)
-      : null;
-    const nearbyBranchUnavailableReason = isDeliveryAddress
-      ? null
-      : isDeliveryBranch
+    const nearbyBranchDistance =
+      !isDeliveryAddress && !isDeliveryBranch
+        ? getBranchDistanceKm(item, customerLocation)
+        : null;
+    const nearbyBranchUnavailableReason =
+      isDeliveryAddress || isDeliveryBranch
         ? null
         : !customerLocation
           ? "location-unavailable"
@@ -1455,20 +1491,24 @@ export default function HomeScreen() {
                 : item.isOnline === false
                   ? "offline"
                   : null;
-    const isBranchSelectable = isDeliveryBranch
-      ? deliveryBranchUnavailableReason === null
-      : nearbyBranchUnavailableReason === null;
+    const isBranchSelectable = isDeliveryAddress
+      ? true
+      : isGuest
+        ? true
+        : isDeliveryBranch
+          ? deliveryBranchUnavailableReason === null
+          : nearbyBranchUnavailableReason === null;
     const isActive = isDeliveryAddress
       ? activeAddress?.id === item.id
       : activeBranch?.id === item.id;
-    const Icon = isDeliveryAddress ? MapPin : Store;
 
     return (
       <Pressable
         onPress={() => {
-          if (!isDeliveryAddress && !isBranchSelectable) return;
-          if (isDeliveryAddress) setActiveAddress(item);
-          else if (pendingModeSetup === "Dine-in") {
+          if (!isBranchSelectable) return;
+          if (isDeliveryAddress) {
+            setActiveAddress(item);
+          } else if (pendingModeSetup === "Dine-in") {
             void selectDineInBranch(item);
             return;
           } else {
@@ -1482,23 +1522,33 @@ export default function HomeScreen() {
             setPendingModeSetup(null);
           }
         }}
-        disabled={
-          isCheckingDineInSession ||
-          (!isDeliveryAddress && !isBranchSelectable)
-        }
+        disabled={isCheckingDineInSession || !isBranchSelectable}
         className="flex-row items-center p-4 mb-3 rounded-2xl border"
         style={{
           backgroundColor: theme.card,
           borderColor: isActive ? theme.primary : theme.border,
-          opacity: !isDeliveryAddress && !isBranchSelectable ? 0.6 : 1,
+          opacity: !isBranchSelectable ? 0.6 : 1,
         }}
       >
-        <Icon size={24} color={isActive ? theme.primary : theme.muted} />
+        {isDeliveryAddress ? (
+          <MapPin size={24} color={isActive ? theme.primary : theme.muted} />
+        ) : (
+          <Store size={24} color={isActive ? theme.primary : theme.muted} />
+        )}
         <View className="ml-4 flex-1">
           <Text className="text-base font-bold" style={{ color: theme.text }}>
             {isDeliveryAddress ? item.type : item.name}
           </Text>
-          {!isDeliveryAddress && !isBranchSelectable ? (
+          {isGuest && !isDeliveryAddress ? (
+            <Text
+              className="mt-1 text-xs font-bold"
+              style={{
+                color: isBranchOnline(item) ? theme.primary : theme.danger,
+              }}
+            >
+              {isBranchOnline(item) ? "ONLINE" : "OFFLINE"}
+            </Text>
+          ) : !isBranchSelectable ? (
             <Text
               className="mt-1 text-xs font-bold"
               style={{ color: theme.danger }}
@@ -1547,7 +1597,7 @@ export default function HomeScreen() {
             className="text-sm font-semibold mt-1"
             style={{ color: theme.muted }}
           >
-            {isDeliveryAddress ? item.address : item.area}
+            {isDeliveryAddress ? item.address : item.area || item.address}
           </Text>
         </View>
         {isActive && <CheckCircle2 size={24} color={theme.primary} />}
@@ -1568,14 +1618,50 @@ export default function HomeScreen() {
           className="flex-1"
           disabled={isOrderLocked}
           onPress={() => {
-            setAddressModalSelection(
-              orderMode === "Delivery" ? "address" : "branch",
-            );
+            setAddressModalSelection(isGuest ? "branch" : "address");
             setShowAddressModal(true);
             if (orderMode !== "Delivery") void loadCustomerLocation();
           }}
         >
-          {orderMode === "Delivery" ? (
+          {orderMode === "Delivery" && isGuest ? (
+            <View className="flex-row items-center">
+              <Store size={22} color={theme.primary} strokeWidth={2.5} />
+              <View className="ml-2 flex-1">
+                <View className="flex-row items-center">
+                  <Text
+                    className="text-xl font-black tracking-tight"
+                    style={{ color: theme.text }}
+                    numberOfLines={1}
+                  >
+                    {activeBranch?.name || "Choose restaurant branch"}
+                  </Text>
+                  {!isOrderLocked && (
+                    <ChevronDown
+                      size={20}
+                      color={theme.text}
+                      strokeWidth={2.5}
+                      className="ml-1 mt-0.5"
+                    />
+                  )}
+                </View>
+                <Text
+                  className="text-xs font-bold mt-0.5 tracking-wide"
+                  style={{
+                    color: activeBranch
+                      ? isBranchOnline(activeBranch)
+                        ? theme.primary
+                        : theme.danger
+                      : theme.muted,
+                  }}
+                  numberOfLines={1}
+                >
+                  {activeBranch
+                    ? `${isBranchOnline(activeBranch) ? "Online" : "Offline"} · Tap to change branch`
+                    : "Choose a restaurant branch to browse"}
+                </Text>
+              </View>
+            </View>
+          ) : orderMode === "Delivery" ? (
             <View className="flex-row items-center">
               <MapPin size={22} color={theme.primary} strokeWidth={2.5} />
               <View className="ml-2 flex-1">
@@ -1745,6 +1831,7 @@ export default function HomeScreen() {
               isVegOnly={isVegOnly}
               setIsVegOnly={setIsVegOnly}
               categories={branchCategories}
+              hasSpotlightItems={listData.length > 0}
               offersCarousel={offersCarousel}
               featuredReel={branchFeaturedReels[0]}
               restaurantName={restaurantName}
@@ -1797,10 +1884,12 @@ export default function HomeScreen() {
               className="text-xl font-black tracking-tight flex-1"
               style={{ color: theme.text }}
             >
-              {orderMode === "Delivery" && addressModalSelection === "address"
-                ? "Choose Delivery Address"
-                : isCheckingDineInSession
-                  ? "Checking Dine-in Session..."
+              {isCheckingDineInSession
+                ? "Checking Dine-in Session..."
+                : orderMode === "Delivery" &&
+                    !isGuest &&
+                    addressModalSelection === "address"
+                  ? "Choose Delivery Address"
                   : "Choose Branch"}
             </Text>
             <Pressable
@@ -1812,7 +1901,7 @@ export default function HomeScreen() {
               <X size={24} color={theme.text} />
             </Pressable>
           </View>
-          {orderMode === "Delivery" && (
+          {orderMode === "Delivery" && !isGuest && (
             <View
               className="mx-6 mb-4 flex-row rounded-xl border p-1"
               style={{
@@ -1850,57 +1939,56 @@ export default function HomeScreen() {
               })}
             </View>
           )}
-          {orderMode !== "Delivery" &&
-            addressModalSelection === "branch" && (
-              <View
-                className="mx-6 mb-3 flex-row items-center rounded-xl border p-3"
-                style={{
-                  borderColor: theme.border,
-                  backgroundColor: theme.card,
-                }}
-              >
-                {isLoadingCustomerLocation ? (
-                  <>
-                    <ActivityIndicator color={theme.primary} />
-                    <Text
-                      className="ml-3 flex-1 text-sm font-semibold"
-                      style={{ color: theme.muted }}
-                    >
-                      Checking restaurants near your current location...
-                    </Text>
-                  </>
-                ) : customerLocationError ? (
-                  <>
-                    <Text
-                      className="flex-1 text-sm font-semibold"
-                      style={{ color: theme.danger }}
-                    >
-                      {customerLocationError}
-                    </Text>
-                    <Pressable
-                      onPress={() => void loadCustomerLocation()}
-                      className="ml-3 rounded-lg px-3 py-2"
-                      style={{ backgroundColor: theme.primary }}
-                    >
-                      <Text className="text-xs font-black text-white">
-                        Retry
-                      </Text>
-                    </Pressable>
-                  </>
-                ) : (
+          {!isGuest && orderMode !== "Delivery" && (
+            <View
+              className="mx-6 mb-3 flex-row items-center rounded-xl border p-3"
+              style={{
+                borderColor: theme.border,
+                backgroundColor: theme.card,
+              }}
+            >
+              {isLoadingCustomerLocation ? (
+                <>
+                  <ActivityIndicator color={theme.primary} />
                   <Text
-                    className="text-sm font-semibold"
+                    className="ml-3 flex-1 text-sm font-semibold"
                     style={{ color: theme.muted }}
                   >
-                    Open restaurants are sorted by distance. Restaurants
-                    beyond {MAX_DELIVERY_DISTANCE_KM} km cannot be selected.
+                    Checking restaurants near your current location...
                   </Text>
-                )}
-              </View>
-            )}
+                </>
+              ) : customerLocationError ? (
+                <>
+                  <Text
+                    className="flex-1 text-sm font-semibold"
+                    style={{ color: theme.danger }}
+                  >
+                    {customerLocationError}
+                  </Text>
+                  <Pressable
+                    onPress={() => void loadCustomerLocation()}
+                    className="ml-3 rounded-lg px-3 py-2"
+                    style={{ backgroundColor: theme.primary }}
+                  >
+                    <Text className="text-xs font-black text-white">Retry</Text>
+                  </Pressable>
+                </>
+              ) : (
+                <Text
+                  className="text-sm font-semibold"
+                  style={{ color: theme.muted }}
+                >
+                  Open restaurants are sorted by distance. Restaurants beyond{" "}
+                  {MAX_DELIVERY_DISTANCE_KM} km cannot be selected.
+                </Text>
+              )}
+            </View>
+          )}
           <FlatList
             data={
-              orderMode === "Delivery" && addressModalSelection === "address"
+              orderMode === "Delivery" &&
+              !isGuest &&
+              addressModalSelection === "address"
                 ? addresses
                 : orderMode === "Delivery"
                   ? branches
@@ -1909,13 +1997,17 @@ export default function HomeScreen() {
             keyExtractor={(item: any) => item.id.toString()}
             renderItem={renderAddressModalItem}
             ListEmptyComponent={
-              orderMode !== "Delivery" && !isLoadingCustomerLocation ? (
+              orderMode !== "Delivery" &&
+              !isLoadingCustomerLocation &&
+              (isGuest || nearbyOpenBranches.length === 0) ? (
                 <View className="items-center px-6 py-10">
                   <Text
                     className="text-center font-semibold"
                     style={{ color: theme.muted }}
                   >
-                    No open restaurants are currently available.
+                    {isGuest
+                      ? "No restaurant branches are currently available."
+                      : "No open restaurants are currently available."}
                   </Text>
                 </View>
               ) : undefined

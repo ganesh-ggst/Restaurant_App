@@ -52,6 +52,7 @@ export default function SearchScreen() {
     mode: orderMode,
     carts,
     menuItems,
+    menuItemsLoadedForBranchId,
     categories,
     activeBranch,
     activeAddress,
@@ -545,21 +546,42 @@ export default function SearchScreen() {
             );
           })}
         </View>
-        {searchQuery.trim() && filteredItems.length === 0 ? (
+        {activeBranchId &&
+        menuItemsLoadedForBranchId === activeBranchId &&
+        filteredItems.length === 0 ? (
           <View className="items-center justify-center px-6 py-16">
-            <Search size={32} color={theme.muted} strokeWidth={2} />
+            {searchQuery.trim() ? (
+              <Search size={32} color={theme.muted} strokeWidth={2} />
+            ) : (
+              <UtensilsCrossed
+                size={32}
+                color={theme.muted}
+                strokeWidth={2}
+              />
+            )}
             <Text
               className="mt-4 text-lg font-black text-center"
               style={{ color: theme.text }}
             >
-              No dishes found
+              {searchQuery.trim()
+                ? "No dishes found"
+                : activeCategory !== "All"
+                  ? `No items in ${activeCategory}`
+                  : isVegOnly
+                    ? "No vegetarian items available"
+                    : "No menu items available"}
             </Text>
             <Text
               className="mt-2 text-sm font-semibold text-center leading-5"
               style={{ color: theme.muted }}
             >
-              We couldn&apos;t find any dishes matching &quot;
-              {searchQuery.trim()}&quot;. Try another search.
+              {searchQuery.trim()
+                ? `We couldn't find any dishes matching "${searchQuery.trim()}". Try another search.`
+                : activeCategory !== "All"
+                  ? `This branch has no items in the ${activeCategory} category right now.`
+                  : isVegOnly
+                    ? "This branch has no vegetarian items available right now."
+                    : "This branch has no menu items available right now. Please check back later."}
             </Text>
           </View>
         ) : null}

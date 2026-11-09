@@ -33,8 +33,11 @@ export default function RootRedirect() {
       const accessToken = await authApi.getAccessToken();
       if (!accessToken) {
         router.replace({
-          pathname: "/(auth)/login",
-          params: routeBranchId ? { branchId: routeBranchId } : {},
+          pathname: "/(home)/(tabs)",
+          params: {
+            isGuest: "true",
+            ...(routeBranchId ? { branchId: routeBranchId } : {}),
+          },
         });
         return;
       }
@@ -69,7 +72,10 @@ export default function RootRedirect() {
           );
           return;
         }
-        router.replace("/(auth)/login");
+        router.replace({
+          pathname: "/(home)/(tabs)",
+          params: { isGuest: "true" },
+        });
         return;
       }
 

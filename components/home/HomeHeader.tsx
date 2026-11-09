@@ -99,6 +99,7 @@ export const HomeHeader = memo(
     isVegOnly,
     setIsVegOnly,
     categories,
+    hasSpotlightItems = false,
     offersCarousel,
     featuredReel,
     restaurantName,
@@ -410,270 +411,287 @@ export const HomeHeader = memo(
           </View>
         ) : (
           <>
-        {(orderMode === "Delivery" || orderMode === "Takeaway") &&
-        !searchQuery ? (
-          <Animated.View
-            entering={FadeIn.duration(300)}
-            exiting={FadeOut.duration(200)}
-          >
-            {featuredReel ? (
-              <View className="px-4 mb-2">
-                <View
-                  className="relative h-48 w-full overflow-hidden rounded-[24px] shadow-sm border"
-                  style={{
-                    backgroundColor: theme.card,
-                    borderColor: theme.border,
-                  }}
-                >
-                  {hasImageUri(featuredReel.imageUrl) ? (
-                    <Image
-                      source={{ uri: featuredReel.imageUrl }}
-                      style={{ width: "100%", height: "100%" }}
-                      resizeMode="cover"
-                    />
-                  ) : null}
-                  <View className="absolute inset-0 bg-black/20 pointer-events-none" />
-                  <View className="absolute bottom-4 left-4 pointer-events-none">
-                    <View
-                      className="self-start rounded-lg px-2.5 py-1 mb-1"
-                      style={{ backgroundColor: theme.primary }}
+            {(orderMode === "Delivery" || orderMode === "Takeaway") &&
+            !searchQuery ? (
+              <Animated.View
+                entering={FadeIn.duration(300)}
+                exiting={FadeOut.duration(200)}
+              >
+                {featuredReel ? (
+                  <View className="w-full px-4 mb-2">
+                    <Text
+                      className="mb-3 text-xl font-black"
+                      style={{ color: theme.text }}
                     >
-                      <Text className="text-[10px] font-black text-white uppercase tracking-wider">
-                        {featuredReel.badge || "FEATURED"}
-                      </Text>
-                    </View>
-                    <Text className="text-xl font-black text-white shadow-md">
-                      {featuredReel.title}
+                      Featured Content
                     </Text>
-                    {featuredReel.subtitle?.trim() ? (
-                      <Text
-                        className="mt-1 text-sm font-semibold text-white/90"
-                        numberOfLines={2}
-                      >
-                        {featuredReel.subtitle}
-                      </Text>
-                    ) : null}
+                    <View
+                      className="relative h-48 w-full overflow-hidden rounded-[24px] shadow-sm border"
+                      style={{
+                        backgroundColor: theme.card,
+                        borderColor: theme.border,
+                      }}
+                    >
+                      {hasImageUri(featuredReel.imageUrl) ? (
+                        <Image
+                          source={{ uri: featuredReel.imageUrl }}
+                          style={{ width: "100%", height: "100%" }}
+                          resizeMode="cover"
+                        />
+                      ) : null}
+                      <View className="absolute inset-0 bg-black/20 pointer-events-none" />
+                      <View className="absolute bottom-4 left-4 pointer-events-none">
+                        <View
+                          className="self-start rounded-lg px-2.5 py-1 mb-1"
+                          style={{ backgroundColor: theme.primary }}
+                        >
+                          <Text className="text-[10px] font-black text-white uppercase tracking-wider">
+                            {featuredReel.badge || "FEATURED"}
+                          </Text>
+                        </View>
+                        <Text className="text-xl font-black text-white shadow-md">
+                          {featuredReel.title}
+                        </Text>
+                        {featuredReel.subtitle?.trim() ? (
+                          <Text
+                            className="mt-1 text-sm font-semibold text-white/90"
+                            numberOfLines={2}
+                          >
+                            {featuredReel.subtitle}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </View>
                   </View>
-                </View>
-              </View>
-            ) : null}
+                ) : null}
 
             {offersCarousel}
 
-            <View className="mb-10">
-              <Text
-                className="mb-4 text-xl font-black px-4"
-                style={{ color: theme.text }}
-              >
-                Explore Menu
-              </Text>
-              <View
-                className="w-full px-4"
-                style={{
-                  overflow: "hidden",
-                }}
-              >
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  bounces={false}
-                  overScrollMode="never"
-                  style={{
-                    width: "100%",
-                    flexGrow: 0,
-                  }}
-                  nestedScrollEnabled
-                  directionalLockEnabled
-                  snapToInterval={categoryItemWidth}
-                  snapToAlignment="start"
-                  decelerationRate="fast"
-                  onLayout={(event) =>
-                    setCategoryViewportWidth(event.nativeEvent.layout.width)
-                  }
-                  onContentSizeChange={(contentWidth) =>
-                    setCategoryContentWidth(contentWidth)
-                  }
-                  onScroll={(event) => {
-                    const maxOffset =
-                      categoryContentWidth - visibleCategoryViewportWidth;
-                    setCategoryScrollProgress(
-                      maxOffset > 0
-                        ? Math.max(
-                            0,
-                            Math.min(
-                              event.nativeEvent.contentOffset.x / maxOffset,
-                              1,
-                            ),
-                          )
-                        : 0,
-                    );
-                  }}
-                  scrollEventThrottle={16}
-                >
-                  {categories.map((item: any) => (
-                    <View key={item.id}>{renderCategory({ item })}</View>
-                  ))}
-                </ScrollView>
-                {categoryContentWidth > visibleCategoryViewportWidth && (
-                  <View className="mt-3 mb-1 items-center">
-                    <View
-                      className="h-1 w-12 overflow-hidden rounded-full"
-                      style={{ backgroundColor: theme.border }}
+                {categories.length > 0 ? (
+                  <View className="mb-10">
+                    <Text
+                      className="mb-4 text-xl font-black px-4"
+                      style={{ color: theme.text }}
                     >
-                      <View
-                        className="h-1 w-4 rounded-full"
+                      Explore Menu
+                    </Text>
+                    <View
+                      className="w-full px-4"
+                      style={{
+                        overflow: "hidden",
+                      }}
+                    >
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        bounces={false}
+                        overScrollMode="never"
                         style={{
-                          backgroundColor: theme.primary,
-                          transform: [
-                            {
-                              translateX: categoryScrollProgress * 32,
-                            },
-                          ],
+                          width: "100%",
+                          flexGrow: 0,
                         }}
-                      />
-                    </View>
-                  </View>
-                )}
-              </View>
-            </View>
-            <Text
-              className="mb-4 text-2xl font-black tracking-tight px-4"
-              style={{ color: theme.text }}
-            >
-              In The Spotlight
-            </Text>
-          </Animated.View>
-        ) : null}
-
-        {/* STORE UI: Show ONLY for Dine-In */}
-        {orderMode === "Dine-in" && !searchQuery ? (
-          <Animated.View
-            entering={FadeIn.duration(300)}
-            exiting={FadeOut.duration(200)}
-          >
-            <View className="px-4 mb-6">
-              {activeTable ? (
-                <View
-                  className="w-full rounded-[24px] shadow-sm border p-6 flex-row items-center justify-between"
-                  style={{
-                    backgroundColor: theme.primary,
-                    borderColor: theme.border,
-                  }}
-                >
-                  <View className="flex-1">
-                    <View className="flex-row items-center mb-2">
-                      <View className="bg-white/20 px-2 py-1 rounded-md mr-2">
-                        <Text className="text-[10px] font-black text-white uppercase tracking-wider">
-                          Connected
-                        </Text>
-                      </View>
-                      <Text className="text-sm font-bold text-white/90 uppercase tracking-widest">
-                        Table {activeTable}{" "}
-                        {formattedTime ? ` • ${formattedTime}` : ""}
-                      </Text>
-                    </View>
-                    <Text className="text-2xl font-black text-white tracking-tight leading-tight">
-                      Ready to Order!
-                    </Text>
-                    <Text className="text-sm font-semibold text-white/80 mt-1 mb-3">
-                      Your food will be served directly to your table.
-                    </Text>
-
-                    {/* FIX: Re-structured this view so both buttons display cleanly side by side! */}
-                    <View className="flex-row">
-                      {!(isTimerRunning || confirmedOrdersLength > 0) && (
-                        <Pressable
-                          onPress={onOpenScanner}
-                          className="bg-white/20 px-4 py-2 rounded-xl mr-2"
-                        >
-                          <Text className="text-white font-bold text-xs">
-                            Change Table
-                          </Text>
-                        </Pressable>
-                      )}
-                      {!isTimerRunning && (
-                        <Pressable
-                          onPress={onLeaveTable}
-                          className="bg-white/20 px-4 py-2 rounded-xl"
-                        >
-                          <Text className="text-white font-bold text-xs">
-                            Leave Table
-                          </Text>
-                        </Pressable>
+                        nestedScrollEnabled
+                        directionalLockEnabled
+                        snapToInterval={categoryItemWidth}
+                        snapToAlignment="start"
+                        decelerationRate="fast"
+                        onLayout={(event) =>
+                          setCategoryViewportWidth(
+                            event.nativeEvent.layout.width,
+                          )
+                        }
+                        onContentSizeChange={(contentWidth) =>
+                          setCategoryContentWidth(contentWidth)
+                        }
+                        onScroll={(event) => {
+                          const maxOffset =
+                            categoryContentWidth - visibleCategoryViewportWidth;
+                          setCategoryScrollProgress(
+                            maxOffset > 0
+                              ? Math.max(
+                                  0,
+                                  Math.min(
+                                    event.nativeEvent.contentOffset.x /
+                                      maxOffset,
+                                    1,
+                                  ),
+                                )
+                              : 0,
+                          );
+                        }}
+                        scrollEventThrottle={16}
+                      >
+                        {categories.map((item: any) => (
+                          <View key={item.id}>{renderCategory({ item })}</View>
+                        ))}
+                      </ScrollView>
+                      {categoryContentWidth > visibleCategoryViewportWidth && (
+                        <View className="mt-3 mb-1 items-center">
+                          <View
+                            className="h-1 w-12 overflow-hidden rounded-full"
+                            style={{ backgroundColor: theme.border }}
+                          >
+                            <View
+                              className="h-1 w-4 rounded-full"
+                              style={{
+                                backgroundColor: theme.primary,
+                                transform: [
+                                  {
+                                    translateX: categoryScrollProgress * 32,
+                                  },
+                                ],
+                              }}
+                            />
+                          </View>
+                        </View>
                       )}
                     </View>
                   </View>
-                  <View className="h-16 w-16 bg-white rounded-2xl items-center justify-center shadow-lg transform rotate-3 ml-2">
-                    <UtensilsCrossed
-                      size={32}
-                      color={theme.primary}
-                      strokeWidth={2}
-                    />
-                  </View>
-                </View>
-              ) : (
-                <Pressable
-                  onPress={onOpenScanner}
-                  className="w-full rounded-[24px] overflow-hidden shadow-sm border p-6 flex-row items-center justify-between"
-                  style={{
-                    backgroundColor: theme.primary,
-                    borderColor: theme.border,
-                  }}
-                >
-                  <View className="flex-1">
-                    <View className="flex-row items-center mb-2">
-                      <View className="bg-white/20 px-2 py-1 rounded-md mr-2">
-                        <Text className="text-[10px] font-black text-white uppercase tracking-wider">
-                          Step 1
-                        </Text>
-                      </View>
-                      <Text className="text-sm font-bold text-white/90 uppercase tracking-widest">
-                        Order to Table
-                      </Text>
-                    </View>
-                    <Text className="text-2xl font-black text-white tracking-tight leading-tight">
-                      Scan Table QR
-                    </Text>
-                    <Text className="text-sm font-semibold text-white/80 mt-1">
-                      Open digital menu instantly.
-                    </Text>
-                  </View>
-                  <View className="h-16 w-16 bg-white rounded-2xl items-center justify-center shadow-lg transform rotate-3 ml-2">
-                    <ScanLine size={32} color={theme.primary} strokeWidth={2} />
-                  </View>
-                </Pressable>
-              )}
-            </View>
-
-            <View className="px-4 mb-10">
-              <Text
-                className="mb-4 text-lg font-black uppercase tracking-wider"
-                style={{ color: theme.muted }}
-              >
-                In-Store Services
-              </Text>
-              <View className="flex-row justify-between">
-                <Pressable className="items-center" onPress={onCallWaiter}>
-                  <View
-                    className="h-[72px] w-[72px] items-center justify-center rounded-[24px] shadow-sm border mb-2"
-                    style={{
-                      backgroundColor: theme.card,
-                      borderColor: theme.border,
-                    }}
-                  >
-                    <BellRing
-                      size={28}
-                      color={theme.primary}
-                      strokeWidth={1.5}
-                    />
-                  </View>
+                ) : null}
+                {hasSpotlightItems ? (
                   <Text
-                    className="text-xs font-bold"
+                    className="mb-4 text-2xl font-black tracking-tight px-4"
                     style={{ color: theme.text }}
                   >
-                    Call Waiter
+                    In The Spotlight
                   </Text>
-                </Pressable>
+                ) : null}
+              </Animated.View>
+            ) : null}
+
+            {/* STORE UI: Show ONLY for Dine-In */}
+            {orderMode === "Dine-in" && !searchQuery ? (
+              <Animated.View
+                entering={FadeIn.duration(300)}
+                exiting={FadeOut.duration(200)}
+              >
+                <View className="px-4 mb-6">
+                  {activeTable ? (
+                    <View
+                      className="w-full rounded-[24px] shadow-sm border p-6 flex-row items-center justify-between"
+                      style={{
+                        backgroundColor: theme.primary,
+                        borderColor: theme.border,
+                      }}
+                    >
+                      <View className="flex-1">
+                        <View className="flex-row items-center mb-2">
+                          <View className="bg-white/20 px-2 py-1 rounded-md mr-2">
+                            <Text className="text-[10px] font-black text-white uppercase tracking-wider">
+                              Connected
+                            </Text>
+                          </View>
+                          <Text className="text-sm font-bold text-white/90 uppercase tracking-widest">
+                            Table {activeTable}{" "}
+                            {formattedTime ? ` • ${formattedTime}` : ""}
+                          </Text>
+                        </View>
+                        <Text className="text-2xl font-black text-white tracking-tight leading-tight">
+                          Ready to Order!
+                        </Text>
+                        <Text className="text-sm font-semibold text-white/80 mt-1 mb-3">
+                          Your food will be served directly to your table.
+                        </Text>
+
+                        {/* FIX: Re-structured this view so both buttons display cleanly side by side! */}
+                        <View className="flex-row">
+                          {!(isTimerRunning || confirmedOrdersLength > 0) && (
+                            <Pressable
+                              onPress={onOpenScanner}
+                              className="bg-white/20 px-4 py-2 rounded-xl mr-2"
+                            >
+                              <Text className="text-white font-bold text-xs">
+                                Change Table
+                              </Text>
+                            </Pressable>
+                          )}
+                          {!isTimerRunning && (
+                            <Pressable
+                              onPress={onLeaveTable}
+                              className="bg-white/20 px-4 py-2 rounded-xl"
+                            >
+                              <Text className="text-white font-bold text-xs">
+                                Leave Table
+                              </Text>
+                            </Pressable>
+                          )}
+                        </View>
+                      </View>
+                      <View className="h-16 w-16 bg-white rounded-2xl items-center justify-center shadow-lg transform rotate-3 ml-2">
+                        <UtensilsCrossed
+                          size={32}
+                          color={theme.primary}
+                          strokeWidth={2}
+                        />
+                      </View>
+                    </View>
+                  ) : (
+                    <Pressable
+                      onPress={onOpenScanner}
+                      className="w-full rounded-[24px] overflow-hidden shadow-sm border p-6 flex-row items-center justify-between"
+                      style={{
+                        backgroundColor: theme.primary,
+                        borderColor: theme.border,
+                      }}
+                    >
+                      <View className="flex-1">
+                        <View className="flex-row items-center mb-2">
+                          <View className="bg-white/20 px-2 py-1 rounded-md mr-2">
+                            <Text className="text-[10px] font-black text-white uppercase tracking-wider">
+                              Step 1
+                            </Text>
+                          </View>
+                          <Text className="text-sm font-bold text-white/90 uppercase tracking-widest">
+                            Order to Table
+                          </Text>
+                        </View>
+                        <Text className="text-2xl font-black text-white tracking-tight leading-tight">
+                          Scan Table QR
+                        </Text>
+                        <Text className="text-sm font-semibold text-white/80 mt-1">
+                          Open digital menu instantly.
+                        </Text>
+                      </View>
+                      <View className="h-16 w-16 bg-white rounded-2xl items-center justify-center shadow-lg transform rotate-3 ml-2">
+                        <ScanLine
+                          size={32}
+                          color={theme.primary}
+                          strokeWidth={2}
+                        />
+                      </View>
+                    </Pressable>
+                  )}
+                </View>
+
+                <View className="px-4 mb-10">
+                  <Text
+                    className="mb-4 text-lg font-black uppercase tracking-wider"
+                    style={{ color: theme.muted }}
+                  >
+                    In-Store Services
+                  </Text>
+                  <View className="flex-row justify-between">
+                    <Pressable className="items-center" onPress={onCallWaiter}>
+                      <View
+                        className="h-[72px] w-[72px] items-center justify-center rounded-[24px] shadow-sm border mb-2"
+                        style={{
+                          backgroundColor: theme.card,
+                          borderColor: theme.border,
+                        }}
+                      >
+                        <BellRing
+                          size={28}
+                          color={theme.primary}
+                          strokeWidth={1.5}
+                        />
+                      </View>
+                      <Text
+                        className="text-xs font-bold"
+                        style={{ color: theme.text }}
+                      >
+                        Call Waiter
+                      </Text>
+                    </Pressable>
 
                 <Pressable className="items-center" onPress={onRequestWater}>
                   <View
@@ -697,91 +715,99 @@ export const HomeHeader = memo(
                   </Text>
                 </Pressable>
 
-                <Pressable className="items-center" onPress={onRequestWifi}>
-                  <View
-                    className="h-[72px] w-[72px] items-center justify-center rounded-[24px] shadow-sm border mb-2"
-                    style={{
-                      backgroundColor: theme.card,
-                      borderColor: theme.border,
-                    }}
-                  >
-                    <Wifi size={28} color={theme.primary} strokeWidth={1.5} />
-                  </View>
-                  <Text
-                    className="text-xs font-bold"
-                    style={{ color: theme.text }}
-                  >
-                    Free Wi-Fi
-                  </Text>
-                </Pressable>
+                    <Pressable className="items-center" onPress={onRequestWifi}>
+                      <View
+                        className="h-[72px] w-[72px] items-center justify-center rounded-[24px] shadow-sm border mb-2"
+                        style={{
+                          backgroundColor: theme.card,
+                          borderColor: theme.border,
+                        }}
+                      >
+                        <Wifi
+                          size={28}
+                          color={theme.primary}
+                          strokeWidth={1.5}
+                        />
+                      </View>
+                      <Text
+                        className="text-xs font-bold"
+                        style={{ color: theme.text }}
+                      >
+                        Free Wi-Fi
+                      </Text>
+                    </Pressable>
 
-                <Pressable className="items-center" onPress={onRequestBill}>
-                  <View
-                    className="h-[72px] w-[72px] items-center justify-center rounded-[24px] shadow-sm border mb-2"
-                    style={{
-                      backgroundColor: theme.card,
-                      borderColor: theme.border,
-                    }}
-                  >
-                    <Receipt
-                      size={28}
-                      color={theme.primary}
-                      strokeWidth={1.5}
-                    />
-                  </View>
-                  <Text
-                    className="text-xs font-bold"
-                    style={{ color: theme.text }}
-                  >
-                    Pay Bill
-                  </Text>
-                </Pressable>
-              </View>
-            </View>
-
-            <View className="px-4 mb-8">
-              <Pressable
-                onPress={onOrderTakeaway}
-                className="w-full rounded-[20px] shadow-sm border p-5 flex-row items-center justify-between"
-                style={{
-                  backgroundColor: theme.card,
-                  borderColor: theme.border,
-                }}
-              >
-                <View className="flex-row items-center">
-                  <View
-                    className="h-12 w-12 rounded-full items-center justify-center mb-0"
-                    style={{
-                      backgroundColor: "rgba(5, 150, 105, 0.15)",
-                      marginRight: 16,
-                    }}
-                  >
-                    <ShoppingBag size={22} color="#059669" strokeWidth={2} />
-                  </View>
-                  <View>
-                    <Text
-                      className="text-lg font-black"
-                      style={{ color: theme.text }}
-                    >
-                      Track Your Order
-                    </Text>
+                    <Pressable className="items-center" onPress={onRequestBill}>
+                      <View
+                        className="h-[72px] w-[72px] items-center justify-center rounded-[24px] shadow-sm border mb-2"
+                        style={{
+                          backgroundColor: theme.card,
+                          borderColor: theme.border,
+                        }}
+                      >
+                        <Receipt
+                          size={28}
+                          color={theme.primary}
+                          strokeWidth={1.5}
+                        />
+                      </View>
+                      <Text
+                        className="text-xs font-bold"
+                        style={{ color: theme.text }}
+                      >
+                        Pay Bill
+                      </Text>
+                    </Pressable>
                   </View>
                 </View>
-                <ChevronRightCircle
-                  size={24}
-                  color={theme.primary}
-                  strokeWidth={2}
-                />
-              </Pressable>
-            </View>
-            <Text
-              className="text-2xl font-black tracking-tight px-4 mb-4"
-              style={{ color: theme.text }}
-            >
-              Trending at this Branch
-            </Text>
-          </Animated.View>
-        ) : null}
+
+                <View className="px-4 mb-8">
+                  <Pressable
+                    onPress={onOrderTakeaway}
+                    className="w-full rounded-[20px] shadow-sm border p-5 flex-row items-center justify-between"
+                    style={{
+                      backgroundColor: theme.card,
+                      borderColor: theme.border,
+                    }}
+                  >
+                    <View className="flex-row items-center">
+                      <View
+                        className="h-12 w-12 rounded-full items-center justify-center mb-0"
+                        style={{
+                          backgroundColor: "rgba(5, 150, 105, 0.15)",
+                          marginRight: 16,
+                        }}
+                      >
+                        <ShoppingBag
+                          size={22}
+                          color="#059669"
+                          strokeWidth={2}
+                        />
+                      </View>
+                      <View>
+                        <Text
+                          className="text-lg font-black"
+                          style={{ color: theme.text }}
+                        >
+                          Track Your Order
+                        </Text>
+                      </View>
+                    </View>
+                    <ChevronRightCircle
+                      size={24}
+                      color={theme.primary}
+                      strokeWidth={2}
+                    />
+                  </Pressable>
+                </View>
+                <Text
+                  className="text-2xl font-black tracking-tight px-4 mb-4"
+                  style={{ color: theme.text }}
+                >
+                  Trending at this Branch
+                </Text>
+              </Animated.View>
+            ) : null}
 
         {searchQuery && (
           <Text

@@ -10,6 +10,7 @@ interface ApiEnvelope<T> {
 
 export interface ActiveAuthScreenMedia {
   id: string;
+  title?: string;
   url: string;
   isActive: boolean;
   mediaType: "image" | "video";
@@ -42,7 +43,7 @@ export const authScreenMediaApi = {
         ApiEnvelope<
           | ActiveAuthScreenMedia
           | ActiveAuthScreenMedia[]
-          | { url?: string; id?: string; isActive?: boolean }
+          | { url?: string; id?: string; title?: string; isActive?: boolean }
         >
       >(`${API_BASE_URL}/api/users/storefront-display/${screenPath}`, {
         ...(branchId?.trim() ? { params: { branchId: branchId.trim() } } : {}),
@@ -68,6 +69,7 @@ export const authScreenMediaApi = {
 
       return {
         id: media.id ?? `${screen}-${branchId?.trim() || "global"}`,
+        title: media.title,
         url: media.url,
         isActive: media.isActive !== false,
         mediaType: screen === "splash" ? "video" : mediaTypeForUrl(media.url),

@@ -2,6 +2,7 @@ export type AuthScreenKind = "splash" | "login";
 
 export interface AuthScreenVideo {
   id: string;
+  title?: string;
   uri: string;
   fileName: string;
   mediaType: "image" | "video";
@@ -63,11 +64,12 @@ export function createAuthScreenMediaSection(
     isSectionActive: true,
     options: videos.map((video) => ({
       id: video.id,
-      value: video.fileName,
+      value: video.title?.trim() || video.fileName,
       subValue: video.uri,
       isActive: video.isActive,
     })),
-    summary: activeVideo?.fileName ?? "No video added",
+    summary:
+      activeVideo?.title?.trim() || activeVideo?.fileName || "No video added",
   };
 }
 

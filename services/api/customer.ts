@@ -809,9 +809,12 @@ export const customerApi = {
     );
   },
 
-  async getFeaturedReels(): Promise<CustomerFeaturedReel[]> {
+  async getFeaturedReels(branchId: string): Promise<CustomerFeaturedReel[]> {
     return requireArray(
-      await request<CustomerFeaturedReel[]>("GET", "/featured-reels"),
+      await request<CustomerFeaturedReel[]>(
+        "GET",
+        `/featured-reels?branchId=${encode(branchId)}`,
+      ),
       "The server did not return featured reels.",
     );
   },
@@ -1048,6 +1051,10 @@ export const customerApi = {
 
   async cancelOrder(id: string): Promise<void> {
     await request("PATCH", `/orders/${encode(id)}/cancel`, {}, true);
+  },
+
+  async deleteOrder(id: string): Promise<void> {
+    await request("DELETE", `/orders/${encode(id)}`, undefined, true);
   },
 
   async reorder(id: string): Promise<unknown> {

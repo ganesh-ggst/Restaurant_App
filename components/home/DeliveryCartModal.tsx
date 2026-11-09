@@ -592,7 +592,7 @@ export const DeliveryCartModal = memo(
       if (isSubmittingOrder) return;
       setIsSubmittingOrder(true);
       try {
-        await onCreateOrder(
+        const order = await onCreateOrder(
           "success",
           isDelivery ? tipAmount : 0,
           instructions.trim(),
@@ -600,6 +600,7 @@ export const DeliveryCartModal = memo(
           gstAmount,
           Math.round(finalPayable * 100) / 100,
         );
+        if (!order) return;
         Alert.alert(
           "Payment Successful",
           "Your order is placed and is now Pending.",
@@ -634,7 +635,8 @@ export const DeliveryCartModal = memo(
     const handlePayPress = async () => {
       if (isSubmittingOrder) return;
       try {
-        await onCheckout(appliedCoupon?.code);
+        const checkout = await onCheckout(appliedCoupon?.code);
+        if (!checkout) return;
         Alert.alert("Choose Payment Result", "Select a payment outcome.", [
           { text: "Cancel", style: "cancel" },
           {

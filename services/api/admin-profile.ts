@@ -46,6 +46,7 @@ export type AdminAuthScreen = "splash" | "login";
 
 export interface AdminAuthScreenMedia {
   id: string;
+  title?: string;
   url: string;
   isActive: boolean;
   createdAt?: string;
@@ -608,6 +609,7 @@ async function uploadAuthScreenMedia(
   screen: AdminAuthScreen,
   file: AdminAuthScreenUpload,
   id?: string,
+  title?: string,
 ): Promise<AdminAuthScreenMedia> {
   if (!API_BASE_URL) {
     throw new Error(
@@ -626,6 +628,7 @@ async function uploadAuthScreenMedia(
     name: file.fileName,
     type: file.mimeType,
   } as unknown as Blob);
+  if (title !== undefined) formData.append("title", title);
 
   try {
     const response = await axios.request<ApiEnvelope<AdminAuthScreenMedia>>({
@@ -881,8 +884,9 @@ export const adminProfileApi = {
   async createAuthScreenMedia(
     screen: AdminAuthScreen,
     file: AdminAuthScreenUpload,
+    title?: string,
   ): Promise<AdminAuthScreenMedia> {
-    const media = await uploadAuthScreenMedia(screen, file);
+    const media = await uploadAuthScreenMedia(screen, file, undefined, title);
     invalidate(`auth-screen-media:${screen}`);
     return media;
   },
@@ -890,16 +894,25 @@ export const adminProfileApi = {
   async updateAuthScreenMedia(
     screen: AdminAuthScreen,
     id: string,
-    update: { file?: AdminAuthScreenUpload; isActive?: boolean },
+    update: {
+      file?: AdminAuthScreenUpload;
+      isActive?: boolean;
+      title?: string;
+    },
   ): Promise<AdminAuthScreenMedia> {
     if (!id.trim()) throw new Error("A valid screen media ID is required.");
     const media = update.file
-      ? await uploadAuthScreenMedia(screen, update.file, id)
+      ? await uploadAuthScreenMedia(screen, update.file, id, update.title)
       : requireData(
           await request<AdminAuthScreenMedia>(
             "PATCH",
             `${authScreenPaths[screen]}/${encode(id)}`,
-            { isActive: update.isActive },
+            {
+              ...(update.isActive !== undefined
+                ? { isActive: update.isActive }
+                : {}),
+              ...(update.title !== undefined ? { title: update.title } : {}),
+            },
           ),
           "The server did not return the updated screen media.",
         );

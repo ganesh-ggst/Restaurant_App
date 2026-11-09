@@ -6,9 +6,10 @@ import {
   Heart,
   Package,
   Receipt,
-  Search,
   ScrollText,
+  Search,
   Star,
+  Trash2,
   X,
 } from "lucide-react-native";
 import {
@@ -19,6 +20,7 @@ import {
   useState,
 } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Dimensions,
   Keyboard,
@@ -134,16 +136,15 @@ function getEffectiveOrderStatus(
 
 function mapCustomerOrder(order: CustomerOrder) {
   const isPaymentRejected =
-    String(order.paymentStatus || "").trim().toLowerCase() === "rejected";
+    String(order.paymentStatus || "")
+      .trim()
+      .toLowerCase() === "rejected";
   const status = isPaymentRejected
     ? "rejected"
     : normalizeOrderStatus(order.status);
-  const isActive = ![
-    "completed",
-    "cancelled",
-    "rejected",
-    "refunded",
-  ].includes(status);
+  const isActive = !["completed", "cancelled", "rejected", "refunded"].includes(
+    status,
+  );
   const date = order.createdAt
     ? new Date(order.createdAt).toLocaleString()
     : "";
@@ -176,10 +177,7 @@ function getOrderStatusTimeline(
     order?.fulfillmentType || "delivery",
   );
   const isDineIn = fulfillmentType === "dine-in";
-  const currentStatus = getEffectiveOrderStatus(
-    order,
-    activeDineInSessionId,
-  );
+  const currentStatus = getEffectiveOrderStatus(order, activeDineInSessionId);
   const history = Array.isArray(order?.statusHistory)
     ? order.statusHistory
     : [];
@@ -194,18 +192,19 @@ function getOrderStatusTimeline(
     completed: isDineIn ? "Dine-in session ended" : "Order completed",
     rejected: "Order rejected by the restaurant",
   };
-  const standardStatuses = fulfillmentType === "dine-in"
-    ? ["pending", "accepted", "completed"]
-    : fulfillmentType === "takeaway"
-      ? ["pending", "accepted", "preparing", "ready", "completed"]
-      : [
-          "pending",
-          "accepted",
-          "preparing",
-          "ready",
-          "out for delivery",
-          "completed",
-        ];
+  const standardStatuses =
+    fulfillmentType === "dine-in"
+      ? ["pending", "accepted", "completed"]
+      : fulfillmentType === "takeaway"
+        ? ["pending", "accepted", "preparing", "ready", "completed"]
+        : [
+            "pending",
+            "accepted",
+            "preparing",
+            "ready",
+            "out for delivery",
+            "completed",
+          ];
   const statuses =
     currentStatus === "rejected" || currentStatus === "cancelled"
       ? ["pending", currentStatus]
@@ -260,8 +259,7 @@ const calculateOrderTotals = (order: any) => {
     return Number.isFinite(number) ? number : 0;
   };
   const getGstAmount = (taxableItemTotal: number) => {
-    const rawTaxPercentage =
-      order.resolvedTaxPercentage ?? order.taxPercentage;
+    const rawTaxPercentage = order.resolvedTaxPercentage ?? order.taxPercentage;
     if (rawTaxPercentage == null) return numericValue(order.tax);
     const taxPercentage = Number(
       typeof rawTaxPercentage === "string"
@@ -303,9 +301,7 @@ const calculateOrderTotals = (order: any) => {
         order.total != null
           ? Math.max(
               0,
-              numericValue(order.total) -
-                numericValue(order.tax) +
-                gstAmount,
+              numericValue(order.total) - numericValue(order.tax) + gstAmount,
             )
           : Math.max(0, itemTotal - discount + gstAmount),
     };
@@ -314,8 +310,7 @@ const calculateOrderTotals = (order: any) => {
   if (typeof order.total === "number") {
     const itemTotal = getOrderItemTotal(order, numericValue);
     const savedDeliveryFee = numericValue(order.deliveryFee);
-    const isFreeDelivery =
-      fulfillmentType === "delivery" && itemTotal >= 99;
+    const isFreeDelivery = fulfillmentType === "delivery" && itemTotal >= 99;
     const actualDeliveryFee = isFreeDelivery ? 0 : savedDeliveryFee;
     const packagingCharge = numericValue(order.packagingFee);
     const platformFee = numericValue(order.platformFee);
@@ -518,120 +513,122 @@ const BillDetailsAccordion = ({ order, theme }: any) => {
                 elevation: activePopover === "delivery" ? 10 : 0,
               }}
             >
-            {activePopover === "delivery" && (
-              <>
-                <Pressable
-                  onPress={() => setActivePopover(null)}
-                  style={{
-                    position: "absolute",
-                    width: width * 3,
-                    height: height * 3,
-                    top: -height,
-                    left: -width,
-                    zIndex: 40,
-                  }}
-                />
-                <Animated.View
-                  entering={FadeIn.duration(200)}
-                  exiting={FadeOut.duration(200)}
-                  className="absolute bottom-[100%] mb-2 left-0 right-0 rounded-[16px] p-4 shadow-xl border"
-                  style={{
-                    backgroundColor: theme.bg,
-                    borderColor: theme.border,
-                    zIndex: 101,
-                    elevation: 15,
-                  }}
-                >
-                  <Text
-                    style={{ color: theme.text }}
-                    className="font-black text-[14px] mb-3"
-                  >
-                    Delivery fee breakup
-                  </Text>
-                  <View className="flex-row justify-between items-center">
-                    <Text
-                      style={{ color: theme.muted }}
-                      className="font-semibold text-[13px]"
-                    >
-                      Delivery Fee
-                    </Text>
-                    <View className="flex-row items-center">
-                      <Text
-                        className={
-                          totals.isFreeDelivery
-                            ? "text-emerald-600 font-bold text-[13px]"
-                            : "font-bold text-[13px]"
-                        }
-                        style={
-                          !totals.isFreeDelivery ? { color: theme.text } : {}
-                        }
-                      >
-                        {totals.isFreeDelivery
-                            ? "FREE"
-                            : `₹${formatPrice(totals.actualDeliveryFee)}`}
-                        </Text>
-                    </View>
-                  </View>
-                  <View
-                    className="absolute -bottom-2 left-8 w-4 h-4 rotate-45 border-b border-r"
+              {activePopover === "delivery" && (
+                <>
+                  <Pressable
+                    onPress={() => setActivePopover(null)}
+                    style={{
+                      position: "absolute",
+                      width: width * 3,
+                      height: height * 3,
+                      top: -height,
+                      left: -width,
+                      zIndex: 40,
+                    }}
+                  />
+                  <Animated.View
+                    entering={FadeIn.duration(200)}
+                    exiting={FadeOut.duration(200)}
+                    className="absolute bottom-[100%] mb-2 left-0 right-0 rounded-[16px] p-4 shadow-xl border"
                     style={{
                       backgroundColor: theme.bg,
                       borderColor: theme.border,
+                      zIndex: 101,
+                      elevation: 15,
                     }}
-                  />
-                </Animated.View>
-              </>
-            )}
-
-            <Pressable
-              onPress={() =>
-                setActivePopover(
-                  activePopover === "delivery" ? null : "delivery",
-                )
-              }
-              className="mb-4 relative"
-            >
-              <View className="flex-row justify-between mb-1">
-                <View
-                  style={{
-                    borderBottomWidth: 1,
-                    borderStyle: "dashed",
-                    borderColor: theme.primary,
-                    alignSelf: "flex-start",
-                    paddingBottom: 1,
-                  }}
-                >
-                  <Text
-                    style={{ color: theme.muted, lineHeight: 18 }}
-                    className="font-semibold text-[14px]"
                   >
-                    Delivery Fee
-                  </Text>
-                </View>
-                <View className="flex-row">
-                  <Text
-                    className={
-                      totals.isFreeDelivery
-                        ? "text-emerald-600 font-bold"
-                        : "font-semibold"
-                    }
-                    style={!totals.isFreeDelivery ? { color: theme.text } : {}}
-                  >
-                    {totals.isFreeDelivery
-                      ? "FREE"
-                      : `₹${formatPrice(totals.actualDeliveryFee)}`}
-                  </Text>
-                </View>
-              </View>
-              {totals.isFreeDelivery && (
-                <Text
-                  style={{ color: theme.muted }}
-                  className="font-semibold text-[12px] mt-0.5"
-                >
-                  FREE Delivery on your order!
-                </Text>
+                    <Text
+                      style={{ color: theme.text }}
+                      className="font-black text-[14px] mb-3"
+                    >
+                      Delivery fee breakup
+                    </Text>
+                    <View className="flex-row justify-between items-center">
+                      <Text
+                        style={{ color: theme.muted }}
+                        className="font-semibold text-[13px]"
+                      >
+                        Delivery Fee
+                      </Text>
+                      <View className="flex-row items-center">
+                        <Text
+                          className={
+                            totals.isFreeDelivery
+                              ? "text-emerald-600 font-bold text-[13px]"
+                              : "font-bold text-[13px]"
+                          }
+                          style={
+                            !totals.isFreeDelivery ? { color: theme.text } : {}
+                          }
+                        >
+                          {totals.isFreeDelivery
+                            ? "FREE"
+                            : `₹${formatPrice(totals.actualDeliveryFee)}`}
+                        </Text>
+                      </View>
+                    </View>
+                    <View
+                      className="absolute -bottom-2 left-8 w-4 h-4 rotate-45 border-b border-r"
+                      style={{
+                        backgroundColor: theme.bg,
+                        borderColor: theme.border,
+                      }}
+                    />
+                  </Animated.View>
+                </>
               )}
-            </Pressable>
+
+              <Pressable
+                onPress={() =>
+                  setActivePopover(
+                    activePopover === "delivery" ? null : "delivery",
+                  )
+                }
+                className="mb-4 relative"
+              >
+                <View className="flex-row justify-between mb-1">
+                  <View
+                    style={{
+                      borderBottomWidth: 1,
+                      borderStyle: "dashed",
+                      borderColor: theme.primary,
+                      alignSelf: "flex-start",
+                      paddingBottom: 1,
+                    }}
+                  >
+                    <Text
+                      style={{ color: theme.muted, lineHeight: 18 }}
+                      className="font-semibold text-[14px]"
+                    >
+                      Delivery Fee
+                    </Text>
+                  </View>
+                  <View className="flex-row">
+                    <Text
+                      className={
+                        totals.isFreeDelivery
+                          ? "text-emerald-600 font-bold"
+                          : "font-semibold"
+                      }
+                      style={
+                        !totals.isFreeDelivery ? { color: theme.text } : {}
+                      }
+                    >
+                      {totals.isFreeDelivery
+                        ? "FREE"
+                        : `₹${formatPrice(totals.actualDeliveryFee)}`}
+                    </Text>
+                  </View>
+                </View>
+                {totals.isFreeDelivery && (
+                  <Text
+                    style={{ color: theme.muted }}
+                    className="font-semibold text-[12px] mt-0.5"
+                  >
+                    FREE Delivery on your order!
+                  </Text>
+                )}
+              </Pressable>
             </View>
           )}
 
@@ -673,34 +670,34 @@ const BillDetailsAccordion = ({ order, theme }: any) => {
                   </Text>
                   {!isGstOnlyOrder && (
                     <View className="flex-row justify-between mb-3">
-                    <Text
-                      style={{ color: theme.muted }}
-                      className="text-[13px] font-semibold"
-                    >
-                      Restaurant Packaging
-                    </Text>
-                    <Text
-                      style={{ color: theme.text }}
-                      className="text-[13px] font-bold"
-                    >
-                      ₹{formatPrice(totals.packagingCharge)}
-                    </Text>
+                      <Text
+                        style={{ color: theme.muted }}
+                        className="text-[13px] font-semibold"
+                      >
+                        Restaurant Packaging
+                      </Text>
+                      <Text
+                        style={{ color: theme.text }}
+                        className="text-[13px] font-bold"
+                      >
+                        ₹{formatPrice(totals.packagingCharge)}
+                      </Text>
                     </View>
                   )}
                   {!isGstOnlyOrder && (
                     <View className="flex-row justify-between mb-1">
-                    <Text
-                      style={{ color: theme.muted }}
-                      className="text-[13px] font-semibold"
-                    >
-                      Platform Fee
-                    </Text>
-                    <Text
-                      style={{ color: theme.text }}
-                      className="text-[13px] font-bold"
-                    >
-                      ₹{formatPrice(totals.platformFee)}
-                    </Text>
+                      <Text
+                        style={{ color: theme.muted }}
+                        className="text-[13px] font-semibold"
+                      >
+                        Platform Fee
+                      </Text>
+                      <Text
+                        style={{ color: theme.text }}
+                        className="text-[13px] font-bold"
+                      >
+                        ₹{formatPrice(totals.platformFee)}
+                      </Text>
                     </View>
                   )}
                   {!isGstOnlyOrder && (
@@ -717,7 +714,8 @@ const BillDetailsAccordion = ({ order, theme }: any) => {
                       className="text-[13px] font-semibold"
                     >
                       {isGstOnlyOrder ||
-                      (order.resolvedTaxPercentage ?? order.taxPercentage) == null
+                      (order.resolvedTaxPercentage ?? order.taxPercentage) ==
+                        null
                         ? "GST"
                         : `Restaurant GST (${order.resolvedTaxPercentage ?? order.taxPercentage}%)`}
                     </Text>
@@ -798,9 +796,7 @@ function OrderReviewSection({
   onReviewSubmitted: () => void;
 }) {
   const [rating, setRating] = useState(
-    Number.isInteger(order.orderReview?.rating)
-      ? order.orderReview.rating
-      : 0,
+    Number.isInteger(order.orderReview?.rating) ? order.orderReview.rating : 0,
   );
   const [comment, setComment] = useState(order.orderReview?.comment || "");
   const [hasReview, setHasReview] = useState(
@@ -906,7 +902,9 @@ function OrderReviewSection({
             opacity: isSubmitting || rating === 0 ? 0.55 : 1,
           }}
           accessibilityRole="button"
-          accessibilityLabel={hasReview ? "Update order review" : "Submit order review"}
+          accessibilityLabel={
+            hasReview ? "Update order review" : "Submit order review"
+          }
         >
           <Text className="text-sm font-black text-white">
             {isSubmitting
@@ -950,6 +948,7 @@ export default function OrdersScreen() {
   } = useOrderMode();
   const [orders, setOrders] = useState<any[]>([]);
   const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
+  const [deletingOrderId, setDeletingOrderId] = useState<string | null>(null);
   const [activeDineInSession, setActiveDineInSession] = useState<
     CustomerDineInSession | null | undefined
   >(undefined);
@@ -1064,9 +1063,7 @@ export default function OrdersScreen() {
     const savedTaxPercentage = Number(
       String(order.taxPercentage).replace("%", "").trim(),
     );
-    return Number.isFinite(savedTaxPercentage)
-      ? savedTaxPercentage
-      : undefined;
+    return Number.isFinite(savedTaxPercentage) ? savedTaxPercentage : undefined;
   };
 
   const getOrderBranchLabel = (order: any) => {
@@ -1119,12 +1116,9 @@ export default function OrdersScreen() {
       ...order,
       resolvedTaxPercentage: getOrderTaxPercentage(order),
       status: formatOrderStatus(status),
-      isActive: ![
-        "completed",
-        "cancelled",
-        "rejected",
-        "refunded",
-      ].includes(status),
+      isActive: !["completed", "cancelled", "rejected", "refunded"].includes(
+        status,
+      ),
     };
   });
 
@@ -1167,8 +1161,7 @@ export default function OrdersScreen() {
     e.stopPropagation();
     try {
       const sourceOrder = await api.getOrder(order.orderId);
-      const orderBranch =
-        sourceOrder.branchId || (sourceOrder as any).branch;
+      const orderBranch = sourceOrder.branchId || (sourceOrder as any).branch;
       const branchId =
         typeof orderBranch === "string"
           ? orderBranch
@@ -1224,51 +1217,55 @@ export default function OrdersScreen() {
             : undefined;
         const cartItems = sourceOrder.items.map(
           (item): CustomerCartItemInput => {
-          const menuItemId = item.menuItemId;
-          if (!menuItemId || !Number.isFinite(item.quantity) || item.quantity < 1) {
-            throw new Error(
-              "This order has incomplete item information and cannot be reordered.",
-            );
-          }
-          const customizations =
-            item.selectedCustomizations || item.customizations || [];
-          const selectedCustomizations: CustomerCustomizationSelection[] =
-            customizations.map((customization) => {
-              if (
-                !customization ||
-                typeof customization !== "object" ||
-                !("groupId" in customization) ||
-                typeof customization.groupId !== "string" ||
-                !("optionIds" in customization) ||
-                !Array.isArray(customization.optionIds) ||
-                !customization.optionIds.every(
-                  (optionId) => typeof optionId === "string",
-                )
-              ) {
-                throw new Error(
-                  "The saved customizations for this order cannot be restored. Please add the items from the menu.",
-                );
-              }
-              return {
-                groupId: customization.groupId,
-                optionIds: customization.optionIds,
-              };
-            });
-          const cartItem = {
-            menuItemId,
-            quantity: item.quantity,
-            selectedCustomizations,
-            branchId,
-          };
-          if (cartFulfillmentType === "delivery") {
-            if (!addressId) {
+            const menuItemId = item.menuItemId;
+            if (
+              !menuItemId ||
+              !Number.isFinite(item.quantity) ||
+              item.quantity < 1
+            ) {
               throw new Error(
-                "Choose a delivery address before reordering this delivery order.",
+                "This order has incomplete item information and cannot be reordered.",
               );
             }
-            return { ...cartItem, fulfillmentType: "delivery", addressId };
-          }
-          return { ...cartItem, fulfillmentType: cartFulfillmentType };
+            const customizations =
+              item.selectedCustomizations || item.customizations || [];
+            const selectedCustomizations: CustomerCustomizationSelection[] =
+              customizations.map((customization) => {
+                if (
+                  !customization ||
+                  typeof customization !== "object" ||
+                  !("groupId" in customization) ||
+                  typeof customization.groupId !== "string" ||
+                  !("optionIds" in customization) ||
+                  !Array.isArray(customization.optionIds) ||
+                  !customization.optionIds.every(
+                    (optionId) => typeof optionId === "string",
+                  )
+                ) {
+                  throw new Error(
+                    "The saved customizations for this order cannot be restored. Please add the items from the menu.",
+                  );
+                }
+                return {
+                  groupId: customization.groupId,
+                  optionIds: customization.optionIds,
+                };
+              });
+            const cartItem = {
+              menuItemId,
+              quantity: item.quantity,
+              selectedCustomizations,
+              branchId,
+            };
+            if (cartFulfillmentType === "delivery") {
+              if (!addressId) {
+                throw new Error(
+                  "Choose a delivery address before reordering this delivery order.",
+                );
+              }
+              return { ...cartItem, fulfillmentType: "delivery", addressId };
+            }
+            return { ...cartItem, fulfillmentType: cartFulfillmentType };
           },
         );
 
@@ -1289,6 +1286,48 @@ export default function OrdersScreen() {
         error instanceof Error ? error.message : "Please try again.",
       );
     }
+  };
+
+  const deleteOrder = async (order: any) => {
+    if (deletingOrderId) return;
+    setDeletingOrderId(order.orderId);
+    try {
+      await api.deleteOrder(order.orderId);
+      setOrders((currentOrders) =>
+        currentOrders.filter(
+          (currentOrder) => currentOrder.orderId !== order.orderId,
+        ),
+      );
+      setDetailsOrder((currentOrder: any) =>
+        currentOrder?.orderId === order.orderId ? null : currentOrder,
+      );
+      setTrackingOrder((currentOrder: any) =>
+        currentOrder?.orderId === order.orderId ? null : currentOrder,
+      );
+    } catch (error) {
+      Alert.alert(
+        "Unable to Delete Order",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setDeletingOrderId(null);
+    }
+  };
+
+  const confirmDeleteOrder = (event: any, order: any) => {
+    event.stopPropagation();
+    Alert.alert(
+      "Delete Order",
+      `Delete order ${order.id}? This cannot be undone.`,
+      [
+        { text: "Keep Order", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => void deleteOrder(order),
+        },
+      ],
+    );
   };
 
   const getItemsString = (items: any[]) =>
@@ -1363,7 +1402,9 @@ export default function OrdersScreen() {
             <Pressable
               key={tab}
               onPress={() =>
-                router.setParams({ tab: tab === "Past Orders" ? "past" : "active" })
+                router.setParams({
+                  tab: tab === "Past Orders" ? "past" : "active",
+                })
               }
               className="flex-1 items-center py-3 rounded-xl"
               style={{
@@ -1390,8 +1431,7 @@ export default function OrdersScreen() {
           accessibilityRole="button"
           accessibilityLabel={`Branch filter: ${
             branches.find(
-              (branch: any) =>
-                String(branch.id || branch._id) === branchFilter,
+              (branch: any) => String(branch.id || branch._id) === branchFilter,
             )?.name || "All Branches"
           }`}
         >
@@ -1399,9 +1439,9 @@ export default function OrdersScreen() {
             {branchFilter === "all"
               ? "All Branches"
               : branches.find(
-                    (branch: any) =>
-                      String(branch.id || branch._id) === branchFilter,
-                  )?.name || "Selected Branch"}
+                  (branch: any) =>
+                    String(branch.id || branch._id) === branchFilter,
+                )?.name || "Selected Branch"}
           </Text>
           <ChevronDown size={18} color={theme.muted} />
         </Pressable>
@@ -1493,13 +1533,14 @@ export default function OrdersScreen() {
               className="text-xl font-black mb-1"
               style={{ color: theme.text }}
             >
-              No {activeTab} Orders
+              No {activeTab}
             </Text>
             <Text
               className="text-sm font-semibold"
               style={{ color: theme.muted }}
             >
-              {orderSearch || branchFilter !== "all" ||
+              {orderSearch ||
+              branchFilter !== "all" ||
               fulfillmentFilter !== "all"
                 ? "Try changing the branch, order type, or search."
                 : "Craving something delicious?"}
@@ -1609,28 +1650,53 @@ export default function OrdersScreen() {
                   >
                     ₹{formatPrice(totals.finalPayable)}
                   </Text>
-                  <Pressable
-                    onPress={(e) => {
-                      if (order.isActive) {
-                        e.stopPropagation();
-                        showOrderDetails(order, true);
-                      } else {
-                        handleReorder(e, order);
-                      }
-                    }}
-                    className="px-5 py-2.5 rounded-xl border"
-                    style={{
-                      backgroundColor: theme.bg,
-                      borderColor: theme.primary,
-                    }}
-                  >
-                    <Text
-                      className="text-sm font-black"
-                      style={{ color: theme.primary }}
+                  <View className="flex-row items-center gap-2">
+                    {!order.isActive ? (
+                      <Pressable
+                        onPress={(event) => confirmDeleteOrder(event, order)}
+                        disabled={deletingOrderId !== null}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Delete order ${order.id}`}
+                        className="h-10 w-10 items-center justify-center rounded-xl border"
+                        style={{
+                          backgroundColor: theme.bg,
+                          borderColor: theme.danger,
+                          opacity: deletingOrderId !== null ? 0.6 : 1,
+                        }}
+                      >
+                        {deletingOrderId === order.orderId ? (
+                          <ActivityIndicator
+                            size="small"
+                            color={theme.danger}
+                          />
+                        ) : (
+                          <Trash2 size={18} color={theme.danger} />
+                        )}
+                      </Pressable>
+                    ) : null}
+                    <Pressable
+                      onPress={(e) => {
+                        if (order.isActive) {
+                          e.stopPropagation();
+                          showOrderDetails(order, true);
+                        } else {
+                          handleReorder(e, order);
+                        }
+                      }}
+                      className="px-5 py-2.5 rounded-xl border"
+                      style={{
+                        backgroundColor: theme.bg,
+                        borderColor: theme.primary,
+                      }}
                     >
-                      {order.isActive ? "Track Order" : "Reorder"}
-                    </Text>
-                  </Pressable>
+                      <Text
+                        className="text-sm font-black"
+                        style={{ color: theme.primary }}
+                      >
+                        {order.isActive ? "Track Order" : "Reorder"}
+                      </Text>
+                    </Pressable>
+                  </View>
                 </View>
               </Pressable>
             );
@@ -1655,7 +1721,10 @@ export default function OrdersScreen() {
             style={{ backgroundColor: theme.bg, borderColor: theme.border }}
           >
             <View className="mb-4 flex-row items-center justify-between">
-              <Text className="text-lg font-black" style={{ color: theme.text }}>
+              <Text
+                className="text-lg font-black"
+                style={{ color: theme.text }}
+              >
                 Filter by branch
               </Text>
               <Pressable
@@ -1685,7 +1754,9 @@ export default function OrdersScreen() {
                   className="mb-2 rounded-xl border px-4 py-3"
                   style={{
                     backgroundColor:
-                      branchFilter === branch.id ? theme.secondaryBg : theme.card,
+                      branchFilter === branch.id
+                        ? theme.secondaryBg
+                        : theme.card,
                     borderColor:
                       branchFilter === branch.id ? theme.primary : theme.border,
                   }}
@@ -1747,8 +1818,7 @@ export default function OrdersScreen() {
               bottom: 0,
               backgroundColor: theme.bg,
               paddingTop: insets.top + 24,
-              paddingBottom:
-                Platform.OS === "android" ? insets.bottom + 12 : 0,
+              paddingBottom: Platform.OS === "android" ? insets.bottom + 12 : 0,
             }}
           >
             <View className="flex-row items-center justify-between mb-6">
@@ -1846,74 +1916,72 @@ export default function OrdersScreen() {
                 {getOrderStatusTimeline(
                   trackingOrder,
                   activeDineInSessionId,
-                ).map(
-                  (step: any, index: number, steps: any[]) => (
-                    <View
-                      key={step.status}
-                      className={`flex-row items-start ${index === steps.length - 1 ? "" : "mb-6"}`}
-                    >
-                      <View className="items-center mr-4">
-                        {step.isComplete ? (
-                          <CheckCircle2 size={24} color={theme.primary} />
-                        ) : (
-                          <View
-                            className="w-6 h-6 rounded-full items-center justify-center border-2"
-                            style={{
-                              backgroundColor: step.isCurrent
-                                ? theme.primary
-                                : "transparent",
-                              borderColor: step.isCurrent
-                                ? theme.primary
-                                : theme.border,
-                            }}
-                          >
-                            {step.isCurrent && (
-                              <View className="w-2 h-2 rounded-full bg-white" />
-                            )}
-                          </View>
-                        )}
-                        {index < steps.length - 1 && (
-                          <View
-                            className="w-0.5 h-10 my-1"
-                            style={{
-                              backgroundColor: step.isComplete
-                                ? theme.primary
-                                : theme.border,
-                            }}
-                          />
-                        )}
-                      </View>
-                      <View className="flex-1">
-                        <Text
-                          className="text-base font-bold"
+                ).map((step: any, index: number, steps: any[]) => (
+                  <View
+                    key={step.status}
+                    className={`flex-row items-start ${index === steps.length - 1 ? "" : "mb-6"}`}
+                  >
+                    <View className="items-center mr-4">
+                      {step.isComplete ? (
+                        <CheckCircle2 size={24} color={theme.primary} />
+                      ) : (
+                        <View
+                          className="w-6 h-6 rounded-full items-center justify-center border-2"
                           style={{
-                            color: step.isCurrent
+                            backgroundColor: step.isCurrent
                               ? theme.primary
-                              : step.isComplete
-                                ? theme.text
-                                : theme.muted,
+                              : "transparent",
+                            borderColor: step.isCurrent
+                              ? theme.primary
+                              : theme.border,
                           }}
                         >
-                          {step.label}
-                        </Text>
+                          {step.isCurrent && (
+                            <View className="w-2 h-2 rounded-full bg-white" />
+                          )}
+                        </View>
+                      )}
+                      {index < steps.length - 1 && (
+                        <View
+                          className="w-0.5 h-10 my-1"
+                          style={{
+                            backgroundColor: step.isComplete
+                              ? theme.primary
+                              : theme.border,
+                          }}
+                        />
+                      )}
+                    </View>
+                    <View className="flex-1">
+                      <Text
+                        className="text-base font-bold"
+                        style={{
+                          color: step.isCurrent
+                            ? theme.primary
+                            : step.isComplete
+                              ? theme.text
+                              : theme.muted,
+                        }}
+                      >
+                        {step.label}
+                      </Text>
+                      <Text
+                        className="text-xs font-semibold mt-1"
+                        style={{ color: theme.muted }}
+                      >
+                        {step.note}
+                      </Text>
+                      {step.changedAt ? (
                         <Text
-                          className="text-xs font-semibold mt-1"
+                          className="text-[11px] font-medium mt-1"
                           style={{ color: theme.muted }}
                         >
-                          {step.note}
+                          {new Date(step.changedAt).toLocaleString()}
                         </Text>
-                        {step.changedAt ? (
-                          <Text
-                            className="text-[11px] font-medium mt-1"
-                            style={{ color: theme.muted }}
-                          >
-                            {new Date(step.changedAt).toLocaleString()}
-                          </Text>
-                        ) : null}
-                      </View>
+                      ) : null}
                     </View>
-                  ),
-                )}
+                  </View>
+                ))}
               </View>
             </ScrollView>
           </Animated.View>
@@ -1929,7 +1997,9 @@ export default function OrdersScreen() {
         onRequestClose={() => setDetailsOrder(null)}
       >
         <View
-          className={Platform.OS === "android" ? "flex-1" : "flex-1 justify-end"}
+          className={
+            Platform.OS === "android" ? "flex-1" : "flex-1 justify-end"
+          }
           style={{
             backgroundColor:
               Platform.OS === "android" ? theme.bg : "rgba(0, 0, 0, 0.6)",
@@ -2066,7 +2136,10 @@ export default function OrdersScreen() {
                   theme={theme}
                   onFeedbackFocus={() => {
                     setTimeout(
-                      () => detailsScrollRef.current?.scrollToEnd({ animated: true }),
+                      () =>
+                        detailsScrollRef.current?.scrollToEnd({
+                          animated: true,
+                        }),
                       300,
                     );
                   }}
@@ -2075,10 +2148,7 @@ export default function OrdersScreen() {
               ) : null}
             </ScrollView>
 
-            <View
-              pointerEvents="none"
-              style={{ height: keyboardHeight }}
-            />
+            <View pointerEvents="none" style={{ height: keyboardHeight }} />
             <Pressable
               onPress={(e) => {
                 handleReorder(e, detailsOrder);
@@ -2100,7 +2170,7 @@ export default function OrdersScreen() {
                 Reorder Items
               </Text>
             </Pressable>
-            </Animated.View>
+          </Animated.View>
         </View>
       </Modal>
     </View>

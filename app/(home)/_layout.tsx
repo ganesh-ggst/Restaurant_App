@@ -1,5 +1,10 @@
 import { BlurView } from "expo-blur";
-import { Stack, usePathname, useRouter } from "expo-router";
+import {
+  Stack,
+  useGlobalSearchParams,
+  usePathname,
+  useRouter,
+} from "expo-router";
 import {
   CheckCircle2,
   Compass,
@@ -550,17 +555,24 @@ export default function HomeLayout() {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { isGuest: guestParam } = useGlobalSearchParams<{
+    isGuest?: string;
+  }>();
   const pathname = usePathname();
   const isDeliveryCartScreen = pathname.endsWith("/delivery-cart");
   const isProfileScreen = pathname.includes("/profile");
   const tabBarBottom = Math.max(insets.bottom, MIN_TAB_BAR_BOTTOM);
 
   const [mode, setMode] = useState("Delivery");
+  const [isGuest] = useState(guestParam === "true");
   const [favorites, setFavorites] = useState<string[]>([]);
   const [menuItems, setMenuItems] = useState<
     ReturnType<typeof toMenuCardItem>[]
   >([]);
+  const [menuItemsLoadedForBranchId, setMenuItemsLoadedForBranchId] =
+    useState<string | null>(null);
   const deliveryMenuRequestId = useRef(0);
+  const featuredReelsRequestId = useRef(0);
   const [isRefreshingHome, setIsRefreshingHome] = useState(false);
   const [categories, setCategories] = useState<
     (CustomerCategory & { id: string })[]
@@ -572,6 +584,7 @@ export default function HomeLayout() {
       image: string;
     })[]
   >([]);
+  const [offersLoaded, setOffersLoaded] = useState(false);
   const [featuredReels, setFeaturedReels] = useState<CustomerFeaturedReel[]>(
     [],
   );
@@ -603,6 +616,7 @@ export default function HomeLayout() {
   const [activeBranch, setActiveBranch] = useState<
     (CustomerBranch & { id: string; address: string }) | null
   >(null);
+  const branchSelectionVersion = useRef(0);
   const [activeTable, setActiveTable] = useState<string | null>(null);
   const [dineInSession, setDineInSession] =
     useState<CustomerDineInSession | null>(null);
@@ -633,6 +647,20 @@ export default function HomeLayout() {
     (sum: number, item: any) => sum + item.quantity,
     0,
   );
+
+  const promptGuestSignUp = () => {
+    Alert.alert(
+      "Sign Up to Order",
+      "Create an account to add items to your cart and place an order.",
+      [
+        { text: "Not now", style: "cancel" },
+        {
+          text: "Sign Up",
+          onPress: () => router.push("/(auth)/login"),
+        },
+      ],
+    );
+  };
 
   const closeDineInCartModalIfEmpty = (remainingItemCount: number) => {
     if (
@@ -677,6 +705,7 @@ export default function HomeLayout() {
 
   const loadUserData = useCallback(async () => {
     const menuRequestId = ++deliveryMenuRequestId.current;
+    const branchSelectionVersionAtLoad = branchSelectionVersion.current;
     let cartBranchId = activeBranch?.id;
     const fulfillmentType =
       mode === "Delivery"
@@ -684,7 +713,7 @@ export default function HomeLayout() {
         : mode === "Takeaway"
           ? "takeaway"
           : "dine-in";
-    const [menuResult, categoryResult, branchResult, offerResult, reelResult] =
+    const [menuResult, categoryResult, branchResult, offerResult] =
       await Promise.allSettled([
         api.getMenuItems({
           stock: "all",
@@ -697,7 +726,6 @@ export default function HomeLayout() {
           ? api.getNearbyBranches(activeAddressId)
           : api.getBranches(),
         api.getOffers(),
-        api.getFeaturedReels(),
       ]);
 
     const menuCardItems =
@@ -715,11 +743,13 @@ export default function HomeLayout() {
       menuRequestId === deliveryMenuRequestId.current
     ) {
       setMenuItems(menuCardItems);
+      setMenuItemsLoadedForBranchId(activeBranch?.id || null);
     } else if (
       menuResult.status === "rejected" &&
       menuRequestId === deliveryMenuRequestId.current
     ) {
       setMenuItems([]);
+      setMenuItemsLoadedForBranchId(null);
       if (!isUnavailableRestaurantError(menuResult.reason)) {
         Alert.alert(
           "Unable to Load Menu",
@@ -772,39 +802,41 @@ export default function HomeLayout() {
             ...(item.branchId ? [item.branchId] : []),
           ]),
       );
+      const isBranchEligible = (branch: CustomerBranch) =>
+        isGuest
+          ? branch.isActive && branch.isOnline !== false
+          : mode === "Delivery"
+            ? isDeliveryBranchEligible(branch, activeAddressLocation)
+            : branch.isActive && branch.isOnline !== false;
       const defaultBranch =
         branchOptions.find(
           (branch: any) =>
-            (mode === "Delivery"
-            ? isDeliveryBranchEligible(branch, activeAddressLocation)
-              : branch.isActive && branch.isOnline !== false) &&
-            menuBranchIds.has(branch.id),
+            isBranchEligible(branch) && menuBranchIds.has(branch.id),
         ) ||
-        branchOptions.find(
-          (branch: any) =>
-            mode === "Delivery"
-            ? isDeliveryBranchEligible(branch, activeAddressLocation)
-              : branch.isActive && branch.isOnline !== false,
-        ) ||
+        branchOptions.find(isBranchEligible) ||
         null;
       const selectedBranch =
-        branchOptions.find(
-          (branch: any) =>
+        branchOptions.find((branch: any) => {
+          const preserveGuestSelection =
+            isGuest && branchSelectionVersionAtLoad > 0;
+          return (
             branch.id === activeBranch?.id &&
-            (mode === "Delivery"
-              ? isDeliveryBranchEligible(branch, activeAddressLocation)
-              : branch.isActive && branch.isOnline !== false),
-        ) ||
+            (preserveGuestSelection || isBranchEligible(branch))
+          );
+        }) ||
         defaultBranch;
       cartBranchId = selectedBranch?.id;
       setBranches(branchOptions);
-      setActiveBranch(selectedBranch);
+      if (branchSelectionVersion.current === branchSelectionVersionAtLoad) {
+        setActiveBranch(selectedBranch);
+      }
       setBranchesLoaded(true);
     } else {
       Alert.alert("Unable to Load Branches", branchResult.reason.message);
     }
 
     if (offerResult.status === "fulfilled") {
+      setOffersLoaded(true);
       setOffers(
         offerResult.value
           .filter((offer: any) => offer.isActive)
@@ -817,19 +849,6 @@ export default function HomeLayout() {
       );
     } else {
       Alert.alert("Unable to Load Offers", offerResult.reason.message);
-    }
-
-    if (reelResult.status === "fulfilled") {
-      setFeaturedReels(
-        reelResult.value
-          .filter((reel: any) => reel.isActive !== false)
-          .sort(
-            (first: any, second: any) =>
-              (first.displayOrder || 0) - (second.displayOrder || 0),
-          ),
-      );
-    } else {
-      Alert.alert("Unable to Load Featured Content", reelResult.reason.message);
     }
 
     try {
@@ -925,6 +944,7 @@ export default function HomeLayout() {
     activeAddressId,
     activeAddressLocation,
     activeBranch?.id,
+    isGuest,
     mode,
   ]);
 
@@ -953,7 +973,7 @@ export default function HomeLayout() {
           : "dine-in";
     const address =
       mode === "Delivery" ? activeAddress?.id : undefined;
-    if (mode === "Delivery" && !address) return;
+    if (mode === "Delivery" && !address && !isGuest) return;
 
     void api
       .getMenuItems({
@@ -967,10 +987,12 @@ export default function HomeLayout() {
         setMenuItems(
           items.map((item) => toMenuCardItem(item, categories)),
         );
+        setMenuItemsLoadedForBranchId(activeBranch.id);
       })
       .catch((error: unknown) => {
         if (requestId !== deliveryMenuRequestId.current) return;
         setMenuItems([]);
+        setMenuItemsLoadedForBranchId(null);
         if (!isUnavailableRestaurantError(error)) {
           Alert.alert(
             "Unable to Load Delivery Estimates",
@@ -984,7 +1006,41 @@ export default function HomeLayout() {
         deliveryMenuRequestId.current += 1;
       }
     };
-  }, [activeAddress?.id, activeBranch?.id, categories, mode]);
+  }, [activeAddress?.id, activeBranch?.id, categories, isGuest, mode]);
+
+  useEffect(() => {
+    const requestId = ++featuredReelsRequestId.current;
+    const branchId = activeBranch?.id;
+    if (!branchId) return;
+
+    void api
+      .getFeaturedReels(branchId)
+      .then((reels) => {
+        if (requestId !== featuredReelsRequestId.current) return;
+        setFeaturedReels(
+          reels
+            .filter((reel) => reel.isActive !== false)
+            .sort(
+              (first, second) =>
+                (first.displayOrder || 0) - (second.displayOrder || 0),
+            ),
+        );
+      })
+      .catch((error: unknown) => {
+        if (requestId !== featuredReelsRequestId.current) return;
+        setFeaturedReels([]);
+        Alert.alert(
+          "Unable to Load Featured Content",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      });
+
+    return () => {
+      if (requestId === featuredReelsRequestId.current) {
+        featuredReelsRequestId.current += 1;
+      }
+    };
+  }, [activeBranch?.id]);
 
   const reloadCart = useCallback(
     async (expectedBranchId?: string) => {
@@ -1074,6 +1130,11 @@ export default function HomeLayout() {
   const selectActiveBranch = async (
     branch: CustomerBranch & { id: string; address: string },
   ) => {
+    if (isGuest) {
+      branchSelectionVersion.current += 1;
+      setActiveBranch(branch);
+      return;
+    }
     if (
       mode === "Delivery" &&
       !isDeliveryBranchEligible(branch, activeAddressLocation)
@@ -1084,6 +1145,7 @@ export default function HomeLayout() {
       );
       return;
     }
+    branchSelectionVersion.current += 1;
     if (!branch.isActive || branch.isOnline === false) {
       setActiveBranch(branch);
       return;
@@ -1145,6 +1207,10 @@ export default function HomeLayout() {
   };
 
   const previewCheckout = async (offerCode?: string) => {
+    if (isGuest) {
+      promptGuestSignUp();
+      return null;
+    }
     const addressId = mode === "Delivery" ? activeAddress?.id : undefined;
     if (!activeBranch?.id) {
       throw new Error("Choose a restaurant branch before checkout.");
@@ -1171,6 +1237,10 @@ export default function HomeLayout() {
     tax?: number,
     total?: number,
   ) => {
+    if (isGuest) {
+      promptGuestSignUp();
+      return null;
+    }
     if (!activeBranch?.id) {
       throw new Error("Choose a restaurant branch before checkout.");
     }
@@ -1234,6 +1304,10 @@ export default function HomeLayout() {
     addons: CustomerCustomizationSelection[],
     totalAmount: number,
   ): Promise<boolean> => {
+    if (isGuest) {
+      promptGuestSignUp();
+      return false;
+    }
     if (mode === "Dine-in" && dineInCartState === "waiting") {
       Alert.alert("Order Being Submitted", "Please wait for the order to finish.");
       return false;
@@ -1316,6 +1390,10 @@ export default function HomeLayout() {
     itemId: string,
     targetCartItemId?: string,
   ) => {
+    if (isGuest) {
+      promptGuestSignUp();
+      return;
+    }
     if (mode === "Dine-in" && dineInCartState === "waiting") {
       Alert.alert("Order Being Submitted", "Please wait for the order to finish.");
       return;
@@ -1406,6 +1484,10 @@ export default function HomeLayout() {
   const handleRemoveCartItems = async (
     itemsToRemove: { menuItemId: string; cartItemId?: string }[],
   ) => {
+    if (isGuest) {
+      promptGuestSignUp();
+      return;
+    }
     const branchId = activeBranch?.id;
     const cartContext = branchId
       ? getCartContext(branchId, mode, activeAddress?.id)
@@ -1703,12 +1785,16 @@ export default function HomeLayout() {
       <OrderContext.Provider
         value={{
           mode,
+          isGuest,
+          promptGuestSignUp,
           setMode,
           carts,
           setCarts,
           menuItems,
+          menuItemsLoadedForBranchId,
           categories,
           offers,
+          offersLoaded,
           featuredReels,
           refreshHomeData,
           isRefreshingHome,

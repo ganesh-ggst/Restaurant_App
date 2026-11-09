@@ -15,6 +15,7 @@ import {
   RefreshControl,
   ScrollView,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -135,11 +136,17 @@ function VideoPreview({ uri }: { uri: string }) {
 
 function toLocalMedia(
   screen: AuthScreenKind,
-  item: { id: string; url: string; isActive: boolean },
+  item: {
+    id: string;
+    title?: string;
+    url: string;
+    isActive: boolean;
+  },
 ): AuthScreenVideo {
   const mediaType = getScreenMediaType(screen, item.url);
   return {
     id: item.id,
+    title: item.title,
     uri: item.url,
     fileName: getScreenMediaFileName(item.url),
     mediaType,
@@ -217,6 +224,7 @@ export default function AuthScreenMedia({
 
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editingVideoId, setEditingVideoId] = useState<string | null>(null);
+  const [mediaTitle, setMediaTitle] = useState("");
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(
     null,
   );
@@ -270,6 +278,7 @@ export default function AuthScreenMedia({
   const openEditor = (media?: AuthScreenVideo) => {
     const requestId = ++previewRequestId.current;
     setEditingVideoId(media?.id ?? null);
+    setMediaTitle(media?.title ?? "");
     setSelectedMedia(
       media
         ? {
@@ -410,18 +419,23 @@ export default function AuthScreenMedia({
   };
 
   const saveMedia = async () => {
-    if (!selectedMedia?.uploadFile || saving) return;
+    if ((!editingVideoId && !selectedMedia?.uploadFile) || saving) return;
 
     setSaving(true);
     try {
       if (editingVideoId) {
         await adminProfileApi.updateAuthScreenMedia(screen, editingVideoId, {
-          file: selectedMedia.uploadFile,
+          ...(selectedMedia?.uploadFile
+            ? { file: selectedMedia.uploadFile }
+            : {}),
+          title: mediaTitle.trim(),
         });
       } else {
+        if (!selectedMedia?.uploadFile) return;
         const createdMedia = await adminProfileApi.createAuthScreenMedia(
           screen,
           selectedMedia.uploadFile,
+          mediaTitle.trim(),
         );
         if (createdMedia.isActive) {
           await Promise.all(
@@ -480,7 +494,8 @@ export default function AuthScreenMedia({
   };
 
   const deleteMedia = (media: AuthScreenVideo) => {
-    Alert.alert("Delete media?", `Remove "${media.fileName}"?`, [
+    const displayName = media.title?.trim() || media.fileName;
+    Alert.alert("Delete media?", `Remove "${displayName}"?`, [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete",
@@ -505,6 +520,8 @@ export default function AuthScreenMedia({
     const seconds = Math.round(durationMs / 1000);
     return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   };
+  const getMediaDisplayName = (media: AuthScreenVideo) =>
+    media.title?.trim() || media.fileName;
 
   return (
     <View
@@ -586,7 +603,7 @@ export default function AuthScreenMedia({
                 disabled={Boolean(pendingMediaId)}
                 accessibilityRole="radio"
                 accessibilityState={{ selected: media.isActive }}
-                accessibilityLabel={`Set ${media.fileName} as the active ${title.toLowerCase()} media`}
+                accessibilityLabel={`Set ${getMediaDisplayName(media)} as the active ${title.toLowerCase()} media`}
               >
                 <View
                   className="h-6 w-6 items-center justify-center rounded-full border-2"
@@ -611,7 +628,7 @@ export default function AuthScreenMedia({
                     }}
                     numberOfLines={1}
                   >
-                    {media.fileName}
+                    {getMediaDisplayName(media)}
                   </Text>
                   <Text className="mt-1 text-xs" style={{ color: theme.muted }}>
                     {media.mediaType === "video" ? "Video" : "Image"}
@@ -628,7 +645,7 @@ export default function AuthScreenMedia({
                   hitSlop={10}
                   className="p-2"
                   accessibilityRole="button"
-                  accessibilityLabel={`Replace ${media.fileName}`}
+                  accessibilityLabel={`Edit ${getMediaDisplayName(media)}`}
                 >
                   <Feather name="edit-2" size={18} color={theme.primary} />
                 </Pressable>
@@ -637,7 +654,7 @@ export default function AuthScreenMedia({
                   hitSlop={10}
                   className="p-2"
                   accessibilityRole="button"
-                  accessibilityLabel={`Delete ${media.fileName}`}
+                  accessibilityLabel={`Delete ${getMediaDisplayName(media)}`}
                 >
                   <Feather name="trash-2" size={18} color={theme.danger} />
                 </Pressable>
@@ -684,6 +701,28 @@ export default function AuthScreenMedia({
                     <Feather name="x" size={22} color={theme.muted} />
                   </Pressable>
                 </View>
+
+                <Text
+                  className="mb-2 text-xs font-bold uppercase"
+                  style={{ color: theme.muted }}
+                >
+                  Title *
+                </Text>
+                <TextInput
+                  value={mediaTitle}
+                  onChangeText={setMediaTitle}
+                  placeholder="Enter a title to identify this option"
+                  placeholderTextColor={theme.muted}
+                  editable={!saving}
+                  maxLength={100}
+                  accessibilityLabel={`${title} media title`}
+                  className="mb-4 rounded-xl border px-4 py-3 text-sm"
+                  style={{
+                    color: theme.text,
+                    backgroundColor: theme.bg,
+                    borderColor: theme.border,
+                  }}
+                />
 
                 <Text
                   className="mb-2 text-xs font-bold uppercase"
@@ -759,11 +798,19 @@ export default function AuthScreenMedia({
                 </Pressable>
 
                 <Button
-                  title={saving ? "Uploading..." : "Save"}
+                  title={
+                    saving
+                      ? selectedMedia?.uploadFile
+                        ? "Uploading..."
+                        : "Saving..."
+                      : "Save"
+                  }
                   onPress={() => void saveMedia()}
                   loading={saving}
                   disabled={
-                    !selectedMedia?.uploadFile || pickingMedia || saving
+                    (!editingVideoId && !selectedMedia?.uploadFile) ||
+                    pickingMedia ||
+                    saving
                   }
                 />
                 <Pressable
