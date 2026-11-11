@@ -5,14 +5,17 @@ import {
   ActivityIndicator,
   Image,
   Keyboard,
+  Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
   useWindowDimensions,
 } from "react-native";
+import { X } from "lucide-react-native";
 import { VideoView, useVideoPlayer } from "expo-video";
 import { useEvent } from "expo";
 import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
@@ -74,6 +77,7 @@ export default function LoginScreen() {
   const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
+  const [termsVisible, setTermsVisible] = useState(false);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [loginMediaResult, setLoginMediaResult] = useState<{
     branchId?: string;
@@ -238,26 +242,25 @@ export default function LoginScreen() {
       >
         By continuing, you agree to our
       </Text>
-      <Pressable onPress={() => console.log("Terms of Use clicked")}>
-        <View className="mt-0.5 flex-row items-center justify-center">
+      <View className="mt-0.5 flex-row items-center justify-center">
+        <Pressable
+          onPress={() => setTermsVisible(true)}
+          accessibilityRole="button"
+          accessibilityLabel="View Terms and Conditions"
+          hitSlop={8}
+        >
           <Text
             className="text-[10px] font-bold"
             style={{ color: theme.primary }}
           >
-            Terms of Use
+            Terms & Conditions
           </Text>
-          <Text className="text-[10px]" style={{ color: theme.muted }}>
-            {" "}
-            &{" "}
-          </Text>
-          <Text
-            className="text-[10px] font-bold"
-            style={{ color: theme.primary }}
-          >
-            Privacy Policy
-          </Text>
-        </View>
-      </Pressable>
+        </Pressable>
+        <Text className="text-[10px]" style={{ color: theme.muted }}>
+          {" "}
+          & Privacy Policy
+        </Text>
+      </View>
     </View>
   );
 
@@ -268,6 +271,112 @@ export default function LoginScreen() {
       style={{ backgroundColor: theme.bg }}
     >
       <StatusBar style={theme.isDark ? "light" : "dark"} />
+
+      <Modal
+        visible={termsVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setTermsVisible(false)}
+      >
+        <View
+          className="flex-1 items-center justify-center px-5"
+          style={{ backgroundColor: "rgba(0, 0, 0, 0.55)" }}
+        >
+          <View
+            className="w-full overflow-hidden rounded-3xl"
+            style={{
+              maxHeight: "82%",
+              backgroundColor: theme.card,
+              borderColor: theme.border,
+              borderWidth: 1,
+            }}
+          >
+            <View
+              className="flex-row items-center justify-between border-b px-5 py-4"
+              style={{ borderBottomColor: theme.border }}
+            >
+              <Text
+                className="text-lg font-bold"
+                style={{ color: theme.text }}
+              >
+                Terms & Conditions
+              </Text>
+              <Pressable
+                onPress={() => setTermsVisible(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Close Terms and Conditions"
+                hitSlop={10}
+              >
+                <X size={22} color={theme.muted} />
+              </Pressable>
+            </View>
+
+            <ScrollView
+              className="px-5"
+              contentContainerStyle={{ paddingVertical: 18 }}
+              showsVerticalScrollIndicator={false}
+            >
+              <Text
+                className="mb-5 text-sm leading-5"
+                style={{ color: theme.muted }}
+              >
+                Please read these terms before using the app or placing an
+                order.
+              </Text>
+
+              <Text
+                className="mb-1 text-sm font-bold"
+                style={{ color: theme.text }}
+              >
+                Using the app
+              </Text>
+              <Text
+                className="mb-4 text-sm leading-5"
+                style={{ color: theme.muted }}
+              >
+                Use the app lawfully and provide accurate information when
+                ordering. Your phone number may be used to verify your account
+                and provide order updates.
+              </Text>
+
+              <Text
+                className="mb-1 text-sm font-bold"
+                style={{ color: theme.text }}
+              >
+                Orders and availability
+              </Text>
+              <Text
+                className="mb-4 text-sm leading-5"
+                style={{ color: theme.muted }}
+              >
+                Menu items, prices, and availability may change. Review your
+                order details and any applicable charges before confirming.
+                order changes or cancellations are subject to the restaurant&apos;s
+                policy.
+              </Text>
+
+              <Text
+                className="mb-1 text-sm font-bold"
+                style={{ color: theme.text }}
+              >
+                Updates
+              </Text>
+              <Text className="text-sm leading-5" style={{ color: theme.muted }}>
+                These terms may be updated from time to time. Please review
+                them when using the app.
+              </Text>
+            </ScrollView>
+
+            <View className="px-5 pb-5">
+              <Button
+                title="Got it"
+                onPress={() => setTermsVisible(false)}
+                className="py-2.5"
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <KeyboardAwareScrollView
         className="flex-1"
