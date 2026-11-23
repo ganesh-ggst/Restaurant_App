@@ -2,7 +2,7 @@
   "expo": {
     "name": "Green Spice",
     "slug": "green-spice",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "green-spice",
@@ -12,7 +12,8 @@
       "bundleIdentifier": "com.ggst.greenspice",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
-      }
+      },
+      "buildNumber": "2"
     },
     "android": {
       "softwareKeyboardLayoutMode": "resize",
@@ -23,7 +24,8 @@
         "monochromeImage": "./assets/images/android-apk-icon-monochrome-padded.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.ggst.greenspice"
+      "package": "com.ggst.greenspice",
+      "versionCode": 2
     },
     "web": {
       "output": "static",
@@ -47,7 +49,9 @@
         {
           "photosPermission": "Allow Restaurant_App to access photos.",
           "savePhotosPermission": "Allow Restaurant_App to save table QR codes.",
-          "granularPermissions": ["photo"]
+          "granularPermissions": [
+            "photo"
+          ]
         }
       ],
       [
@@ -85,7 +89,9 @@
         {
           "microphonePermission": "Allow $(PRODUCT_NAME) to use the microphone for voice search.",
           "speechRecognitionPermission": "Allow $(PRODUCT_NAME) to recognize speech for menu search.",
-          "androidSpeechServicePackages": ["com.google.android.googlequicksearchbox"]
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox"
+          ]
         }
       ]
     ],
