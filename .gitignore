@@ -13,6 +13,7 @@ CLAUDE.md
 .env
 .env.example
 .idea
+/credentials.json
 
 # Backend
 /backend/
