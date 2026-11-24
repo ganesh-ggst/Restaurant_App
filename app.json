@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Green Spice",
-    "slug": "green-spice",
+    "slug": "Restaurant_App",
     "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -49,9 +49,7 @@
         {
           "photosPermission": "Allow Restaurant_App to access photos.",
           "savePhotosPermission": "Allow Restaurant_App to save table QR codes.",
-          "granularPermissions": [
-            "photo"
-          ]
+          "granularPermissions": ["photo"]
         }
       ],
       [
