@@ -1,8 +1,9 @@
 import { useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { MapPin, Pencil, Plus, Star, Trash2 } from "lucide-react-native";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
+  AppState,
   ActivityIndicator,
   Alert,
   Modal,
@@ -40,6 +41,7 @@ export default function AddressesScreen() {
   const insets = useSafeAreaInsets();
   const [addresses, setAddresses] = useState<CustomerAddress[]>([]);
   const [loading, setLoading] = useState(true);
+  const hasLoadedAddresses = useRef(false);
   const [error, setError] = useState("");
   const [showAddressSourceModal, setShowAddressSourceModal] = useState(false);
   const [settingDefaultAddressId, setSettingDefaultAddressId] = useState<
@@ -54,11 +56,17 @@ export default function AddressesScreen() {
     });
   };
 
-  const loadAddresses = useCallback(async () => {
-    setLoading(true);
+  const loadAddresses = useCallback(async (forceRefresh = false) => {
+    if (!hasLoadedAddresses.current) setLoading(true);
     setError("");
     try {
-      setAddresses(await api.getAddresses());
+      setAddresses(
+        await api.getAddresses(forceRefresh, (updatedAddresses) => {
+          setAddresses(updatedAddresses);
+          hasLoadedAddresses.current = true;
+        }),
+      );
+      hasLoadedAddresses.current = true;
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -73,6 +81,10 @@ export default function AddressesScreen() {
   useFocusEffect(
     useCallback(() => {
       void loadAddresses();
+      const subscription = AppState.addEventListener("change", (nextState) => {
+        if (nextState === "active") void loadAddresses();
+      });
+      return () => subscription.remove();
     }, [loadAddresses]),
   );
 
@@ -83,6 +95,7 @@ export default function AddressesScreen() {
       await api.setDefaultAddress(id);
       const updatedAddresses = await api.getAddresses();
       setAddresses(updatedAddresses);
+      hasLoadedAddresses.current = true;
       if (
         !updatedAddresses.some(
           (address) => address._id === id && address.isDefault,

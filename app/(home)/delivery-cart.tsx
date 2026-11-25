@@ -1,13 +1,32 @@
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { DeliveryCartModal } from "../../components/home/DeliveryCartModal";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { api } from "../../services/api";
-import type { DeliverySpeed } from "../../services/api/customer";
-import { useOrderMode } from "./_layout";
+import type {
+  CustomerCartContext,
+  DeliverySpeed,
+} from "../../services/api/customer";
+import { useOrderMode } from "../../contexts/HomeContext";
+
+function getCartContext(
+  mode: string,
+  branchId: string,
+  addressId?: string,
+): CustomerCartContext {
+  if (mode === "Delivery") {
+    if (!addressId) {
+      throw new Error("Choose a delivery address before updating your cart.");
+    }
+    return { branchId, addressId, fulfillmentType: "delivery" };
+  }
+  return {
+    branchId,
+    fulfillmentType: mode === "Dine-in" ? "dine-in" : "takeaway",
+  };
+}
 
 function getEntityId(value: any): string | null {
   if (typeof value === "string") return value;
@@ -21,6 +40,8 @@ export default function DeliveryCartScreen() {
   const theme = useAppTheme();
   const {
     mode,
+    isGuest,
+    clearLocalGuestCart,
     activeCart,
     reloadCart,
     activeAddress,
@@ -74,22 +95,15 @@ export default function DeliveryCartScreen() {
       if (!activeBranch?.id) {
         throw new Error("Choose a restaurant branch before clearing your cart.");
       }
-      if (!activeAddress?.id) {
+      if (mode === "Delivery" && !activeAddress?.id) {
         throw new Error("Choose a delivery address before clearing your cart.");
       }
-      await api.clearCart({
-        branchId: activeBranch.id,
-        addressId: activeAddress.id,
-        fulfillmentType: "delivery",
-      });
+      await api.clearCart(
+        getCartContext(mode, activeBranch.id, activeAddress?.id),
+      );
       await reloadCart(activeBranch?.id);
     } catch (error) {
-      Alert.alert(
-        "Order Placed",
-        `Your order was saved, but the cart could not be refreshed. ${
-          error instanceof Error ? error.message : "Please refresh the app."
-        }`,
-      );
+      console.warn("Order completed, but the cart could not be refreshed.", error);
     } finally {
       router.replace(
         paymentResult === "rejected" ? "/orders?tab=past" : "/orders",
@@ -101,30 +115,39 @@ export default function DeliveryCartScreen() {
     if (isRefreshing) return;
     setIsRefreshing(true);
     try {
+      if (
+        isGuest ||
+        (activeCart.length > 0 &&
+          activeCart.every((item: any) => item.localOnly))
+      ) {
+        return;
+      }
       await reloadCart(activeBranch?.id);
     } catch (error) {
-      Alert.alert(
-        "Unable to Refresh Cart",
-        error instanceof Error ? error.message : "Please try again.",
-      );
+      console.warn("Unable to refresh the delivery cart.", error);
     } finally {
       setIsRefreshing(false);
     }
   };
 
   const handleClearCart = async () => {
+    if (isGuest || activeCart.every((item: any) => item.localOnly)) {
+      clearLocalGuestCart();
+      return;
+    }
     if (!activeBranch?.id) {
       throw new Error("Choose a restaurant branch before clearing your cart.");
     }
-    if (!activeAddress?.id) {
+    if (mode === "Delivery" && !activeAddress?.id) {
       throw new Error("Choose a delivery address before clearing your cart.");
     }
-    await api.clearCart({
-      branchId: activeBranch.id,
-      addressId: activeAddress.id,
-      fulfillmentType: "delivery",
-    });
+    await api.clearCart(
+      getCartContext(mode, activeBranch.id, activeAddress?.id),
+    );
     await reloadCart(activeBranch.id);
+    if (activeCart.some((item: any) => item.localOnly)) {
+      clearLocalGuestCart();
+    }
   };
 
   const handleSelectDeliveryOption = async (
@@ -132,10 +155,7 @@ export default function DeliveryCartScreen() {
   ) => {
     if (!activeBranch?.id) return;
     if (!deliverySpeed) {
-      Alert.alert(
-        "Unable to Update Delivery Option",
-        "This delivery option is not mapped to a supported speed. Choose Eco Saver, Standard, or Express.",
-      );
+      console.warn("The selected delivery option has no supported speed.");
       return;
     }
     try {
@@ -149,10 +169,7 @@ export default function DeliveryCartScreen() {
       }));
       await reloadCart(activeBranch.id);
     } catch (error) {
-      Alert.alert(
-        "Unable to Update Delivery Option",
-        error instanceof Error ? error.message : "Please try again.",
-      );
+      console.warn("Unable to update the delivery option.", error);
     }
   };
 
@@ -230,7 +247,9 @@ export default function DeliveryCartScreen() {
         return [...itemsById.values()];
       });
       if (failures.length > 0) {
-        Alert.alert("Unable to Load Some Recommendations", failures.join("\n"));
+        if (__DEV__) {
+          console.warn("Unable to load some cart recommendations.", failures);
+        }
       }
     });
 

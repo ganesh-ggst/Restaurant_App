@@ -1,9 +1,8 @@
 import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { CheckCircle2, Copy, Heart, Tag, X } from "lucide-react-native";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
-  Alert,
   Image,
   Pressable,
   RefreshControl,
@@ -13,12 +12,10 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import FoodCard from "../../../components/home/FoodCard";
+import MenuListItem from "../../../components/home/MenuListItem";
+import { useOrderMode } from "../../../contexts/HomeContext";
 import { ProfileAvatarButton } from "../../../components/profile/ProfileAvatarButton";
 import { useAppTheme } from "../../../hooks/useAppTheme";
-import { useOrderMode } from "../_layout";
-
-import { api } from "../../../services/api";
 
 export default function OffersScreen() {
   const router = useRouter();
@@ -40,12 +37,26 @@ export default function OffersScreen() {
     handleAddToCart,
     handleDecrementCartItem,
   } = useOrderMode();
-  const activeCart = carts[orderMode] || [];
+  const activeCart = useMemo(
+    () => carts[orderMode] || [],
+    [carts, orderMode],
+  );
 
   const activeCartTotalItems = activeCart.reduce(
     (sum: number, item: any) => sum + item.quantity,
     0,
   );
+  const cartQuantityByMenuItemId = useMemo(() => {
+    const quantities = new Map<string, number>();
+    for (const item of activeCart) {
+      const itemId = String(item.id);
+      quantities.set(
+        itemId,
+        (quantities.get(itemId) || 0) + item.quantity,
+      );
+    }
+    return quantities;
+  }, [activeCart]);
 
   const params = useLocalSearchParams();
   const targetOfferId = Array.isArray(params.offerId)
@@ -148,17 +159,7 @@ export default function OffersScreen() {
         {displayedOffers.map((offer: any) => (
           <View key={offer.id} className={targetOfferId ? "mb-0" : "mb-3"}>
             <Pressable
-              onPress={() => {
-                router.setParams({ offerId: offer.id });
-                void api.getOffer(offer.id).catch((error: unknown) => {
-                  Alert.alert(
-                    "Unable to Load Offer",
-                    error instanceof Error
-                      ? error.message
-                      : "Please try again.",
-                  );
-                });
-              }}
+              onPress={() => router.setParams({ offerId: offer.id })}
               className="w-full overflow-hidden rounded-[24px] border"
               style={{ borderColor: theme.border, minHeight: 180 }}
             >
@@ -225,25 +226,21 @@ export default function OffersScreen() {
                 </Text>
                 <View className="flex-row flex-wrap justify-between">
                   {applicableItems.map((item: any) => {
-                    const cartQuantity = activeCart.reduce(
-                      (quantity: number, cartItem: any) =>
-                        quantity +
-                        (cartItem.id === item.id ? cartItem.quantity : 0),
-                      0,
-                    );
                     return (
                       <View
                         key={item.id}
                         style={{ width: "48%" }}
                         className="mb-4"
                       >
-                        <FoodCard
+                        <MenuListItem
                           item={item}
-                          cartQuantity={cartQuantity}
-                          onAddToCart={(qty, addons, total) =>
-                            handleAddToCart(item, qty, addons, total)
+                          cartQuantity={
+                            cartQuantityByMenuItemId.get(
+                              String(item.id),
+                            ) || 0
                           }
-                          onDecrement={() => handleDecrementCartItem(item.id)}
+                          onAddToCart={handleAddToCart}
+                          onDecrement={handleDecrementCartItem}
                         />
                       </View>
                     );

@@ -4,6 +4,7 @@ export type ManagerDestination =
 
 export type AuthDestination =
   | ManagerDestination
+  | "/(auth)/login"
   | "/(admin)"
   | "/(home)/(tabs)";
 
@@ -13,6 +14,7 @@ export function isAuthDestination(
   return (
     value === "/(manager)/floor" ||
     value === "/(manager)/operations" ||
+    value === "/(auth)/login" ||
     value === "/(admin)" ||
     value === "/(home)/(tabs)"
   );

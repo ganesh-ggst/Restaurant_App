@@ -202,9 +202,11 @@ export default function StoreDetailDetailComponent() {
   const fetchCurrentLocation = async (showSuccess = true) => {
     setLocationBusy(true);
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
+      const { status } = await Location.getForegroundPermissionsAsync();
       if (status !== "granted") {
-        throw new Error("Permission to access location was denied.");
+        throw new Error(
+          "Enable location access in device settings to use your current location.",
+        );
       }
 
       const location = await Location.getCurrentPositionAsync({

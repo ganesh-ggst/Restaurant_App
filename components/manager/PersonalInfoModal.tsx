@@ -109,16 +109,6 @@ export default function PersonalInfoModal({
 
   const handlePickAvatar = async () => {
     try {
-      const { status } =
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert(
-          "Photo access required",
-          "Allow photo library access to choose a profile picture.",
-        );
-        return;
-      }
-
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
         allowsEditing: true,

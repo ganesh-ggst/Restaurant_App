@@ -20,6 +20,7 @@ import {
   ShieldCheck,
   Smartphone,
   Sun,
+  Trash2,
   UserRound,
   UserRoundPen,
   X,
@@ -30,6 +31,7 @@ import {
   Alert,
   Modal,
   Pressable,
+  Platform,
   RefreshControl,
   ScrollView,
   Text,
@@ -42,10 +44,11 @@ import {
 
 import { useProfile } from "../../../../components/profile/ProfileContext";
 import { formatProfilePhone } from "../../../../components/profile/ProfileUi";
+import { useOrderMode } from "../../../../contexts/HomeContext";
 import { useAppTheme } from "../../../../hooks/useAppTheme";
 import { api } from "../../../../services/api";
+import { clearPersistentCache } from "../../../../services/api/persistent-cache";
 import { saveThemePreference } from "../../../../services/theme-preference";
-import { useOrderMode } from "../../_layout";
 
 const themeOptions = [
   { label: "Light Mode", value: "light", icon: Sun },
@@ -94,7 +97,7 @@ export default function ProfileScreen() {
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await reloadProfile();
+      await reloadProfile(true);
     } finally {
       setRefreshing(false);
     }
@@ -113,6 +116,34 @@ export default function ProfileScreen() {
           : "Please try selecting your theme again.",
       );
     }
+  };
+
+  const clearCachedData = () => {
+    Alert.alert(
+      "Clear cached data",
+      "Locally saved menus, offers, profile data, and images will be removed. They will load again when needed.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Clear",
+          style: "destructive",
+          onPress: () => {
+            void (async () => {
+              await clearPersistentCache();
+              if (Platform.OS !== "web") {
+                await Image.clearDiskCache();
+                await Image.clearMemoryCache();
+              }
+            })().catch((error: unknown) => {
+              Alert.alert(
+                "Unable to Clear Cached Data",
+                error instanceof Error ? error.message : "Please try again.",
+              );
+            });
+          },
+        },
+      ],
+    );
   };
 
   const settingsGroups: ProfileLink[][] = [
@@ -148,6 +179,11 @@ export default function ProfileScreen() {
         title: "Language",
         icon: Globe,
         onPress: () => handleComingSoon("Language Selection"),
+      },
+      {
+        title: "Clear cached data",
+        icon: Trash2,
+        onPress: clearCachedData,
       },
     ],
     [
@@ -292,7 +328,7 @@ export default function ProfileScreen() {
                 source={{ uri: user.avatarUrl }}
                 style={{ width: "100%", height: "100%" }}
                 contentFit="cover"
-                cachePolicy="none"
+                cachePolicy="disk"
                 onError={() => setFailedAvatarUrl(user.avatarUrl)}
               />
             ) : (

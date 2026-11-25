@@ -1,6 +1,11 @@
 import axios, { isAxiosError } from "axios";
 
 import { authApi } from "./auth";
+import {
+  getAccountCacheScope,
+  getPersistentCache,
+  invalidatePersistentCache,
+} from "./persistent-cache";
 
 interface ApiEnvelope<T> {
   success: boolean;
@@ -113,6 +118,24 @@ const REQUEST_TIMEOUT_MS = 15_000;
 let cachedUserProfile: UserProfile | null = null;
 let cachedUserProfileToken: string | null = null;
 let userProfileRequest: Promise<UserProfile> | null = null;
+
+async function getAccountCacheKey(resource: string): Promise<string> {
+  const token = await authApi.getAccessToken();
+  if (!token) {
+    throw new Error("Your login session is missing. Please sign in again.");
+  }
+  const identity = (await authApi.getCacheUserId()) || token;
+  return `customer:${getAccountCacheScope(identity)}:${resource}`;
+}
+
+async function invalidateAccountCache(resource: string): Promise<void> {
+  try {
+    const key = await getAccountCacheKey(resource);
+    await invalidatePersistentCache(key);
+  } catch (error) {
+    console.warn(`Unable to invalidate the ${resource} cache.`, error);
+  }
+}
 
 async function request<T>(
   method: "GET" | "POST" | "PATCH" | "DELETE",
@@ -236,7 +259,10 @@ function normalizeUserProfile(profile: UserProfileResponse): UserProfile {
 }
 
 export const profileApi = {
-  async getMyProfile(forceRefresh = false): Promise<UserProfile> {
+  async getMyProfile(
+    forceRefresh = false,
+    onUpdate?: (profile: UserProfile) => void,
+  ): Promise<UserProfile> {
     const token = await authApi.getAccessToken();
     if (!token) {
       throw new Error("Your login session is missing. Please sign in again.");
@@ -250,24 +276,36 @@ export const profileApi = {
       cachedUserProfile = null;
       userProfileRequest = null;
     }
-    if (cachedUserProfile) return cachedUserProfile;
     if (userProfileRequest) return userProfileRequest;
 
-    const profileRequest = request<UserProfileResponse>("GET", "/users/me")
-      .then((profile) => {
-        const response = requireData(
-          profile,
-          "The server did not return your profile.",
+    const identity = (await authApi.getCacheUserId()) || token;
+    const cacheKey = `customer:${getAccountCacheScope(identity)}:profile`;
+    const profileRequest = getPersistentCache(
+      cacheKey,
+      15 * 60 * 1000,
+      forceRefresh,
+      async () => {
+        const profile = await request<UserProfileResponse>("GET", "/users/me");
+        return normalizeUserProfile(
+          requireData(profile, "The server did not return your profile."),
         );
-        return normalizeUserProfile(response);
-      })
-      .then((profile) => {
+      },
+      (profile) => {
+        if (cachedUserProfileToken === token) {
+          cachedUserProfile = profile;
+        }
+        onUpdate?.(profile);
+      },
+      true,
+    )
+      .then(async (profile) => {
         if (
           cachedUserProfileToken === token &&
           userProfileRequest === profileRequest
         ) {
           cachedUserProfile = profile;
         }
+        await authApi.rememberCacheUserId(profile.id);
         return profile;
       })
       .finally(() => {
@@ -285,6 +323,7 @@ export const profileApi = {
   ): Promise<UserProfile> {
     await request("PATCH", "/users/me", { firstName, lastName });
     cachedUserProfile = null;
+    await invalidateAccountCache("profile");
     return profileApi.getMyProfile();
   },
 
@@ -339,6 +378,7 @@ export const profileApi = {
       if (cachedUserProfile) {
         cachedUserProfile = { ...cachedUserProfile, avatarUrl };
       }
+      await invalidateAccountCache("profile");
       return avatarUrl;
     } catch (error) {
       if (isAxiosError<ApiEnvelope<unknown>>(error)) {
@@ -363,26 +403,43 @@ export const profileApi = {
     }
   },
 
-  async getAddresses(): Promise<CustomerAddress[]> {
-    const addresses = requireData(
-      await request<CustomerAddress[]>("GET", "/addresses"),
-      "The server did not return your addresses.",
+  async getAddresses(
+    forceRefresh = false,
+    onUpdate?: (addresses: CustomerAddress[]) => void,
+  ): Promise<CustomerAddress[]> {
+    const cacheKey = await getAccountCacheKey("addresses");
+    return getPersistentCache(
+      cacheKey,
+      5 * 60 * 1000,
+      forceRefresh,
+      async () => {
+        const addresses = requireData(
+          await request<CustomerAddress[]>("GET", "/addresses"),
+          "The server did not return your addresses.",
+        );
+        if (!Array.isArray(addresses)) {
+          throw new Error("The server returned an invalid addresses response.");
+        }
+        return addresses;
+      },
+      onUpdate,
+      true,
     );
-    if (!Array.isArray(addresses)) {
-      throw new Error("The server returned an invalid addresses response.");
-    }
-    return addresses;
   },
 
   async getAddress(id: string): Promise<CustomerAddress> {
     return requireData(
-      await request<CustomerAddress>("GET", `/addresses/${encodeURIComponent(id)}`),
+      await request<CustomerAddress>(
+        "GET",
+        `/addresses/${encodeURIComponent(id)}`,
+      ),
       "The server did not return this address.",
     );
   },
 
   async createAddress(address: AddressInput): Promise<void> {
     await request("POST", "/addresses", { ...address });
+    await invalidateAccountCache("addresses");
   },
 
   async saveAddressFromCoordinates(
@@ -398,6 +455,7 @@ export const profileApi = {
     if (!address?._id) {
       throw new Error("The server returned an invalid saved address.");
     }
+    await invalidateAccountCache("addresses");
     return address;
   },
 
@@ -410,37 +468,60 @@ export const profileApi = {
       `/addresses/${encodeURIComponent(id)}`,
       address,
     );
+    await invalidateAccountCache("addresses");
+    await invalidateAccountCache(`address:${id}`);
   },
 
   async deleteAddress(id: string): Promise<void> {
     await request("DELETE", `/addresses/${encodeURIComponent(id)}`);
+    await invalidateAccountCache("addresses");
+    await invalidateAccountCache(`address:${id}`);
   },
 
   async setDefaultAddress(id: string): Promise<void> {
     await request("PATCH", `/addresses/${encodeURIComponent(id)}`, {
       isDefault: true,
     });
+    await invalidateAccountCache("addresses");
+    await invalidateAccountCache(`address:${id}`);
   },
 
   async getNotifications(
     page = 1,
     limit = 20,
+    forceRefresh = false,
+    onUpdate?: (notifications: NotificationPage) => void,
   ): Promise<NotificationPage> {
-    const data = requireData(
-      await request<NotificationPage>(
-        "GET",
-        `/notifications?page=${page}&limit=${limit}`,
-      ),
-      "The server did not return your notifications.",
+    const cacheKey = await getAccountCacheKey(
+      `notifications:${page}:${limit}`,
     );
-    if (!Array.isArray(data.notifications)) {
-      throw new Error("The server returned an invalid notifications response.");
-    }
-    return data;
+    return getPersistentCache(
+      cacheKey,
+      30 * 1000,
+      forceRefresh,
+      async () => {
+        const data = requireData(
+          await request<NotificationPage>(
+            "GET",
+            `/notifications?page=${page}&limit=${limit}`,
+          ),
+          "The server did not return your notifications.",
+        );
+        if (!Array.isArray(data.notifications)) {
+          throw new Error(
+            "The server returned an invalid notifications response.",
+          );
+        }
+        return data;
+      },
+      onUpdate,
+      true,
+    );
   },
 
   async markAllNotificationsRead(): Promise<void> {
     await request("PATCH", "/notifications/read-all");
+    await invalidateAccountCache("notifications:1:20");
   },
 
   async markNotificationRead(id: string): Promise<void> {
@@ -448,13 +529,16 @@ export const profileApi = {
       "PATCH",
       `/notifications/${encodeURIComponent(id)}/read`,
     );
+    await invalidateAccountCache("notifications:1:20");
   },
 
   async deleteNotification(id: string): Promise<void> {
     await request("DELETE", `/notifications/${encodeURIComponent(id)}`);
+    await invalidateAccountCache("notifications:1:20");
   },
 
   async deleteAllNotifications(): Promise<void> {
     await request("DELETE", "/notifications/delete-all");
+    await invalidateAccountCache("notifications:1:20");
   },
 };

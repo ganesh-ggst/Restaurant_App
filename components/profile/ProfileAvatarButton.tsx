@@ -68,7 +68,7 @@ export function ProfileAvatarButton({
 
   return (
     <Pressable
-      onPress={() => router.push("/(home)/(tabs)/profile")}
+      onPress={() => router.navigate("/(home)/(tabs)/profile")}
       accessibilityRole="button"
       accessibilityLabel="Open profile"
       className={className}

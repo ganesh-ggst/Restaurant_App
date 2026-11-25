@@ -1,4 +1,4 @@
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import {
   Check,
   ChevronDown,
@@ -6,9 +6,16 @@ import {
   Search,
   UtensilsCrossed,
 } from "lucide-react-native";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Alert,
+  FlatList,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -18,14 +25,17 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import FoodCard from "../../../components/home/FoodCard";
+import MenuListItem, {
+  type MenuCardItem,
+} from "../../../components/home/MenuListItem";
 import { ProfileAvatarButton } from "../../../components/profile/ProfileAvatarButton";
+import { useOrderMode } from "../../../contexts/HomeContext";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { api } from "../../../services/api";
-import { useOrderMode } from "../_layout";
 
 export default function SearchScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
 
@@ -61,7 +71,10 @@ export default function SearchScreen() {
     handleAddToCart,
     handleDecrementCartItem,
   } = useOrderMode();
-  const activeCart = carts[orderMode] || [];
+  const activeCart = useMemo(
+    () => carts[orderMode] || [],
+    [carts, orderMode],
+  );
   const activeBranchId = activeBranch?.id;
   const previousBranchId = useRef(activeBranchId);
 
@@ -69,6 +82,17 @@ export default function SearchScreen() {
     (sum: number, item: any) => sum + item.quantity,
     0,
   );
+  const cartQuantityByMenuItemId = useMemo(() => {
+    const quantities = new Map<string, number>();
+    for (const item of activeCart) {
+      const itemId = String(item.id);
+      quantities.set(
+        itemId,
+        (quantities.get(itemId) || 0) + item.quantity,
+      );
+    }
+    return quantities;
+  }, [activeCart]);
   const branchCategories = useMemo(
     () =>
       categories.filter(
@@ -94,15 +118,17 @@ export default function SearchScreen() {
     if (previousBranchId.current === activeBranchId) return;
 
     previousBranchId.current = activeBranchId;
-    setSelectedCategory(null);
+    setSelectedCategory({ routeCategory, name: "All" });
     setCategorySearchQuery("");
     setShowCategoryList(false);
-    router.setParams({ category: undefined });
-  }, [activeBranchId, router]);
+    if (navigation.isFocused()) {
+      router.setParams({ category: undefined });
+    }
+  }, [activeBranchId, navigation, routeCategory, router]);
 
   const branchMenuItems = useMemo(
-    () =>
-      menuItems.filter((item: any) => {
+    () => {
+      const branchItems = menuItems.filter((item: any) => {
         const itemBranchIds = item.branchIds || [];
         const isAvailableAtBranch =
           !activeBranchId ||
@@ -110,21 +136,45 @@ export default function SearchScreen() {
             ? itemBranchIds.includes(activeBranchId)
             : !item.branchId || item.branchId === activeBranchId);
         return isAvailableAtBranch;
-      }),
+      });
+
+      return branchItems.sort(
+        (first: any, second: any) =>
+          Number(first.isAvailable !== true) -
+          Number(second.isAvailable !== true),
+      );
+    },
     [activeBranchId, menuItems],
   );
 
-  const getCategoryItemCount = (category: any) =>
-    branchMenuItems.filter((item: any) => {
+  const categoryItemCounts = useMemo(() => {
+    const countsById = new Map<string, number>();
+    const countsByName = new Map<string, number>();
+
+    for (const item of branchMenuItems) {
       const itemCategoryId =
         typeof item.categoryId === "string"
           ? item.categoryId
           : item.categoryId?._id;
-      return (
-        itemCategoryId === category.id ||
-        (!itemCategoryId && item.category === category.name)
-      );
-    }).length;
+      if (itemCategoryId) {
+        countsById.set(
+          itemCategoryId,
+          (countsById.get(itemCategoryId) || 0) + 1,
+        );
+      } else if (item.category) {
+        countsByName.set(
+          item.category,
+          (countsByName.get(item.category) || 0) + 1,
+        );
+      }
+    }
+
+    return { countsById, countsByName };
+  }, [branchMenuItems]);
+  const getCategoryItemCount = (category: any) =>
+    categoryItemCounts.countsById.get(category.id) ??
+    categoryItemCounts.countsByName.get(category.name) ??
+    0;
   const activeCategoryData = branchCategories.find(
     (category: any) => category.name === activeCategory,
   );
@@ -138,23 +188,19 @@ export default function SearchScreen() {
           ? "takeaway"
           : "dine-in",
     search: searchQuery.trim(),
-    categoryId: activeCategoryData?.id,
-    foodType: isVegOnly ? "veg" : undefined,
   });
   const [serverMenuResults, setServerMenuResults] = useState<{
     key: string;
     ids: string[];
   } | null>(null);
   const menuSearchRequestId = useRef(0);
-  const hasServerMenuFilters = Boolean(
-    searchQuery.trim() || activeCategoryData || isVegOnly,
-  );
+  const hasServerMenuSearch = Boolean(searchQuery.trim());
 
   useEffect(() => {
     const requestId = ++menuSearchRequestId.current;
     if (
       !activeBranchId ||
-      !hasServerMenuFilters ||
+      !hasServerMenuSearch ||
       (orderMode === "Delivery" && !activeAddress?.id)
     ) {
       return;
@@ -171,9 +217,7 @@ export default function SearchScreen() {
               : orderMode === "Takeaway"
                 ? "takeaway"
                 : "dine-in",
-          search: searchQuery.trim() || undefined,
-          categoryId: activeCategoryData?.id,
-          foodType: isVegOnly ? "veg" : undefined,
+          search: searchQuery.trim(),
         })
         .then((items) => {
           if (requestId !== menuSearchRequestId.current) return;
@@ -201,15 +245,18 @@ export default function SearchScreen() {
   }, [
     activeAddress?.id,
     activeBranchId,
-    activeCategoryData?.id,
-    hasServerMenuFilters,
-    isVegOnly,
+    hasServerMenuSearch,
     menuFilterKey,
     orderMode,
     searchQuery,
   ]);
-  const matchingServerResults =
-    serverMenuResults?.key === menuFilterKey ? serverMenuResults.ids : null;
+  const matchingServerResults = useMemo(
+    () =>
+      serverMenuResults?.key === menuFilterKey
+        ? new Set(serverMenuResults.ids)
+        : null,
+    [menuFilterKey, serverMenuResults],
+  );
   const activeCategoryItemCount =
     activeCategory === "All"
       ? branchMenuItems.length
@@ -231,26 +278,11 @@ export default function SearchScreen() {
     return false;
   };
 
-  const matchesSearch = (item: any) => {
+  const filteredItems = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    const itemName = item.name.toLowerCase();
-    if (!query || itemName.includes(query)) return true;
 
-    const initials = itemName
-      .split(/[\s-]+/)
-      .filter(Boolean)
-      .map((word: string) => word[0])
-      .join("");
-
-    return query.length > 1 && initials.startsWith(query.replace(/\s+/g, ""));
-  };
-
-  const filteredItems = branchMenuItems
-    .filter((item: any) => {
-      if (
-        matchingServerResults &&
-        !matchingServerResults.includes(item.id)
-      ) {
+    return branchMenuItems.filter((item: any) => {
+      if (matchingServerResults && !matchingServerResults.has(item.id)) {
         return false;
       }
 
@@ -262,23 +294,56 @@ export default function SearchScreen() {
         activeCategory === "All" ||
         itemCategoryId === activeCategoryData?.id ||
         item.category === activeCategory;
+      if (!matchesCategory || (isVegOnly && !item.isVeg)) return false;
+      if (matchingServerResults !== null || !query) return true;
+      if (item.name.toLowerCase().includes(query)) return true;
 
-      return (
-        matchesCategory &&
-        (!isVegOnly || item.isVeg) &&
-        (matchingServerResults !== null || matchesSearch(item))
-      );
-    })
-    .sort(
-      (first: any, second: any) =>
-        Number(first.isAvailable !== true) -
-        Number(second.isAvailable !== true),
-    );
+      const initials = item.name
+        .toLowerCase()
+        .split(/[\s-]+/)
+        .filter(Boolean)
+        .map((word: string) => word[0])
+        .join("");
+      return query.length > 1 && initials.startsWith(query.replace(/\s+/g, ""));
+    });
+  }, [
+    activeCategory,
+    activeCategoryData?.id,
+    branchMenuItems,
+    isVegOnly,
+    matchingServerResults,
+    searchQuery,
+  ]);
   const displayedCategories = [allCategoryOption, ...branchCategories];
   const matchingCategories = displayedCategories.filter(
     (category: any) =>
       category.name === "All" ||
       matchesFlexibleQuery(categorySearchQuery, category.name),
+  );
+  const renderMenuItem = useCallback(
+    ({ item }: { item: MenuCardItem }) => (
+      <View style={{ width: "48%" }} className="mb-4">
+        <MenuListItem
+          item={item}
+          cartQuantity={cartQuantityByMenuItemId.get(item.id) || 0}
+          onAddToCart={handleAddToCart}
+          onDecrement={handleDecrementCartItem}
+        />
+      </View>
+    ),
+    [cartQuantityByMenuItemId, handleAddToCart, handleDecrementCartItem],
+  );
+  const menuItemKeyExtractor = useCallback(
+    (item: MenuCardItem) => item.id,
+    [],
+  );
+  const menuGridColumnStyle = useMemo(
+    () => ({ justifyContent: "space-between" as const, paddingHorizontal: 16 }),
+    [],
+  );
+  const menuGridContentStyle = useMemo(
+    () => ({ paddingBottom: activeCartTotalItems > 0 ? 180 : 120 }),
+    [activeCartTotalItems],
   );
 
   const selectCategory = (categoryName: string) => {
@@ -507,10 +572,17 @@ export default function SearchScreen() {
         )}
       </View>
 
-      <ScrollView
-        contentContainerStyle={{
-          paddingBottom: activeCartTotalItems > 0 ? 180 : 120,
-        }}
+      <FlatList
+        className="flex-1"
+        data={filteredItems}
+        keyExtractor={menuItemKeyExtractor}
+        numColumns={2}
+        initialNumToRender={6}
+        maxToRenderPerBatch={6}
+        updateCellsBatchingPeriod={16}
+        windowSize={7}
+        columnWrapperStyle={menuGridColumnStyle}
+        contentContainerStyle={menuGridContentStyle}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
@@ -522,70 +594,48 @@ export default function SearchScreen() {
             colors={[theme.primary]}
           />
         }
-      >
-        {/* UNIFIED FOOD CARDS GRID */}
-        <View className="flex-row flex-wrap justify-between px-4">
-          {filteredItems.map((item: any) => {
-            const cartQuantity = activeCart.reduce(
-              (quantity: number, cartItem: any) =>
-                quantity +
-                (cartItem.id === item.id ? cartItem.quantity : 0),
-              0,
-            );
-            return (
-              <View key={item.id} style={{ width: "48%" }} className="mb-4">
-                <FoodCard
-                  item={item}
-                  cartQuantity={cartQuantity}
-                  onAddToCart={(qty, addons, total) =>
-                    handleAddToCart(item, qty, addons, total)
-                  }
-                  onDecrement={() => handleDecrementCartItem(item.id)}
+        renderItem={renderMenuItem}
+        ListEmptyComponent={
+          activeBranchId &&
+          menuItemsLoadedForBranchId === activeBranchId ? (
+            <View className="items-center justify-center px-6 py-16">
+              {searchQuery.trim() ? (
+                <Search size={32} color={theme.muted} strokeWidth={2} />
+              ) : (
+                <UtensilsCrossed
+                  size={32}
+                  color={theme.muted}
+                  strokeWidth={2}
                 />
-              </View>
-            );
-          })}
-        </View>
-        {activeBranchId &&
-        menuItemsLoadedForBranchId === activeBranchId &&
-        filteredItems.length === 0 ? (
-          <View className="items-center justify-center px-6 py-16">
-            {searchQuery.trim() ? (
-              <Search size={32} color={theme.muted} strokeWidth={2} />
-            ) : (
-              <UtensilsCrossed
-                size={32}
-                color={theme.muted}
-                strokeWidth={2}
-              />
-            )}
-            <Text
-              className="mt-4 text-lg font-black text-center"
-              style={{ color: theme.text }}
-            >
-              {searchQuery.trim()
-                ? "No dishes found"
-                : activeCategory !== "All"
-                  ? `No items in ${activeCategory}`
-                  : isVegOnly
-                    ? "No vegetarian items available"
-                    : "No menu items available"}
-            </Text>
-            <Text
-              className="mt-2 text-sm font-semibold text-center leading-5"
-              style={{ color: theme.muted }}
-            >
-              {searchQuery.trim()
-                ? `We couldn't find any dishes matching "${searchQuery.trim()}". Try another search.`
-                : activeCategory !== "All"
-                  ? `This branch has no items in the ${activeCategory} category right now.`
-                  : isVegOnly
-                    ? "This branch has no vegetarian items available right now."
-                    : "This branch has no menu items available right now. Please check back later."}
-            </Text>
-          </View>
-        ) : null}
-      </ScrollView>
+              )}
+              <Text
+                className="mt-4 text-lg font-black text-center"
+                style={{ color: theme.text }}
+              >
+                {searchQuery.trim()
+                  ? "No dishes found"
+                  : activeCategory !== "All"
+                    ? `No items in ${activeCategory}`
+                    : isVegOnly
+                      ? "No vegetarian items available"
+                      : "No menu items available"}
+              </Text>
+              <Text
+                className="mt-2 text-sm font-semibold text-center leading-5"
+                style={{ color: theme.muted }}
+              >
+                {searchQuery.trim()
+                  ? `We couldn't find any dishes matching "${searchQuery.trim()}". Try another search.`
+                  : activeCategory !== "All"
+                    ? `This branch has no items in the ${activeCategory} category right now.`
+                    : isVegOnly
+                      ? "This branch has no vegetarian items available right now."
+                      : "This branch has no menu items available right now. Please check back later."}
+              </Text>
+            </View>
+          ) : undefined
+        }
+      />
     </View>
   );
 }

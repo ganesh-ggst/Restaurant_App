@@ -84,5 +84,11 @@ export function isDeliveryBranchEligible(
   branch: CustomerBranch,
   address: DeliveryAddressLocation | null | undefined,
 ): boolean {
-  return getDeliveryBranchUnavailableReason(branch, address) === null;
+  const reason = getDeliveryBranchUnavailableReason(branch, address);
+  return (
+    reason === null ||
+    (reason === "distance-unavailable" &&
+      branch.isActive &&
+      branch.isOnline !== false)
+  );
 }

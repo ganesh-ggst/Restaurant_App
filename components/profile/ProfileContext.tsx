@@ -3,8 +3,10 @@ import {
   type ReactNode,
   useCallback,
   useContext,
+  useEffect,
   useState,
 } from "react";
+import { AppState } from "react-native";
 
 import { api } from "../../services/api";
 import type { UserProfile } from "../../services/api/profile";
@@ -12,7 +14,7 @@ import type { UserProfile } from "../../services/api/profile";
 interface ProfileContextValue {
   user: UserProfile | null;
   error: string;
-  reloadProfile: () => Promise<void>;
+  reloadProfile: (forceRefresh?: boolean) => Promise<void>;
   updateUser: (user: UserProfile) => void;
   clearUser: () => void;
 }
@@ -23,7 +25,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [error, setError] = useState("");
 
-  const reloadProfile = useCallback(async () => {
+  const reloadProfile = useCallback(async (forceRefresh = false) => {
     setError("");
     try {
       const accessToken = await api.getAccessToken();
@@ -31,7 +33,9 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
         setUser(null);
         return;
       }
-      setUser(await api.getMyProfile(true));
+      setUser(
+        await api.getMyProfile(forceRefresh, (profile) => setUser(profile)),
+      );
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -40,6 +44,17 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
       );
     }
   }, []);
+
+  useEffect(() => {
+    let previousState = AppState.currentState;
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (previousState !== "active" && nextState === "active") {
+        void reloadProfile();
+      }
+      previousState = nextState;
+    });
+    return () => subscription.remove();
+  }, [reloadProfile]);
 
   const updateUser = useCallback((updatedUser: UserProfile) => {
     setUser(updatedUser);

@@ -2,6 +2,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Alert,
   BackHandler,
   Keyboard,
   Pressable,
@@ -17,6 +18,7 @@ import { Button } from "../../components/ui/Button";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { api } from "../../services/api";
 import { managerProfileApi } from "../../services/api/manager-profile";
+import { addFavoriteIfMissing } from "../../services/customer-favorites";
 import {
   getAuthDestination,
   isKnownManagerType,
@@ -26,9 +28,13 @@ export default function VerifyOtpScreen() {
   const router = useRouter();
   const theme = useAppTheme();
 
-  const { phone, branchId } = useLocalSearchParams<{
+  const { phone, branchId, favoriteItemId, continueToCart, cartMode } =
+    useLocalSearchParams<{
     phone: string;
     branchId?: string;
+    favoriteItemId?: string;
+    continueToCart?: string;
+    cartMode?: string;
   }>();
   const normalizedPhone = phone?.replace(/\s/g, "+") || "";
 
@@ -61,6 +67,9 @@ export default function VerifyOtpScreen() {
             params: {
               phone: normalizedPhone,
               ...(branchId ? { branchId } : {}),
+              ...(favoriteItemId ? { favoriteItemId } : {}),
+              ...(continueToCart ? { continueToCart } : {}),
+              ...(cartMode ? { cartMode } : {}),
             },
           });
         } else {
@@ -71,14 +80,42 @@ export default function VerifyOtpScreen() {
                   : null) ||
                 (await managerProfileApi.getProfile()).manager.managerType
               : user.managerType;
-          router.replace({
-            pathname: "/splash",
-            params: {
-              destination: getAuthDestination(user.role, managerType),
-              phone: normalizedPhone,
-              ...(branchId ? { branchId } : {}),
-            },
-          });
+          const destination = getAuthDestination(user.role, managerType);
+          const isCustomerDestination = destination === "/(home)/(tabs)";
+          const returnToCart =
+            continueToCart === "true" && isCustomerDestination;
+          const navigateToDestination = () =>
+            router.replace({
+              pathname: returnToCart
+                ? "/(home)/delivery-cart"
+                : destination,
+              params: {
+                phone: normalizedPhone,
+                ...(branchId ? { branchId } : {}),
+                ...(isCustomerDestination ? { isGuest: "false" } : {}),
+                ...(returnToCart && cartMode ? { cartMode } : {}),
+              },
+            });
+
+          if (
+            favoriteItemId &&
+            destination === "/(home)/(tabs)"
+          ) {
+            try {
+              await addFavoriteIfMissing(favoriteItemId);
+            } catch (favoriteError) {
+              Alert.alert(
+                "Unable to save favorite",
+                favoriteError instanceof Error
+                  ? favoriteError.message
+                  : "You are signed in, but this item could not be added to favorites.",
+                [{ text: "Continue", onPress: navigateToDestination }],
+              );
+              return;
+            }
+          }
+
+          navigateToDestination();
         }
       } catch (err) {
         setError(
@@ -92,7 +129,14 @@ export default function VerifyOtpScreen() {
         setLoading(false);
       }
     },
-    [branchId, normalizedPhone, router],
+    [
+      branchId,
+      cartMode,
+      continueToCart,
+      favoriteItemId,
+      normalizedPhone,
+      router,
+    ],
   );
 
   useEffect(() => {

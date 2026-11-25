@@ -328,16 +328,6 @@ export default function AuthScreenMedia({
     previewRequestId.current += 1;
     setPickingMedia(true);
     try {
-      const permission =
-        await ImagePicker.requestMediaLibraryPermissionsAsync(false);
-      if (!permission.granted) {
-        Alert.alert(
-          "Media library access required",
-          "Allow access to your media library to choose screen media.",
-        );
-        return;
-      }
-
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: screen === "splash" ? ["videos"] : ["images", "videos"],
         allowsEditing: false,

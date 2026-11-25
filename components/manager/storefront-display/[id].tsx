@@ -161,21 +161,11 @@ export default function StorefrontDisplayDetailComponent() {
     if (uploadingImage) return;
     try {
       if (source === "camera") {
-        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        const permission = await ImagePicker.getCameraPermissionsAsync();
         if (!permission.granted) {
           Alert.alert(
             "Camera access required",
-            "Allow camera access to take a featured-content photo.",
-          );
-          return;
-        }
-      } else {
-        const permission =
-          await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!permission.granted) {
-          Alert.alert(
-            "Photo access required",
-            "Allow photo library access to attach a featured-content image.",
+            "Enable camera access in device settings to take a featured-content photo.",
           );
           return;
         }

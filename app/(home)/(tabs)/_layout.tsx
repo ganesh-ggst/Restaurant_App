@@ -4,7 +4,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CustomTabBar } from "../_layout";
 
 const MIN_TAB_BAR_BOTTOM = 16;
-
 export default function HomeTabsLayout() {
   const insets = useSafeAreaInsets();
   const bottomInset = Math.max(insets.bottom, MIN_TAB_BAR_BOTTOM);
@@ -13,7 +12,11 @@ export default function HomeTabsLayout() {
     <Tabs
       backBehavior="history"
       tabBar={(props) => <CustomTabBar {...props} bottomInset={bottomInset} />}
-      screenOptions={{ headerShown: false }}
+      screenOptions={{
+        headerShown: false,
+        lazy: true,
+        freezeOnBlur: true,
+      }}
     >
       <Tabs.Screen name="index" options={{ title: "Home" }} />
       <Tabs.Screen name="offers" options={{ title: "Offers" }} />

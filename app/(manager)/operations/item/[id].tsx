@@ -252,21 +252,11 @@ export default function EditMenuItemScreen() {
     if (uploadingImage) return;
     try {
       if (source === "camera") {
-        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        const permission = await ImagePicker.getCameraPermissionsAsync();
         if (!permission.granted) {
           Alert.alert(
             "Camera access required",
-            "Allow camera access to take menu item photos.",
-          );
-          return;
-        }
-      } else {
-        const permission =
-          await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!permission.granted) {
-          Alert.alert(
-            "Photo access required",
-            "Allow photo library access to attach menu item images.",
+            "Enable camera access in device settings to take menu item photos.",
           );
           return;
         }

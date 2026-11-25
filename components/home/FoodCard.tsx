@@ -9,7 +9,7 @@ import {
   Star,
   X,
 } from "lucide-react-native";
-import { useEffect, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import {
   Animated as NativeAnimated,
   Alert,
@@ -34,15 +34,21 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useFavorites } from "../../app/(home)/_layout";
+import { useFavorites } from "../../contexts/HomeContext";
 import { useAppTheme } from "../../hooks/useAppTheme";
-import type { CustomerCustomizationSelection } from "../../services/api/customer";
+import type {
+  CustomerCustomizationSelection,
+  CustomerMenuItem,
+} from "../../services/api/customer";
 import {
   formatCustomTag,
   getRandomCustomTagIcon,
 } from "../../utils/menu-tags";
 
 const { width } = Dimensions.get("window");
+const EMPTY_CUSTOMIZATION_GROUPS: NonNullable<
+  CustomerMenuItem["customizationGroups"]
+> = [];
 
 const hasImageUri = (uri: unknown): uri is string =>
   typeof uri === "string" && uri.trim().length > 0;
@@ -163,7 +169,7 @@ const StarParticle = ({ angle, progress, color }: any) => {
   );
 };
 
-export default function FoodCard({
+function FoodCard({
   item,
   widthOverride,
   cartQuantity = 0,
@@ -192,25 +198,34 @@ export default function FoodCard({
   const isItemAvailable =
     item.isAvailable === true && (!hasInventoryCount || availableQuantity > 0);
 
-  const customizationGroups = item.customizationGroups || [];
-  const customizationOptions = customizationGroups.flatMap(
-    (group: any, groupIndex: number) =>
-      (group.options || [])
-        .filter((option: any) => option.isAvailable)
-        .map((option: any, optionIndex: number) => ({
-          ...option,
-          group,
-          key:
-            option._id ||
-            `${group._id || group.name}-${option.name}-${groupIndex}-${optionIndex}`,
-        })),
+  const customizationGroups =
+    item.customizationGroups || EMPTY_CUSTOMIZATION_GROUPS;
+  const customizationOptions = useMemo(
+    () =>
+      customizationGroups.flatMap(
+        (group: any, groupIndex: number) =>
+          (group.options || [])
+            .filter((option: any) => option.isAvailable)
+            .map((option: any, optionIndex: number) => ({
+              ...option,
+              group,
+              key:
+                option._id ||
+                `${group._id || group.name}-${option.name}-${groupIndex}-${optionIndex}`,
+            })),
+      ),
+    [customizationGroups],
   );
 
   const [activeImageIndex, setActiveImageIndex] = useState(0);
 
-  const galleryImages = (
-    item.gallery && item.gallery.length > 0 ? item.gallery : [item.image]
-  ).filter(hasImageUri);
+  const galleryImages = useMemo(
+    () =>
+      (
+        item.gallery && item.gallery.length > 0 ? item.gallery : [item.image]
+      ).filter(hasImageUri),
+    [item.gallery, item.image],
+  );
   const customTag =
     typeof item.customTag === "string" ? item.customTag.trim() : "";
   const customTagLabel = formatCustomTag(customTag, fallbackCustomTagIcon);
@@ -443,14 +458,15 @@ export default function FoodCard({
 
   return (
     <View style={{ width: widthOverride ?? "100%" }} className="relative mb-4">
-      {[0, 45, 90, 135, 180, 225, 270, 315].map((angle, i) => (
-        <StarParticle
-          key={i}
-          angle={angle}
-          progress={particleProgress}
-          color={i % 2 === 0 ? "#EAB308" : theme.primary}
-        />
-      ))}
+      {isAnimating &&
+        [0, 45, 90, 135, 180, 225, 270, 315].map((angle, i) => (
+          <StarParticle
+            key={i}
+            angle={angle}
+            progress={particleProgress}
+            color={i % 2 === 0 ? "#EAB308" : theme.primary}
+          />
+        ))}
 
       <Pressable onPress={handleCardPress} disabled={!isItemAvailable}>
         <Animated.View
@@ -998,3 +1014,7 @@ export default function FoodCard({
     </View>
   );
 }
+
+FoodCard.displayName = "FoodCard";
+
+export default memo(FoodCard);
