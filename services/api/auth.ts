@@ -2,6 +2,8 @@ import axios, { isAxiosError } from "axios";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
+import { clearAccountPersistentCache } from "./persistent-cache";
+
 export interface AuthUser {
   id: string;
   firstName: string;
@@ -44,6 +46,7 @@ const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL?.trim().replace(/\/+$/, "")
 const REQUEST_TIMEOUT_MS = 15_000;
 const SIGNUP_TOKEN_KEY = "restaurant.signupToken";
 const ACCESS_TOKEN_KEY = "restaurant.accessToken";
+const CACHE_USER_ID_KEY = "restaurant.cacheUserId";
 
 function normalizePhone(phone: string): string {
   const digits = phone.replace(/\D/g, "");
@@ -190,6 +193,7 @@ export const authApi = {
         throw new Error("The auth server did not return a signup token.");
       }
       await deleteStoredToken(ACCESS_TOKEN_KEY);
+      await deleteStoredToken(CACHE_USER_ID_KEY);
       await setStoredToken(SIGNUP_TOKEN_KEY, data.signupToken);
     } else {
       if (!data.accessToken) {
@@ -197,6 +201,7 @@ export const authApi = {
       }
       await deleteStoredToken(SIGNUP_TOKEN_KEY);
       await setStoredToken(ACCESS_TOKEN_KEY, data.accessToken);
+      await setStoredToken(CACHE_USER_ID_KEY, data.user.id);
     }
 
     return data;
@@ -224,6 +229,7 @@ export const authApi = {
     }
 
     await setStoredToken(ACCESS_TOKEN_KEY, data.accessToken);
+    await setStoredToken(CACHE_USER_ID_KEY, data.user.id);
     await deleteStoredToken(SIGNUP_TOKEN_KEY);
     return data;
   },
@@ -244,9 +250,30 @@ export const authApi = {
     return getStoredToken(ACCESS_TOKEN_KEY);
   },
 
+  async getCacheUserId(): Promise<string | null> {
+    return getStoredToken(CACHE_USER_ID_KEY);
+  },
+
+  async rememberCacheUserId(userId: string): Promise<void> {
+    if (userId) {
+      await setStoredToken(CACHE_USER_ID_KEY, userId);
+    }
+  },
+
   async clearLocalSession(): Promise<void> {
+    const accessToken = await getStoredToken(ACCESS_TOKEN_KEY);
+    const cacheUserId = await getStoredToken(CACHE_USER_ID_KEY);
+    const cacheIdentity = cacheUserId || accessToken;
+    if (cacheIdentity) {
+      try {
+        await clearAccountPersistentCache(cacheIdentity);
+      } catch (error) {
+        console.warn("Unable to clear cached account data.", error);
+      }
+    }
     await deleteStoredToken(ACCESS_TOKEN_KEY);
     await deleteStoredToken(SIGNUP_TOKEN_KEY);
+    await deleteStoredToken(CACHE_USER_ID_KEY);
   },
 
   async logout(): Promise<void> {

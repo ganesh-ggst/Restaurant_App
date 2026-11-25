@@ -1,4 +1,5 @@
 import { Feather } from "@expo/vector-icons";
+import Constants from "expo-constants";
 import * as MediaLibrary from "expo-media-library/legacy";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useRef, useState } from "react";
@@ -293,16 +294,24 @@ export default function AdminTablesView() {
 
   const downloadTableQr = async (table: AdminTable) => {
     const tableNumber = table.tableNumber ?? "this table";
+    if (Platform.OS === "android" && Constants.expoGoConfig) {
+      Alert.alert(
+        "Unavailable in Expo Go",
+        "Saving QR codes to Photos requires an Android development or production build.",
+      );
+      return;
+    }
+
     setDownloadingQrId(table.id);
 
     try {
-      const permission = await MediaLibrary.requestPermissionsAsync(true, [
+      const permission = await MediaLibrary.getPermissionsAsync(true, [
         "photo",
       ]);
       if (!permission.granted) {
         Alert.alert(
           "Permission needed",
-          "Allow access to your photo library to save the QR code image.",
+          "Enable photo access in device settings to save the QR code image.",
         );
         return;
       }

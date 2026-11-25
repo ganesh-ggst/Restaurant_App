@@ -499,7 +499,7 @@ export default function OperationsDashboardScreen() {
           customerApi.getMenuItems({
             branchId: currentManager?.branchId || dashboardData.branch._id,
             stock: "all",
-          }),
+          }, true),
         ]);
       const supportingErrors: string[] = [];
 
@@ -772,16 +772,6 @@ export default function OperationsDashboardScreen() {
   const pickOfferImage = async () => {
     if (uploadingOfferImage) return;
     try {
-      const permission =
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert(
-          "Photo access required",
-          "Allow photo library access to attach an offer image.",
-        );
-        return;
-      }
-
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
         allowsEditing: true,

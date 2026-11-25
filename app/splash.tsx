@@ -12,8 +12,26 @@ import {
 } from "react-native";
 
 import { useAppTheme } from "../hooks/useAppTheme";
+import { authApi } from "../services/api/auth";
 import { authScreenMediaApi } from "../services/api/auth-screen-media";
-import { isAuthDestination } from "../services/authRouting";
+import { managerProfileApi } from "../services/api/manager-profile";
+import { profileApi } from "../services/api/profile";
+import {
+  getAuthDestination,
+  isAuthDestination,
+  isKnownManagerType,
+  type AuthDestination,
+} from "../services/authRouting";
+import { hasCompletedInitialPermissions } from "../services/initial-permissions";
+
+function isExpiredSessionError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /invalid access token|token has expired|session has ended|session has expired|login session has expired/i.test(
+      error.message,
+    )
+  );
+}
 
 function SplashVideo({
   uri,
@@ -24,7 +42,7 @@ function SplashVideo({
   onPlaybackError: (message: string) => void;
   onPlaybackEnd: () => void;
 }) {
-  const player = useVideoPlayer({ uri }, (videoPlayer) => {
+  const player = useVideoPlayer({ uri, useCaching: true }, (videoPlayer) => {
     videoPlayer.loop = false;
     videoPlayer.muted = true;
   });
@@ -54,42 +72,166 @@ function SplashVideo({
 export default function AuthSplashScreen() {
   const router = useRouter();
   const theme = useAppTheme();
-  const { destination, phone, branchId } = useLocalSearchParams<{
+  const {
+    destination: routeDestination,
+    phone,
+    branchId: routeBranchId,
+    isGuest: routeIsGuest,
+  } = useLocalSearchParams<{
     destination?: string;
     phone?: string;
     branchId?: string;
+    isGuest?: string;
   }>();
   const hasNavigated = useRef(false);
+  const [destination, setDestination] = useState<AuthDestination | undefined>(
+    () =>
+      isAuthDestination(routeDestination) ? routeDestination : undefined,
+  );
+  const [branchId, setBranchId] = useState(routeBranchId);
+  const [isGuest, setIsGuest] = useState(routeIsGuest === "true");
+  const [sessionLoading, setSessionLoading] = useState(
+    !isAuthDestination(routeDestination),
+  );
+  const [sessionError, setSessionError] = useState("");
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [mediaLoading, setMediaLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+
+  const restoreSession = useCallback(async () => {
+    setSessionLoading(true);
+    setSessionError("");
+
+    try {
+      const accessToken = await authApi.getAccessToken();
+      if (!accessToken) {
+        setDestination("/(home)/(tabs)");
+        setIsGuest(true);
+        return;
+      }
+
+      const profile = await profileApi.getMyProfile(true);
+      let managerType = profile.managerType;
+      if (
+        profile.role.toLowerCase() === "manager" &&
+        !isKnownManagerType(managerType)
+      ) {
+        const { manager } = await managerProfileApi.getProfile();
+        managerType = manager.managerType;
+      }
+
+      setDestination(getAuthDestination(profile.role, managerType));
+      setBranchId(routeBranchId || profile.branchId || undefined);
+      setIsGuest(false);
+    } catch (error) {
+      if (isExpiredSessionError(error)) {
+        try {
+          await authApi.clearLocalSession();
+        } catch (clearError) {
+          setSessionError(
+            clearError instanceof Error
+              ? clearError.message
+              : "Unable to clear the expired login session.",
+          );
+          return;
+        }
+
+        setDestination("/(auth)/login");
+        setIsGuest(false);
+        return;
+      }
+
+      setSessionError(
+        error instanceof Error
+          ? error.message
+          : "Unable to restore your login session.",
+      );
+    } finally {
+      setSessionLoading(false);
+    }
+  }, [routeBranchId]);
+
+  useEffect(() => {
+    if (!isAuthDestination(routeDestination)) {
+      const timeout = setTimeout(() => {
+        void restoreSession();
+      }, 0);
+
+      return () => clearTimeout(timeout);
+    }
+
+    return undefined;
+  }, [restoreSession, routeDestination]);
 
   const continueToDestination = useCallback(() => {
     if (!isAuthDestination(destination) || hasNavigated.current) return;
 
     hasNavigated.current = true;
-    router.replace({
-      pathname: destination,
-      params: phone ? { phone } : {},
-    });
-  }, [destination, phone, router]);
+    const params = {
+      destination,
+      ...(phone ? { phone } : {}),
+      ...(isGuest ? { isGuest: "true" } : {}),
+      ...(branchId ? { branchId } : {}),
+    };
+
+    void hasCompletedInitialPermissions()
+      .then((permissionsCompleted) => {
+        if (permissionsCompleted) {
+          router.replace({
+            pathname: destination,
+            params: {
+              ...(phone ? { phone } : {}),
+              ...(isGuest ? { isGuest: "true" } : {}),
+              ...(branchId ? { branchId } : {}),
+            },
+          });
+        } else {
+          router.replace({
+            pathname: "/permissions",
+            params,
+          });
+        }
+      })
+      .catch((error: unknown) => {
+        hasNavigated.current = false;
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : "Unable to check whether permission setup is complete.",
+        );
+      });
+  }, [branchId, destination, isGuest, phone, router]);
 
   useEffect(() => {
+    if (!isAuthDestination(destination) || sessionLoading || sessionError) {
+      return;
+    }
+
     let isCurrent = true;
 
     const loadSplashVideo = async () => {
-      try {
-        const media = await authScreenMediaApi.getActive("splash", branchId);
+      setMediaLoading(true);
+      setErrorMessage("");
+      const applySplashMedia = (
+        media: Awaited<ReturnType<typeof authScreenMediaApi.getActive>>,
+      ) => {
         if (!isCurrent) return;
         if (!media || media.mediaType !== "video") {
-          if (isAuthDestination(destination)) {
-            continueToDestination();
-          } else {
-            setErrorMessage("No active splash screen video is available.");
-          }
+          setVideoUrl(null);
+          setErrorMessage("No active splash screen video is available.");
           return;
         }
+        setErrorMessage("");
         setVideoUrl(media.url);
+      };
+      try {
+        const media = await authScreenMediaApi.getActive(
+          "splash",
+          branchId,
+          false,
+          applySplashMedia,
+        );
+        applySplashMedia(media);
       } catch (error) {
         if (isCurrent) {
           setErrorMessage(
@@ -99,7 +241,7 @@ export default function AuthSplashScreen() {
           );
         }
       } finally {
-        if (isCurrent) setLoading(false);
+        if (isCurrent) setMediaLoading(false);
       }
     };
 
@@ -107,16 +249,13 @@ export default function AuthSplashScreen() {
     return () => {
       isCurrent = false;
     };
-  }, [branchId, continueToDestination, destination]);
+  }, [branchId, destination, sessionError, sessionLoading]);
 
-  const handleContinue = isAuthDestination(destination)
-    ? continueToDestination
-    : () => router.replace("/(auth)/login");
-  const displayedError =
-    errorMessage ||
-    (isAuthDestination(destination)
-      ? ""
-      : "Unable to determine where to continue. Please sign in again.");
+  const displayedError = sessionError || errorMessage;
+  const loading = sessionLoading || mediaLoading;
+  const handleContinue = sessionError
+    ? () => void restoreSession()
+    : continueToDestination;
 
   return (
     <View style={[styles.container, { backgroundColor: theme.bg }]}>
@@ -138,8 +277,15 @@ export default function AuthSplashScreen() {
       {displayedError ? (
         <View style={styles.errorOverlay}>
           <Text style={[styles.errorText, { color: theme.text }]}>
-            {displayedError}
+            {sessionError
+              ? "Unable to restore your session. Check your connection and try again."
+              : displayedError}
           </Text>
+          {sessionError ? (
+            <Text style={[styles.errorText, { color: theme.muted }]}>
+              {sessionError}
+            </Text>
+          ) : null}
           <Pressable
             onPress={handleContinue}
             style={[styles.continueButton, { backgroundColor: theme.primary }]}
@@ -150,7 +296,7 @@ export default function AuthSplashScreen() {
                 { color: theme.primaryForeground },
               ]}
             >
-              {isAuthDestination(destination) ? "Continue" : "Back to sign in"}
+              {sessionError ? "Retry" : "Continue"}
             </Text>
           </Pressable>
         </View>

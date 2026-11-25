@@ -1,6 +1,12 @@
 import axios, { isAxiosError } from "axios";
 
 import { authApi } from "./auth";
+import {
+  clearAccountPersistentCache,
+  getAccountCacheScope,
+  getPersistentCache,
+  invalidatePersistentCache,
+} from "./persistent-cache";
 
 interface ApiEnvelope<T> {
   success: boolean;
@@ -547,6 +553,71 @@ function requireArray<T>(data: T[] | undefined, message: string): T[] {
 
 const encode = (value: string) => encodeURIComponent(value);
 
+function getCartCacheResource(context: CustomerCartContext): string {
+  const apiContext = toCustomerCartApiContext(context);
+  return [
+    "cart",
+    encode(apiContext.branchId),
+    apiContext.fulfillmentType,
+    encode(apiContext.addressId || ""),
+  ].join(":");
+}
+
+async function getAccountCacheKey(resource: string): Promise<string> {
+  const token = await authApi.getAccessToken();
+  if (!token) {
+    throw new Error("Your login session is missing. Please sign in again.");
+  }
+  const identity = (await authApi.getCacheUserId()) || token;
+  return `customer:${getAccountCacheScope(identity)}:${resource}`;
+}
+
+async function invalidateCartCache(
+  context: CustomerCartContext,
+): Promise<void> {
+  await invalidateAccountCache(getCartCacheResource(context));
+}
+
+async function invalidateBranchCartCaches(branchId: string): Promise<void> {
+  const token = await authApi.getAccessToken();
+  const identity = (await authApi.getCacheUserId()) || token;
+  if (!identity) return;
+  try {
+    await clearAccountPersistentCache(identity, `cart:${encode(branchId)}:`);
+  } catch (error) {
+    console.warn("Unable to invalidate the cart cache.", error);
+  }
+}
+
+async function requestCart(
+  context: CustomerCartContext,
+): Promise<CustomerCart> {
+  const apiContext = toCustomerCartApiContext(context);
+  const query = new URLSearchParams({
+    branchId: apiContext.branchId,
+    fulfillmentType: apiContext.fulfillmentType,
+  });
+  if (apiContext.addressId) query.set("addressId", apiContext.addressId);
+  return requireData(
+    await request<CustomerCart>(
+      "GET",
+      `/cart?${query.toString()}`,
+      undefined,
+      true,
+    ),
+    "The server did not return your cart.",
+  );
+}
+
+async function invalidateAccountCache(resource: string): Promise<void> {
+  try {
+    const key = await getAccountCacheKey(resource);
+    await invalidatePersistentCache(key);
+  } catch (error) {
+    console.warn(`Unable to invalidate the ${resource} cache.`, error);
+  }
+}
+
 export const customerApi = {
   async getAvailableDineInTables(
     branchId: string,
@@ -697,6 +768,8 @@ export const customerApi = {
 
   async getMenuItems(
     filters: CustomerMenuItemsQuery = {},
+    forceRefresh = false,
+    onUpdate?: (items: CustomerMenuItem[]) => void,
   ): Promise<CustomerMenuItem[]> {
     const query = new URLSearchParams();
     if (filters.branchId) query.set("branchId", filters.branchId);
@@ -713,13 +786,23 @@ export const customerApi = {
     }
     if (filters.isHot !== undefined) query.set("isHot", String(filters.isHot));
     const queryString = query.toString();
+    const loadMenuItems = async () =>
+      requireArray(
+        await request<CustomerMenuItem[]>(
+          "GET",
+          `/menu-items${queryString ? `?${queryString}` : ""}`,
+        ),
+        "The server did not return menu items.",
+      );
 
-    return requireArray(
-      await request<CustomerMenuItem[]>(
-        "GET",
-        `/menu-items${queryString ? `?${queryString}` : ""}`,
-      ),
-      "The server did not return menu items.",
+    if (filters.search?.trim()) return loadMenuItems();
+    return getPersistentCache(
+      `customer:menu:${queryString || "all"}`,
+      60 * 1000,
+      forceRefresh,
+      loadMenuItems,
+      onUpdate,
+      true,
     );
   },
 
@@ -747,24 +830,45 @@ export const customerApi = {
     );
   },
 
-  async getCategories(): Promise<CustomerCategory[]> {
-    return requireArray(
-      await request<CustomerCategory[]>("GET", "/categories"),
-      "The server did not return menu categories.",
+  async getCategories(
+    forceRefresh = false,
+    onUpdate?: (categories: CustomerCategory[]) => void,
+  ): Promise<CustomerCategory[]> {
+    return getPersistentCache(
+      "customer:categories",
+      24 * 60 * 60 * 1000,
+      forceRefresh,
+      async () =>
+        requireArray(
+          await request<CustomerCategory[]>("GET", "/categories"),
+          "The server did not return menu categories.",
+        ),
+      onUpdate,
+      true,
     );
   },
 
   async getCategoryItems(
     id: string,
     branchId?: string,
+    forceRefresh = false,
+    onUpdate?: (items: CustomerMenuItem[]) => void,
   ): Promise<CustomerMenuItem[]> {
     const query = branchId ? `?branchId=${encode(branchId)}` : "";
-    return requireArray(
-      await request<CustomerMenuItem[]>(
-        "GET",
-        `/categories/${encode(id)}/items${query}`,
-      ),
-      "The server did not return items for this category.",
+    return getPersistentCache(
+      `customer:category-items:${encode(id)}:${encode(branchId || "all")}`,
+      60 * 1000,
+      forceRefresh,
+      async () =>
+        requireArray(
+          await request<CustomerMenuItem[]>(
+            "GET",
+            `/categories/${encode(id)}/items${query}`,
+          ),
+          "The server did not return items for this category.",
+        ),
+      onUpdate,
+      true,
     );
   },
 
@@ -778,27 +882,61 @@ export const customerApi = {
     );
   },
 
-  async getBranches(): Promise<CustomerBranch[]> {
-    return requireArray(
-      await request<CustomerBranch[]>("GET", "/branches"),
-      "The server did not return branches.",
+  async getBranches(
+    forceRefresh = false,
+    onUpdate?: (branches: CustomerBranch[]) => void,
+  ): Promise<CustomerBranch[]> {
+    return getPersistentCache(
+      "customer:branches",
+      10 * 60 * 1000,
+      forceRefresh,
+      async () =>
+        requireArray(
+          await request<CustomerBranch[]>("GET", "/branches"),
+          "The server did not return branches.",
+        ),
+      onUpdate,
+      true,
     );
   },
 
-  async getNearbyBranches(addressId: string): Promise<CustomerBranch[]> {
-    return requireArray(
-      await request<CustomerBranch[]>(
-        "GET",
-        `/branches/nearby?addressId=${encode(addressId)}`,
-      ),
-      "The server did not return nearby branches.",
+  async getNearbyBranches(
+    addressId: string,
+    forceRefresh = false,
+    onUpdate?: (branches: CustomerBranch[]) => void,
+  ): Promise<CustomerBranch[]> {
+    return getPersistentCache(
+      `customer:nearby-branches:${encode(addressId)}`,
+      10 * 60 * 1000,
+      forceRefresh,
+      async () =>
+        requireArray(
+          await request<CustomerBranch[]>(
+            "GET",
+            `/branches/nearby?addressId=${encode(addressId)}`,
+          ),
+          "The server did not return nearby branches.",
+        ),
+      onUpdate,
+      true,
     );
   },
 
-  async getOffers(): Promise<CustomerOffer[]> {
-    return requireArray(
-      await request<CustomerOffer[]>("GET", "/offers"),
-      "The server did not return offers.",
+  async getOffers(
+    forceRefresh = false,
+    onUpdate?: (offers: CustomerOffer[]) => void,
+  ): Promise<CustomerOffer[]> {
+    return getPersistentCache(
+      "customer:offers",
+      15 * 60 * 1000,
+      forceRefresh,
+      async () =>
+        requireArray(
+          await request<CustomerOffer[]>("GET", "/offers"),
+          "The server did not return offers.",
+        ),
+      onUpdate,
+      true,
     );
   },
 
@@ -809,25 +947,50 @@ export const customerApi = {
     );
   },
 
-  async getFeaturedReels(branchId: string): Promise<CustomerFeaturedReel[]> {
-    return requireArray(
-      await request<CustomerFeaturedReel[]>(
-        "GET",
-        `/featured-reels?branchId=${encode(branchId)}`,
-      ),
-      "The server did not return featured reels.",
+  async getFeaturedReels(
+    branchId: string,
+    forceRefresh = false,
+    onUpdate?: (reels: CustomerFeaturedReel[]) => void,
+  ): Promise<CustomerFeaturedReel[]> {
+    return getPersistentCache(
+      `customer:featured-reels:${encode(branchId)}`,
+      60 * 60 * 1000,
+      forceRefresh,
+      async () =>
+        requireArray(
+          await request<CustomerFeaturedReel[]>(
+            "GET",
+            `/featured-reels?branchId=${encode(branchId)}`,
+          ),
+          "The server did not return featured reels.",
+        ),
+      onUpdate,
+      true,
     );
   },
 
-  async getFavorites(): Promise<unknown[]> {
-    return requireArray(
-      await request<unknown[]>("GET", "/favorites", undefined, true),
-      "The server did not return favorites.",
+  async getFavorites(
+    forceRefresh = false,
+    onUpdate?: (favorites: unknown[]) => void,
+  ): Promise<unknown[]> {
+    const cacheKey = await getAccountCacheKey("favorites");
+    return getPersistentCache(
+      cacheKey,
+      5 * 60 * 1000,
+      forceRefresh,
+      async () =>
+        requireArray(
+          await request<unknown[]>("GET", "/favorites", undefined, true),
+          "The server did not return favorites.",
+        ),
+      onUpdate,
+      true,
     );
   },
 
   async addFavorite(menuItemId: string): Promise<void> {
     await request("POST", `/favorites/${encode(menuItemId)}`, undefined, true);
+    await invalidateAccountCache("favorites");
   },
 
   async removeFavorite(menuItemId: string): Promise<void> {
@@ -837,23 +1000,28 @@ export const customerApi = {
       undefined,
       true,
     );
+    await invalidateAccountCache("favorites");
   },
 
   async getCart(context: CustomerCartContext): Promise<CustomerCart> {
-    const apiContext = toCustomerCartApiContext(context);
-    const query = new URLSearchParams({
-      branchId: apiContext.branchId,
-      fulfillmentType: apiContext.fulfillmentType,
-    });
-    if (apiContext.addressId) query.set("addressId", apiContext.addressId);
-    return requireData(
-      await request<CustomerCart>(
-        "GET",
-        `/cart?${query.toString()}`,
-        undefined,
-        true,
-      ),
-      "The server did not return your cart.",
+    return requestCart(context);
+  },
+
+  async getCachedCart(
+    context: CustomerCartContext,
+    forceRefresh = false,
+    onUpdate?: (cart: CustomerCart) => void,
+  ): Promise<CustomerCart> {
+    const cacheKey = await getAccountCacheKey(
+      getCartCacheResource(context),
+    );
+    return getPersistentCache(
+      cacheKey,
+      30 * 1000,
+      forceRefresh,
+      () => requestCart(context),
+      onUpdate,
+      true,
     );
   },
 
@@ -869,6 +1037,7 @@ export const customerApi = {
       { branchId, deliverySpeed },
       true,
     );
+    await invalidateBranchCartCaches(branchId);
   },
 
   async addCartItem(item: CustomerCartItemInput): Promise<void> {
@@ -878,6 +1047,7 @@ export const customerApi = {
       { ...item, ...toCustomerCartApiContext(item) },
       true,
     );
+    await invalidateCartCache(item);
   },
 
   async addCrossSellCartItem(
@@ -891,6 +1061,7 @@ export const customerApi = {
       { ...item, ...apiContext, selectedCustomizations: [] },
       true,
     );
+    await invalidateCartCache(item);
   },
 
   async updateCartItem(
@@ -910,6 +1081,7 @@ export const customerApi = {
       { quantity },
       true,
     );
+    await invalidateCartCache(context);
   },
 
   async removeCartItem(
@@ -928,6 +1100,7 @@ export const customerApi = {
       undefined,
       true,
     );
+    await invalidateCartCache(context);
   },
 
   async applyCartCoupon(
@@ -944,6 +1117,7 @@ export const customerApi = {
       },
       true,
     );
+    await invalidateCartCache(context);
   },
 
   async removeCartCoupon(context: CustomerCartContext): Promise<void> {
@@ -959,6 +1133,7 @@ export const customerApi = {
       undefined,
       true,
     );
+    await invalidateCartCache(context);
   },
 
   async clearCart(context: CustomerCartContext): Promise<void> {
@@ -974,6 +1149,7 @@ export const customerApi = {
       undefined,
       true,
     );
+    await invalidateCartCache(context);
   },
 
   async previewCheckout(input: CheckoutPreviewInput): Promise<unknown> {
@@ -983,10 +1159,22 @@ export const customerApi = {
     );
   },
 
-  async getOrders(): Promise<CustomerOrder[]> {
-    return requireArray(
-      await request<CustomerOrder[]>("GET", "/orders", undefined, true),
-      "The server did not return your orders.",
+  async getOrders(
+    forceRefresh = false,
+    onUpdate?: (orders: CustomerOrder[]) => void,
+  ): Promise<CustomerOrder[]> {
+    const cacheKey = await getAccountCacheKey("orders");
+    return getPersistentCache(
+      cacheKey,
+      30 * 1000,
+      forceRefresh,
+      async () =>
+        requireArray(
+          await request<CustomerOrder[]>("GET", "/orders", undefined, true),
+          "The server did not return your orders.",
+        ),
+      onUpdate,
+      true,
     );
   },
 
@@ -1051,10 +1239,12 @@ export const customerApi = {
 
   async cancelOrder(id: string): Promise<void> {
     await request("PATCH", `/orders/${encode(id)}/cancel`, {}, true);
+    await invalidateAccountCache("orders");
   },
 
   async deleteOrder(id: string): Promise<void> {
     await request("DELETE", `/orders/${encode(id)}`, undefined, true);
+    await invalidateAccountCache("orders");
   },
 
   async reorder(id: string): Promise<unknown> {
@@ -1065,9 +1255,11 @@ export const customerApi = {
   },
 
   async createOrder(input: CreateCustomerOrderInput): Promise<CustomerOrder> {
-    return requireData(
+    const order = requireData(
       await request<CustomerOrder>("POST", "/orders", input, true),
       "The server did not return the created order.",
     );
+    await invalidateAccountCache("orders");
+    return order;
   },
 };

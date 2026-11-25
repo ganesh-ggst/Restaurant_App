@@ -1,8 +1,9 @@
 import { useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { Bell, CheckCheck, Trash2 } from "lucide-react-native";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
+  AppState,
   Alert,
   ActivityIndicator,
   Pressable,
@@ -43,12 +44,24 @@ export default function NotificationsScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [updating, setUpdating] = useState(false);
+  const hasLoadedNotifications = useRef(false);
 
-  const loadNotifications = useCallback(async () => {
-    setLoading(true);
+  const loadNotifications = useCallback(async (forceRefresh = false) => {
+    if (!hasLoadedNotifications.current) setLoading(true);
     setError("");
     try {
-      setPage(await api.getNotifications());
+      setPage(
+        await api.getNotifications(
+          1,
+          20,
+          forceRefresh,
+          (updatedPage) => {
+            setPage(updatedPage);
+            hasLoadedNotifications.current = true;
+          },
+        ),
+      );
+      hasLoadedNotifications.current = true;
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -63,6 +76,10 @@ export default function NotificationsScreen() {
   useFocusEffect(
     useCallback(() => {
       void loadNotifications();
+      const subscription = AppState.addEventListener("change", (nextState) => {
+        if (nextState === "active") void loadNotifications();
+      });
+      return () => subscription.remove();
     }, [loadNotifications]),
   );
 
@@ -71,7 +88,7 @@ export default function NotificationsScreen() {
     setError("");
     try {
       await api.markAllNotificationsRead();
-      await loadNotifications();
+      await loadNotifications(true);
     } catch (updateError) {
       setError(
         updateError instanceof Error
@@ -144,6 +161,7 @@ export default function NotificationsScreen() {
       const nextPage = await api.getNotifications(
         page.pagination.page + 1,
         page.pagination.limit,
+        true,
       );
       setPage((current) =>
         current

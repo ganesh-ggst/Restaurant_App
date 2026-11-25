@@ -12,24 +12,32 @@ import {
   UtensilsCrossed,
   Wifi,
 } from "lucide-react-native";
-import { memo, useEffect, useState } from "react";
+import { Image } from "expo-image";
 import {
-  Image,
+  memo,
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import {
   Pressable,
   ScrollView,
   Text,
   TextInput,
   View,
 } from "react-native";
+import type { StyleProp, TextStyle } from "react-native";
+import type { useAppTheme } from "../../hooks/useAppTheme";
 import Animated, {
-  FadeIn,
-  FadeOut,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
   withSequence,
   withTiming,
 } from "react-native-reanimated";
+import { LoadingWave } from "../ui/LoadingWave";
 
 const hasImageUri = (uri: unknown): uri is string =>
   typeof uri === "string" && uri.trim().length > 0;
@@ -37,6 +45,7 @@ const MAX_VISIBLE_CATEGORIES = 4;
 const CATEGORY_ITEM_WIDTH = 88;
 const TYPEWRITER_CHARACTER_INTERVAL_MS = 35;
 const TYPEWRITER_PAUSE_MS = 1000;
+type HomeHeaderTheme = ReturnType<typeof useAppTheme>;
 
 function useTypewriter(messages: string[], enabled: boolean) {
   const [typedValue, setTypedValue] = useState<{
@@ -78,73 +87,49 @@ function useTypewriter(messages: string[], enabled: boolean) {
   return enabled && typedValue?.messages === messages ? typedValue.text : "";
 }
 
-export const HomeHeader = memo(
+const TypewriterText = memo(
+  ({
+    messages,
+    enabled,
+    className,
+    style,
+    numberOfLines,
+  }: {
+    messages: string[];
+    enabled: boolean;
+    className?: string;
+    style?: StyleProp<TextStyle>;
+    numberOfLines?: number;
+  }) => (
+    <Text className={className} numberOfLines={numberOfLines} style={style}>
+      {useTypewriter(messages, enabled)}
+    </Text>
+  ),
+);
+TypewriterText.displayName = "TypewriterText";
+
+const HomeSearchInput = memo(
   ({
     theme,
-    orderMode,
-    onSelectOrderMode,
-    isOrderLocked,
-    onOpenScanner,
-    onCallWaiter,
-    onRequestWater,
-    onRequestWifi,
-    onRequestBill,
-    onOrderTakeaway,
-    onLeaveTable,
     searchQuery,
     setSearchQuery,
     isListening,
     isVoiceSearching,
     handleVoiceSearch,
-    isVegOnly,
-    setIsVegOnly,
-    categories,
-    hasSpotlightItems = false,
-    offersCarousel,
-    featuredReel,
-    restaurantName,
-    greetings = [],
-    searchPlaceholders = [],
-    branchContentLoaded = false,
-    isBranchOnline = false,
-    isBranchStatusLoading = true,
-    router,
-    activeTable,
-    timeLeft,
-    confirmedOrdersLength = 0,
-    isTimerRunning = false,
-  }: any) => {
-    const [categoryViewportWidth, setCategoryViewportWidth] = useState(0);
-    const [categoryContentWidth, setCategoryContentWidth] = useState(0);
-    const [categoryScrollProgress, setCategoryScrollProgress] = useState(0);
-    const greetingPhrases = greetings;
-    const categoryItemWidth =
-      categoryViewportWidth > 0
-        ? categoryViewportWidth / MAX_VISIBLE_CATEGORIES
-        : CATEGORY_ITEM_WIDTH;
-    const visibleCategoryViewportWidth =
-      categoryViewportWidth || categoryItemWidth * MAX_VISIBLE_CATEGORIES;
-    const titleScale = useSharedValue(1);
+    searchPlaceholders,
+    branchContentLoaded,
+  }: {
+    theme: HomeHeaderTheme;
+    searchQuery: string;
+    setSearchQuery: (query: string) => void;
+    isListening: boolean;
+    isVoiceSearching: boolean;
+    handleVoiceSearch: () => void;
+    searchPlaceholders: string[];
+    branchContentLoaded: boolean;
+  }) => {
+    const [inputQuery, setInputQuery] = useState(searchQuery);
     const micPulse = useSharedValue(1);
-    const typedGreeting = useTypewriter(
-      greetings,
-      branchContentLoaded && greetings.length > 0,
-    );
-    const typedPlaceholder = useTypewriter(
-      searchPlaceholders,
-      branchContentLoaded && searchPlaceholders.length > 0,
-    );
-
-    useEffect(() => {
-      titleScale.value = withRepeat(
-        withSequence(
-          withTiming(1.05, { duration: 1200 }),
-          withTiming(0.98, { duration: 1200 }),
-        ),
-        -1,
-        true,
-      );
-    }, [titleScale]);
 
     useEffect(() => {
       if (isListening) {
@@ -159,14 +144,201 @@ export const HomeHeader = memo(
       } else {
         micPulse.value = withTiming(1);
       }
-    }, [isListening]);
+    }, [isListening, micPulse]);
 
-    const animatedTitleStyle = useAnimatedStyle(() => ({
-      transform: [{ scale: titleScale.value }],
-    }));
     const animatedMicStyle = useAnimatedStyle(() => ({
       transform: [{ scale: micPulse.value }],
     }));
+
+    const handleSearchInputChange = (query: string) => {
+      setInputQuery(query);
+      startTransition(() => setSearchQuery(query));
+    };
+
+    return (
+      <View
+        className="flex-1 flex-row items-center rounded-2xl px-4 h-12 border"
+        style={{ backgroundColor: theme.card, borderColor: theme.border }}
+      >
+        <Search size={20} color={theme.muted} strokeWidth={2.5} />
+        <View className="flex-1 justify-center ml-3 relative h-full">
+          {searchPlaceholders.length > 0 &&
+            inputQuery.length === 0 &&
+            !isListening && (
+              <Animated.View
+                style={{ position: "absolute", left: 0, right: 0 }}
+                pointerEvents="none"
+              >
+                <TypewriterText
+                  messages={searchPlaceholders}
+                  enabled={branchContentLoaded}
+                  style={{
+                    color: theme.muted,
+                    fontSize: 16,
+                    fontWeight: "500",
+                  }}
+                  numberOfLines={1}
+                />
+              </Animated.View>
+            )}
+          {(isListening || isVoiceSearching) && (
+            <View
+              style={{ position: "absolute", left: 0 }}
+              pointerEvents="none"
+            >
+              <Text
+                style={{
+                  color: theme.primary,
+                  fontSize: 16,
+                  fontWeight: "bold",
+                }}
+              >
+                {isVoiceSearching ? "Searching menu..." : "Listening..."}
+              </Text>
+            </View>
+          )}
+          <TextInput
+            value={inputQuery}
+            onChangeText={handleSearchInputChange}
+            style={{
+              color: theme.text,
+              fontSize: 16,
+              fontWeight: "500",
+              paddingVertical: 0,
+            }}
+          />
+        </View>
+        <View className="flex-row items-center pl-3">
+          <View
+            className="h-5 w-[1px] mr-3"
+            style={{ backgroundColor: theme.border }}
+          />
+          <Pressable
+            onPress={handleVoiceSearch}
+            disabled={isVoiceSearching}
+            accessibilityRole="button"
+            accessibilityLabel={
+              isListening ? "Stop voice search" : "Start voice search"
+            }
+          >
+            <Animated.View style={animatedMicStyle}>
+              <Mic
+                size={18}
+                color={isListening ? theme.danger : theme.primary}
+                strokeWidth={2.5}
+              />
+            </Animated.View>
+          </Pressable>
+        </View>
+      </View>
+    );
+  },
+);
+HomeSearchInput.displayName = "HomeSearchInput";
+
+const VegFilterButton = memo(
+  ({
+    theme,
+    isVegOnly,
+    onChange,
+  }: {
+    theme: HomeHeaderTheme;
+    isVegOnly: boolean;
+    onChange: (value: boolean) => void;
+  }) => {
+    const [optimisticValue, setOptimisticValue] = useState<boolean | null>(
+      null,
+    );
+    const isSelected = optimisticValue ?? isVegOnly;
+
+    const handlePress = useCallback(() => {
+      const nextValue = !isSelected;
+      setOptimisticValue(nextValue);
+      onChange(nextValue);
+    }, [isSelected, onChange]);
+
+    return (
+      <Pressable
+        onPress={handlePress}
+        className="flex-row items-center justify-center rounded-2xl px-4 border"
+        style={{
+          flexShrink: 0,
+          backgroundColor: isSelected ? theme.primary : theme.card,
+          borderColor: isSelected ? theme.primary : theme.border,
+        }}
+      >
+        <View
+          className="w-3 h-3 border justify-center items-center rounded-[2px] mr-1.5"
+          style={{ borderColor: isSelected ? "#fff" : theme.muted }}
+        >
+          {isSelected && <View className="w-1.5 h-1.5 rounded-full bg-white" />}
+        </View>
+        <Text
+          numberOfLines={1}
+          className="text-xs font-black tracking-wider"
+          style={{ color: isSelected ? "#fff" : theme.muted }}
+        >
+          VEG
+        </Text>
+      </Pressable>
+    );
+  },
+);
+VegFilterButton.displayName = "VegFilterButton";
+
+export const HomeHeader = memo(
+  ({
+    theme,
+    orderMode,
+    onSelectOrderMode,
+    isOrderLocked,
+    onOpenScanner,
+    onCallWaiter,
+    onRequestWater,
+    onRequestWifi,
+    onRequestBill,
+    onOrderTakeaway,
+    onLeaveTable,
+    searchQuery,
+    searchInputRevision = 0,
+    setSearchQuery,
+    isListening,
+    isVoiceSearching,
+    handleVoiceSearch,
+    isVegOnly,
+    onVegFilterChange,
+    categories,
+    hasSpotlightItems = false,
+    offersCarousel,
+    featuredReel,
+    restaurantName,
+    greetings = [],
+    searchPlaceholders = [],
+    branchContentLoaded = false,
+    featuredReelsLoaded = false,
+    isBranchOnline = false,
+    isBranchStatusLoading = true,
+    hasSelectedBranch = false,
+    router,
+    activeTable,
+    timeLeft,
+    confirmedOrdersLength = 0,
+    isTimerRunning = false,
+  }: any) => {
+    const [categoryViewportWidth, setCategoryViewportWidth] = useState(0);
+    const [categoryContentWidth, setCategoryContentWidth] = useState(0);
+    const [categoryScrollProgress, setCategoryScrollProgress] = useState(0);
+    const greetingPhrases = greetings;
+    const greetingTextStyle = useMemo(
+      () => ({ color: theme.text }),
+      [theme.text],
+    );
+    const categoryItemWidth =
+      categoryViewportWidth > 0
+        ? categoryViewportWidth / MAX_VISIBLE_CATEGORIES
+        : CATEGORY_ITEM_WIDTH;
+    const visibleCategoryViewportWidth =
+      categoryViewportWidth || categoryItemWidth * MAX_VISIBLE_CATEGORIES;
     const formattedTime = timeLeft
       ? `${Math.floor(timeLeft / 60)}:${(timeLeft % 60).toString().padStart(2, "0")}`
       : null;
@@ -189,8 +361,9 @@ export const HomeHeader = memo(
           {hasImageUri(item.iconUrl) ? (
             <Image
               source={{ uri: item.iconUrl }}
-              className="h-10 w-10"
-              resizeMode="contain"
+              style={{ width: 40, height: 40 }}
+              contentFit="contain"
+              cachePolicy="disk"
             />
           ) : item.icon?.trim() ? (
             <Text className="text-3xl">{item.icon}</Text>
@@ -222,13 +395,13 @@ export const HomeHeader = memo(
         <View className="px-4 mb-4 mt-2">
           {branchContentLoaded && greetingPhrases.length > 0 && (
             <View className="mb-3">
-              <Text
+              <TypewriterText
+                messages={greetingPhrases}
+                enabled={branchContentLoaded}
                 className="text-lg font-black tracking-tight"
                 numberOfLines={2}
-                style={{ color: theme.text }}
-              >
-                {typedGreeting}
-              </Text>
+                style={greetingTextStyle}
+              />
             </View>
           )}
           <View
@@ -278,120 +451,117 @@ export const HomeHeader = memo(
           style={{ backgroundColor: theme.bg }}
         >
           <View className="flex-row gap-3">
-            <View
-              className="flex-1 flex-row items-center rounded-2xl px-4 h-12 border"
-              style={{ backgroundColor: theme.card, borderColor: theme.border }}
-            >
-              <Search size={20} color={theme.muted} strokeWidth={2.5} />
-              <View className="flex-1 justify-center ml-3 relative h-full">
-                {searchPlaceholders.length > 0 &&
-                  searchQuery.length === 0 &&
-                  !isListening && (
-                    <Animated.View
-                      style={{ position: "absolute", left: 0, right: 0 }}
-                      pointerEvents="none"
-                    >
-                      <Text
-                        style={{
-                          color: theme.muted,
-                          fontSize: 16,
-                          fontWeight: "500",
-                        }}
-                        numberOfLines={1}
-                      >
-                        {typedPlaceholder}
-                      </Text>
-                    </Animated.View>
-                  )}
-                {(isListening || isVoiceSearching) && (
-                  <View
-                    style={{ position: "absolute", left: 0 }}
-                    pointerEvents="none"
-                  >
-                    <Text
-                      style={{
-                        color: theme.primary,
-                        fontSize: 16,
-                        fontWeight: "bold",
-                      }}
-                    >
-                      {isVoiceSearching ? "Searching menu..." : "Listening..."}
-                    </Text>
-                  </View>
-                )}
-                <TextInput
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  style={{
-                    color: theme.text,
-                    fontSize: 16,
-                    fontWeight: "500",
-                    paddingVertical: 0,
-                  }}
-                />
-              </View>
-              <View className="flex-row items-center pl-3">
-                <View
-                  className="h-5 w-[1px] mr-3"
-                  style={{ backgroundColor: theme.border }}
-                />
-                <Pressable
-                  onPress={handleVoiceSearch}
-                  disabled={isVoiceSearching}
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    isListening ? "Stop voice search" : "Start voice search"
-                  }
-                >
-                  <Animated.View style={animatedMicStyle}>
-                    <Mic
-                      size={18}
-                      color={isListening ? theme.danger : theme.primary}
-                      strokeWidth={2.5}
-                    />
-                  </Animated.View>
-                </Pressable>
-              </View>
-            </View>
+            <HomeSearchInput
+              key={searchInputRevision}
+              theme={theme}
+              searchQuery={searchQuery}
+              setSearchQuery={setSearchQuery}
+              isListening={isListening}
+              isVoiceSearching={isVoiceSearching}
+              handleVoiceSearch={handleVoiceSearch}
+              searchPlaceholders={searchPlaceholders}
+              branchContentLoaded={branchContentLoaded}
+            />
 
-            <Pressable
-              onPress={() => setIsVegOnly(!isVegOnly)}
-              className="flex-row items-center justify-center rounded-2xl px-4 border"
-              style={{
-                flexShrink: 0,
-                backgroundColor: isVegOnly ? theme.primary : theme.card,
-                borderColor: isVegOnly ? theme.primary : theme.border,
-              }}
-            >
-              <View
-                className="w-3 h-3 border justify-center items-center rounded-[2px] mr-1.5"
-                style={{ borderColor: isVegOnly ? "#fff" : theme.muted }}
-              >
-                {isVegOnly && (
-                  <View className="w-1.5 h-1.5 rounded-full bg-white" />
-                )}
-              </View>
-              <Text
-                numberOfLines={1}
-                className="text-xs font-black tracking-wider"
-                style={{ color: isVegOnly ? "#fff" : theme.muted }}
-              >
-                VEG
-              </Text>
-            </Pressable>
+            <VegFilterButton
+              theme={theme}
+              isVegOnly={isVegOnly}
+              onChange={onVegFilterChange}
+            />
           </View>
         </View>
 
         {isBranchStatusLoading ? (
+          <View>
+            {(orderMode === "Delivery" || orderMode === "Takeaway") &&
+            !searchQuery ? (
+              <>
+                <View className="mb-6 px-4">
+                  <LoadingWave
+                    className="mb-3 h-5 w-32 rounded"
+                    isDark={theme.isDark}
+                    style={{ backgroundColor: theme.card }}
+                  />
+                  <LoadingWave
+                    className="h-48 rounded-[24px] border"
+                    isDark={theme.isDark}
+                    style={{
+                      backgroundColor: theme.card,
+                      borderColor: theme.border,
+                    }}
+                  />
+                </View>
+                <View className="mb-6 px-4">
+                  <LoadingWave
+                    className="mb-3 h-5 w-36 rounded"
+                    isDark={theme.isDark}
+                    style={{ backgroundColor: theme.card }}
+                  />
+                  <LoadingWave
+                    className="h-40 rounded-[24px] border"
+                    isDark={theme.isDark}
+                    style={{
+                      backgroundColor: theme.card,
+                      borderColor: theme.border,
+                      borderWidth: 1,
+                    }}
+                  />
+                </View>
+                <View className="mb-6 px-4">
+                  <LoadingWave
+                    className="mb-4 h-6 w-36 rounded"
+                    isDark={theme.isDark}
+                    style={{ backgroundColor: theme.card }}
+                  />
+                  <View className="flex-row justify-between">
+                    {[0, 1, 2, 3].map((item) => (
+                      <View key={item} className="items-center">
+                        <LoadingWave
+                          className="h-16 w-16 rounded-2xl border"
+                          isDark={theme.isDark}
+                          style={{
+                            backgroundColor: theme.card,
+                            borderColor: theme.border,
+                          }}
+                        />
+                        <LoadingWave
+                          className="mt-2 h-3 w-12 rounded"
+                          isDark={theme.isDark}
+                          style={{ backgroundColor: theme.card }}
+                        />
+                      </View>
+                    ))}
+                  </View>
+                </View>
+                <View className="mb-4 px-4">
+                  <LoadingWave
+                    className="h-6 w-40 rounded"
+                    isDark={theme.isDark}
+                    style={{ backgroundColor: theme.card }}
+                  />
+                </View>
+              </>
+            ) : (
+              <LoadingWave
+                className="mx-4 mb-6 h-32 rounded-[24px] border"
+                isDark={theme.isDark}
+                style={{
+                  backgroundColor: theme.card,
+                  borderColor: theme.border,
+                }}
+              />
+            )}
+          </View>
+        ) : !hasSelectedBranch ? (
           <View
             className="mx-4 mb-6 rounded-2xl border p-5"
             style={{ borderColor: theme.border, backgroundColor: theme.card }}
           >
-            <Text className="text-base font-black" style={{ color: theme.text }}>
-              Checking restaurant availability
+            <Text className="text-lg font-black" style={{ color: theme.text }}>
+              Choose a restaurant branch
             </Text>
             <Text className="mt-1 text-sm" style={{ color: theme.muted }}>
-              Please wait while we check whether this branch is open.
+              Select a branch above to browse its menu and offers.
             </Text>
           </View>
         ) : !isBranchOnline ? (
@@ -413,11 +583,25 @@ export const HomeHeader = memo(
           <>
             {(orderMode === "Delivery" || orderMode === "Takeaway") &&
             !searchQuery ? (
-              <Animated.View
-                entering={FadeIn.duration(300)}
-                exiting={FadeOut.duration(200)}
-              >
-                {featuredReel ? (
+              <View>
+                {!featuredReelsLoaded ? (
+                  <View className="w-full px-4 mb-2">
+                    <Text
+                      className="mb-3 text-xl font-black"
+                      style={{ color: theme.text }}
+                    >
+                      Featured Content
+                    </Text>
+                    <LoadingWave
+                      className="h-48 w-full rounded-[24px] border"
+                      isDark={theme.isDark}
+                      style={{
+                        backgroundColor: theme.card,
+                        borderColor: theme.border,
+                      }}
+                    />
+                  </View>
+                ) : featuredReel ? (
                   <View className="w-full px-4 mb-2">
                     <Text
                       className="mb-3 text-xl font-black"
@@ -436,7 +620,7 @@ export const HomeHeader = memo(
                         <Image
                           source={{ uri: featuredReel.imageUrl }}
                           style={{ width: "100%", height: "100%" }}
-                          resizeMode="cover"
+                          contentFit="cover"
                         />
                       ) : null}
                       <View className="absolute inset-0 bg-black/20 pointer-events-none" />
@@ -556,15 +740,12 @@ export const HomeHeader = memo(
                     In The Spotlight
                   </Text>
                 ) : null}
-              </Animated.View>
+              </View>
             ) : null}
 
             {/* STORE UI: Show ONLY for Dine-In */}
             {orderMode === "Dine-in" && !searchQuery ? (
-              <Animated.View
-                entering={FadeIn.duration(300)}
-                exiting={FadeOut.duration(200)}
-              >
+              <View>
                 <View className="px-4 mb-6">
                   {activeTable ? (
                     <View
@@ -806,7 +987,7 @@ export const HomeHeader = memo(
                 >
                   Trending at this Branch
                 </Text>
-              </Animated.View>
+              </View>
             ) : null}
 
         {searchQuery && (
@@ -823,3 +1004,4 @@ export const HomeHeader = memo(
     );
   },
 );
+HomeHeader.displayName = "HomeHeader";

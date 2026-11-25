@@ -18,6 +18,7 @@ import { Input } from "../../components/ui/Input";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { api } from "../../services/api";
 import { managerProfileApi } from "../../services/api/manager-profile";
+import { addFavoriteIfMissing } from "../../services/customer-favorites";
 import {
   getAuthDestination,
   isKnownManagerType,
@@ -26,9 +27,13 @@ import {
 export default function BasicDetailsScreen() {
   const router = useRouter();
   const theme = useAppTheme();
-  const { phone, branchId } = useLocalSearchParams<{
+  const { phone, branchId, favoriteItemId, continueToCart, cartMode } =
+    useLocalSearchParams<{
     phone: string;
     branchId?: string;
+    favoriteItemId?: string;
+    continueToCart?: string;
+    cartMode?: string;
   }>();
 
   const [firstName, setFirstName] = useState("");
@@ -54,14 +59,37 @@ export default function BasicDetailsScreen() {
             (await managerProfileApi.getProfile()).manager.managerType
           : result.user.managerType;
 
-      router.replace({
-        pathname: "/splash",
-        params: {
-          destination: getAuthDestination(result.user.role, managerType),
-          phone,
-          ...(branchId ? { branchId } : {}),
-        },
-      });
+      const destination = getAuthDestination(result.user.role, managerType);
+      const isCustomerDestination = destination === "/(home)/(tabs)";
+      const returnToCart =
+        continueToCart === "true" && isCustomerDestination;
+      const navigateToDestination = () =>
+        router.replace({
+          pathname: returnToCart ? "/(home)/delivery-cart" : destination,
+          params: {
+            phone,
+            ...(branchId ? { branchId } : {}),
+            ...(isCustomerDestination ? { isGuest: "false" } : {}),
+            ...(returnToCart && cartMode ? { cartMode } : {}),
+          },
+        });
+
+      if (favoriteItemId && destination === "/(home)/(tabs)") {
+        try {
+          await addFavoriteIfMissing(favoriteItemId);
+        } catch (favoriteError) {
+          Alert.alert(
+            "Unable to save favorite",
+            favoriteError instanceof Error
+              ? favoriteError.message
+              : "Your profile is complete, but this item could not be added to favorites.",
+            [{ text: "Continue", onPress: navigateToDestination }],
+          );
+          return;
+        }
+      }
+
+      navigateToDestination();
     } catch (saveError) {
       setError(
         saveError instanceof Error

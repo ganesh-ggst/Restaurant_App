@@ -169,9 +169,11 @@ export default function AddressFormScreen() {
     setLocationBusy(true);
     setError("");
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
+      const { status } = await Location.getForegroundPermissionsAsync();
       if (status !== "granted") {
-        throw new Error("Allow location access to use your current location.");
+        throw new Error(
+          "Enable location access in device settings to use your current location.",
+        );
       }
       const location = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,

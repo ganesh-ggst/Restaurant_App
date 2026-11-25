@@ -148,9 +148,11 @@ export default function AddBranchScreen() {
     setLocationBusy(true);
     setLocationError("");
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
+      const { status } = await Location.getForegroundPermissionsAsync();
       if (status !== "granted") {
-        throw new Error("Allow location access to use your current location.");
+        throw new Error(
+          "Enable location access in device settings to use your current location.",
+        );
       }
 
       const location = await Location.getCurrentPositionAsync({

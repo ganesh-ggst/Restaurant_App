@@ -1,12 +1,15 @@
 import { useRouter } from "expo-router";
 import { ArrowLeft, Heart } from "lucide-react-native";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { useCallback, useMemo } from "react";
+import { FlatList, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import FoodCard from "../../components/home/FoodCard";
+import MenuListItem, {
+  type MenuCardItem,
+} from "../../components/home/MenuListItem";
 import { ProfileAvatarButton } from "../../components/profile/ProfileAvatarButton";
+import { useFavorites, useOrderMode } from "../../contexts/HomeContext";
 import { useAppTheme } from "../../hooks/useAppTheme";
-import { useFavorites, useOrderMode } from "./_layout";
 
 export default function FavoritesScreen() {
   const router = useRouter();
@@ -23,25 +26,63 @@ export default function FavoritesScreen() {
     handleAddToCart,
     handleDecrementCartItem,
   } = useOrderMode();
-  const activeCart = carts[orderMode] || [];
+  const activeCart = useMemo(
+    () => carts[orderMode] || [],
+    [carts, orderMode],
+  );
+  const activeBranchId = activeBranch?.id;
 
   const activeCartTotalItems = activeCart.reduce(
     (sum: number, item: any) => sum + item.quantity,
     0,
   );
 
-  const favoriteItems = menuItems.filter((item: any) => {
-    if (!favorites.includes(item.id) || !item.isAvailable || !activeBranch?.id) {
-      return false;
+  const favoriteItems = useMemo(
+    () =>
+      menuItems.filter((item: MenuCardItem) => {
+        if (
+          !favorites.includes(item.id) ||
+          !item.isAvailable ||
+          !activeBranchId
+        ) {
+          return false;
+        }
+
+        const itemBranchIds = item.branchIds || [];
+        return itemBranchIds.length > 0
+          ? itemBranchIds.includes(activeBranchId)
+          : !item.branchId || item.branchId === activeBranchId;
+      }),
+    [activeBranchId, favorites, menuItems],
+  );
+  const cartQuantityByMenuItemId = useMemo(() => {
+    const quantities = new Map<string, number>();
+    for (const item of activeCart) {
+      const itemId = String(item.id);
+      quantities.set(
+        itemId,
+        (quantities.get(itemId) || 0) + item.quantity,
+      );
     }
-
-    const itemBranchIds = item.branchIds || [];
-    const isAvailableAtBranch = itemBranchIds.length > 0
-      ? itemBranchIds.includes(activeBranch.id)
-      : !item.branchId || item.branchId === activeBranch.id;
-
-    return isAvailableAtBranch;
-  });
+    return quantities;
+  }, [activeCart]);
+  const renderFavoriteItem = useCallback(
+    ({ item }: { item: MenuCardItem }) => (
+      <View style={{ width: "48%" }} className="mb-4">
+        <MenuListItem
+          item={item}
+          cartQuantity={cartQuantityByMenuItemId.get(item.id) || 0}
+          onAddToCart={handleAddToCart}
+          onDecrement={handleDecrementCartItem}
+        />
+      </View>
+    ),
+    [cartQuantityByMenuItemId, handleAddToCart, handleDecrementCartItem],
+  );
+  const favoriteItemKeyExtractor = useCallback(
+    (item: MenuCardItem) => item.id,
+    [],
+  );
 
   return (
     <View
@@ -65,13 +106,21 @@ export default function FavoritesScreen() {
         </View>
       </View>
 
-      <ScrollView
+      <FlatList
+        data={favoriteItems}
+        keyExtractor={favoriteItemKeyExtractor}
+        renderItem={renderFavoriteItem}
+        numColumns={2}
+        initialNumToRender={6}
+        maxToRenderPerBatch={6}
+        updateCellsBatchingPeriod={16}
+        windowSize={7}
+        columnWrapperStyle={{ justifyContent: "space-between" }}
         contentContainerStyle={{
           paddingBottom: activeCartTotalItems > 0 ? 180 : 120,
         }}
         showsVerticalScrollIndicator={false}
-      >
-        {favoriteItems.length === 0 ? (
+        ListEmptyComponent={
           <View className="items-center justify-center py-20 px-6">
             <Heart
               size={64}
@@ -92,31 +141,8 @@ export default function FavoritesScreen() {
               Tap the heart icon on any food item to save it here for later.
             </Text>
           </View>
-        ) : (
-          <View className="flex-row flex-wrap justify-between px-4 mt-2">
-            {favoriteItems.map((item: any) => {
-              const cartQuantity = activeCart.reduce(
-                (quantity: number, cartItem: any) =>
-                  quantity +
-                  (cartItem.id === item.id ? cartItem.quantity : 0),
-                0,
-              );
-              return (
-                <View key={item.id} style={{ width: "48%" }} className="mb-4">
-                  <FoodCard
-                    item={item}
-                    cartQuantity={cartQuantity}
-                    onAddToCart={(qty, addons, total) =>
-                      handleAddToCart(item, qty, addons, total)
-                    }
-                    onDecrement={() => handleDecrementCartItem(item.id)}
-                  />
-                </View>
-              );
-            })}
-          </View>
-        )}
-      </ScrollView>
+        }
+      />
     </View>
   );
 }

@@ -2,7 +2,7 @@ import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Camera, UserRound } from "lucide-react-native";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Image } from "expo-image";
 import {
   ActivityIndicator,
@@ -29,25 +29,27 @@ import type { UserProfile } from "../../../../services/api/profile";
 export default function PersonalInfoScreen() {
   const router = useRouter();
   const theme = useAppTheme();
-  const { updateUser } = useProfile();
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [loading, setLoading] = useState(true);
+  const { user, updateUser } = useProfile();
+  const [profile, setProfile] = useState<UserProfile | null>(user);
+  const [firstName, setFirstName] = useState(user?.firstName || "");
+  const [lastName, setLastName] = useState(user?.lastName || "");
+  const [loading, setLoading] = useState(!user);
+  const hasProfileData = useRef(Boolean(user));
   const [saving, setSaving] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [failedAvatarUrl, setFailedAvatarUrl] = useState("");
   const [error, setError] = useState("");
 
   const loadProfile = useCallback(async () => {
-    setLoading(true);
+    if (!hasProfileData.current) setLoading(true);
     setError("");
     setFailedAvatarUrl("");
     try {
-      const result = await api.getMyProfile(true);
+      const result = await api.getMyProfile();
       setProfile(result);
       setFirstName(result.firstName);
       setLastName(result.lastName);
+      hasProfileData.current = true;
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -98,15 +100,6 @@ export default function PersonalInfoScreen() {
   const chooseAvatar = async () => {
     if (uploadingAvatar || !profile) return;
     try {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert(
-          "Photo Access Required",
-          "Allow photo library access to choose a profile picture.",
-        );
-        return;
-      }
-
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
         allowsEditing: true,
@@ -179,7 +172,7 @@ export default function PersonalInfoScreen() {
                   source={{ uri: profile.avatarUrl }}
                   style={{ width: "100%", height: "100%" }}
                   contentFit="cover"
-                  cachePolicy="none"
+                  cachePolicy="disk"
                   onError={() => setFailedAvatarUrl(profile.avatarUrl)}
                 />
               ) : (

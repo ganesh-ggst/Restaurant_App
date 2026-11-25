@@ -17,10 +17,16 @@ import {
   Wifi,
   X,
 } from "lucide-react-native";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Alert,
-  ActivityIndicator,
   AppState,
   FlatList,
   Image,
@@ -35,18 +41,27 @@ import {
   TextInput,
   View,
 } from "react-native";
-import Animated, { FadeIn, SlideInDown } from "react-native-reanimated";
+import Animated, { SlideInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import FoodCard from "../../../components/home/FoodCard";
 import { HomeHeader } from "../../../components/home/HomeHeader";
+import MenuListItem, {
+  type MenuCardItem,
+} from "../../../components/home/MenuListItem";
+import { LoadingWave } from "../../../components/ui/LoadingWave";
 import { ProfileAvatarButton } from "../../../components/profile/ProfileAvatarButton";
+import { useOrderMode } from "../../../contexts/HomeContext";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { api } from "../../../services/api";
 import { authApi } from "../../../services/api/auth";
 import {
+  getSpeechRecognitionLoadError,
+  getSpeechRecognitionPackage,
+} from "../../../services/speech-recognition";
+import {
   getBranchDistanceKm,
   getDeliveryBranchDistanceKm,
+  isDeliveryBranchEligible,
   getDeliveryBranchUnavailableReason,
   MAX_DELIVERY_DISTANCE_KM,
 } from "../../../utils/delivery-branch";
@@ -58,7 +73,6 @@ import type {
   CustomerDineInWifiConnection,
   CustomerMenuItem,
 } from "../../../services/api/customer";
-import { useOrderMode } from "../_layout";
 
 const hasImageUri = (uri: unknown): uri is string =>
   typeof uri === "string" && uri.trim().length > 0;
@@ -78,12 +92,11 @@ function isMenuItemInStock(
   );
 }
 
-function matchesSearchText(query: string, value: string): boolean {
-  const queryWords = query
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean);
-  const valueWords = value.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+function tokenizeSearchText(value: string): string[] {
+  return value.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+function matchesSearchText(queryWords: string[], valueWords: string[]): boolean {
   if (queryWords.length === 0) return true;
 
   const matchesWordInOrder = (searchWord: string, valueWord: string) => {
@@ -110,6 +123,40 @@ type BranchWithDistance = {
   branch: SelectableBranch;
   distance: number | null;
 };
+type HomeFeedRow =
+  | { type: "section"; key: string; title: string }
+  | { type: "items"; key: string; items: MenuCardItem[] }
+  | { type: "loading"; key: string };
+
+function buildHomeFeedRows(items: MenuCardItem[]): HomeFeedRow[] {
+  const availableItems: MenuCardItem[] = [];
+  const outOfStockItems: MenuCardItem[] = [];
+  for (const item of items) {
+    (isMenuItemInStock(item) ? availableItems : outOfStockItems).push(item);
+  }
+
+  const rows: HomeFeedRow[] = [];
+  const addItemRows = (menuItems: MenuCardItem[], prefix: string) => {
+    for (let index = 0; index < menuItems.length; index += 2) {
+      rows.push({
+        type: "items",
+        key: `${prefix}-${Math.floor(index / 2)}`,
+        items: menuItems.slice(index, index + 2),
+      });
+    }
+  };
+
+  addItemRows(availableItems, "available");
+  if (outOfStockItems.length > 0) {
+    rows.push({
+      type: "section",
+      key: "out-of-stock-heading",
+      title: "Out of stock",
+    });
+    addItemRows(outOfStockItems, "out-of-stock");
+  }
+  return rows;
+}
 
 interface ScannedTablePayload {
   branchId?: string;
@@ -178,19 +225,7 @@ function isBranchOnline(
   return Boolean(branch?.isActive && branch.isOnline !== false);
 }
 
-type SpeechRecognitionPackage = typeof import("expo-speech-recognition");
-
-let speechRecognitionLoadError: unknown;
-const speechRecognition: SpeechRecognitionPackage | null = (() => {
-  try {
-    // Expo Go does not include this native module.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    return require("expo-speech-recognition") as SpeechRecognitionPackage;
-  } catch (error) {
-    speechRecognitionLoadError = error;
-    return null;
-  }
-})();
+const speechRecognition = getSpeechRecognitionPackage();
 const useSpeechRecognitionEvent =
   speechRecognition?.useSpeechRecognitionEvent ?? (() => {});
 
@@ -200,18 +235,20 @@ export default function HomeScreen() {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
 
-  const [permission, requestPermission] = useCameraPermissions();
+  const [permission] = useCameraPermissions();
 
   const {
     mode: orderMode,
     isGuest = false,
     setMode: setGlobalOrderMode,
-    carts,
+    activeCart,
     menuItems,
     menuItemsLoadedForBranchId,
     categories,
     offers,
+    offersLoaded,
     featuredReels,
+    featuredReelsLoaded,
     refreshHomeData,
     isRefreshingHome,
     addresses,
@@ -235,19 +272,32 @@ export default function HomeScreen() {
     setDineInCartState,
     setPendingOrderSnapshot,
   } = useOrderMode();
+  const cartQuantityByMenuItemId = useMemo(() => {
+    const quantities = new Map<string, number>();
+    for (const cartItem of activeCart) {
+      const itemId = String(cartItem.id);
+      quantities.set(
+        itemId,
+        (quantities.get(itemId) || 0) + cartItem.quantity,
+      );
+    }
+    return quantities;
+  }, [activeCart]);
 
   const [isVegOnly, setIsVegOnly] = useState(false);
+  const handleVegFilterChange = useCallback(
+    (value: boolean) => {
+      startTransition(() => setIsVegOnly(value));
+    },
+    [setIsVegOnly],
+  );
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchInputRevision, setSearchInputRevision] = useState(0);
   const [isListening, setIsListening] = useState(false);
   const [isVoiceSearching, setIsVoiceSearching] = useState(false);
   const [voiceResultIds, setVoiceResultIds] = useState<string[] | null>(null);
   const voiceSearchInFlight = useRef(false);
   const voiceSearchGeneration = useRef(0);
-  const menuSearchRequestId = useRef(0);
-  const [serverSearchResults, setServerSearchResults] = useState<{
-    key: string;
-    ids: string[];
-  } | null>(null);
   const voiceResultHandled = useRef(false);
   const [offersViewportWidth, setOffersViewportWidth] = useState(0);
   const [activeOfferIndex, setActiveOfferIndex] = useState(0);
@@ -260,11 +310,6 @@ export default function HomeScreen() {
     lat: number;
     lng: number;
   } | null>(null);
-  const [isLoadingCustomerLocation, setIsLoadingCustomerLocation] =
-    useState(false);
-  const [customerLocationError, setCustomerLocationError] = useState<
-    string | null
-  >(null);
   const customerLocationRequestId = useRef(0);
 
   const [pendingModeSetup, setPendingModeSetup] = useState<string | null>(null);
@@ -312,15 +357,21 @@ export default function HomeScreen() {
   const didRestoreDineInSession = useRef(false);
   const sessionCheckErrorShown = useRef(false);
 
-  const activeCart = carts[orderMode] || [];
   const selectedBranchId = activeBranch?.id;
   const isSelectedBranchOnline = branchesLoaded && isBranchOnline(activeBranch);
   const nearbyOpenBranches = useMemo(
-    () =>
-      branches
-        .filter((branch: SelectableBranch) =>
-          isGuest ? true : isBranchOnline(branch),
-        )
+    () => {
+      const onlineBranches = branches.filter(isBranchOnline);
+      const fallbackBranch =
+        branches.find((branch: SelectableBranch) => branch.isActive) ||
+        branches[0];
+      const visibleBranches =
+        onlineBranches.length > 0
+          ? onlineBranches
+          : fallbackBranch
+            ? [fallbackBranch]
+            : [];
+      return visibleBranches
         .map((branch: SelectableBranch): BranchWithDistance => ({
           branch,
           distance: getBranchDistanceKm(branch, customerLocation),
@@ -337,8 +388,9 @@ export default function HomeScreen() {
           }
           return first.branch.name.localeCompare(second.branch.name);
         })
-        .map(({ branch }: BranchWithDistance) => branch),
-    [branches, customerLocation, isGuest],
+        .map(({ branch }: BranchWithDistance) => branch);
+    },
+    [branches, customerLocation],
   );
 
   const loadAvailableDineInTables = useCallback(
@@ -430,10 +482,7 @@ export default function HomeScreen() {
         }
       })
       .catch((error) => {
-        Alert.alert(
-          "Unable to Restore Dine-in Session",
-          error instanceof Error ? error.message : "Please try again.",
-        );
+        console.warn("Unable to restore the dine-in session.", error);
       });
   }, [
     branches,
@@ -488,10 +537,7 @@ export default function HomeScreen() {
       } catch (error) {
         if (!isCurrent || sessionCheckErrorShown.current) return;
         sessionCheckErrorShown.current = true;
-        Alert.alert(
-          "Unable to Check Dine-in Session",
-          error instanceof Error ? error.message : "Please try again.",
-        );
+        console.warn("Unable to check the dine-in session.", error);
       } finally {
         requestInProgress = false;
       }
@@ -550,17 +596,10 @@ export default function HomeScreen() {
 
   const loadCustomerLocation = useCallback(async () => {
     const requestId = ++customerLocationRequestId.current;
-    setCustomerLocation(null);
-    setCustomerLocationError(null);
-    setIsLoadingCustomerLocation(true);
-
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") {
-        throw new Error(
-          "Allow location access to find restaurants near your current location.",
-        );
-      }
+      if (status !== "granted" || requestId !== customerLocationRequestId.current)
+        return;
 
       const location = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
@@ -572,39 +611,34 @@ export default function HomeScreen() {
         lng: location.coords.longitude,
       });
     } catch (error) {
-      if (requestId !== customerLocationRequestId.current) return;
-      setCustomerLocationError(
-        error instanceof Error
-          ? error.message
-          : "Unable to get your current location.",
-      );
-    } finally {
-      if (requestId === customerLocationRequestId.current) {
-        setIsLoadingCustomerLocation(false);
-      }
+      console.warn("Unable to update nearby branch sorting.", error);
     }
   }, []);
 
-  const handleSelectMode = (selectedMode: string) => {
+  const handleSelectMode = useCallback((selectedMode: string) => {
     if (isOrderLocked || selectedMode === orderMode) return;
     setLastMode(orderMode);
 
-    setTimeout(() => {
-      setGlobalOrderMode(selectedMode);
+    setGlobalOrderMode(selectedMode);
 
-      if (selectedMode === "Dine-in" && !activeTable) {
-        setPendingModeSetup("Dine-in");
-        setAddressModalSelection("branch");
-        setShowAddressModal(true);
-        void loadCustomerLocation();
-      } else if (selectedMode === "Takeaway") {
-        setPendingModeSetup("Takeaway");
-        setAddressModalSelection("branch");
-        setShowAddressModal(true);
-        void loadCustomerLocation();
-      }
-    }, 300);
-  };
+    if (selectedMode === "Dine-in" && !activeTable) {
+      setPendingModeSetup("Dine-in");
+      setAddressModalSelection("branch");
+      setShowAddressModal(true);
+      void loadCustomerLocation();
+    } else if (selectedMode === "Takeaway") {
+      setPendingModeSetup("Takeaway");
+      setAddressModalSelection("branch");
+      setShowAddressModal(true);
+      void loadCustomerLocation();
+    }
+  }, [
+    activeTable,
+    isOrderLocked,
+    loadCustomerLocation,
+    orderMode,
+    setGlobalOrderMode,
+  ]);
 
   const handleCancelAddressModal = useCallback(() => {
     setShowAddressModal(false);
@@ -966,16 +1000,21 @@ export default function HomeScreen() {
         throw new Error("Choose a restaurant branch before adding water.");
       }
 
+      const applyWaterItems = (items: CustomerMenuItem[]) => {
+        setWaterItems(
+          items.filter(
+            (item) =>
+              /water/i.test(item.name) && isMenuItemInStock(item),
+          ),
+        );
+      };
       const items = await api.getCategoryItems(
         DRINKS_CATEGORY_ID,
         activeBranch.id,
+        false,
+        applyWaterItems,
       );
-      setWaterItems(
-        items.filter(
-          (item) =>
-            /water/i.test(item.name) && isMenuItemInStock(item),
-        ),
-      );
+      applyWaterItems(items);
     } catch (error) {
       setServiceError(
         error instanceof Error ? error.message : "Please try again.",
@@ -1023,6 +1062,7 @@ export default function HomeScreen() {
 
     const requestGeneration = voiceSearchGeneration.current;
     setSearchQuery(query);
+    setSearchInputRevision((revision) => revision + 1);
     setIsListening(false);
     setIsVoiceSearching(true);
 
@@ -1092,13 +1132,16 @@ export default function HomeScreen() {
     setIsListening(false);
   });
 
-  const handleVoiceSearch = async () => {
+  const handleVoiceSearch = useCallback(async () => {
     const speechRecognitionModule =
       speechRecognition?.ExpoSpeechRecognitionModule;
     if (!speechRecognitionModule) {
+      const loadError = getSpeechRecognitionLoadError();
+      const loadErrorDetails =
+        loadError instanceof Error ? `\n\nDetails: ${loadError.message}` : "";
       Alert.alert(
         "Voice Search Requires a Development Build",
-        `Expo Go does not include the speech-recognition native module. Build and install the app with "npx expo run:android" or "npx expo run:ios", then start Metro with "npx expo start --dev-client".${speechRecognitionLoadError instanceof Error ? `\n\nDetails: ${speechRecognitionLoadError.message}` : ""}`,
+        `Expo Go does not include the speech-recognition native module. Build and install the app with "npx expo run:android" or "npx expo run:ios", then start Metro with "npx expo start --dev-client".${loadErrorDetails}`,
       );
       return;
     }
@@ -1120,12 +1163,11 @@ export default function HomeScreen() {
         throw new Error("Speech recognition is not available on this device.");
       }
 
-      const permission =
-        await speechRecognitionModule.requestPermissionsAsync();
+      const permission = await speechRecognitionModule.getPermissionsAsync();
       if (!permission.granted) {
         Alert.alert(
           "Speech Recognition Permission Required",
-          "Allow microphone and speech recognition access to search by voice.",
+          "Enable microphone and speech recognition in device settings to search by voice.",
         );
         return;
       }
@@ -1133,6 +1175,7 @@ export default function HomeScreen() {
       voiceSearchGeneration.current += 1;
       voiceResultHandled.current = false;
       setSearchQuery("");
+      setSearchInputRevision((revision) => revision + 1);
       setVoiceResultIds(null);
       setIsListening(true);
       speechRecognitionModule.start({
@@ -1150,164 +1193,131 @@ export default function HomeScreen() {
     } finally {
       voiceSearchInFlight.current = false;
     }
-  };
+  }, [isListening]);
 
-  const handleSearchQueryChange = (query: string) => {
+  const handleSearchQueryChange = useCallback((query: string) => {
     voiceSearchGeneration.current += 1;
     setSearchQuery(query);
     setVoiceResultIds(null);
     setIsVoiceSearching(false);
-  };
+  }, []);
 
-  const menuSearchKey = JSON.stringify({
-    branchId: activeBranch?.id,
-    address: orderMode === "Delivery" ? activeAddress?.id : undefined,
-    fulfillmentType:
-      orderMode === "Delivery"
-        ? "delivery"
-        : orderMode === "Takeaway"
-          ? "takeaway"
-          : "dine-in",
-    search: searchQuery.trim(),
-    foodType: isVegOnly ? "veg" : undefined,
-  });
-  const hasMenuSearchFilters = Boolean(searchQuery.trim() || isVegOnly);
+  const hasTextSearch = Boolean(searchQuery.trim());
 
-  useEffect(() => {
-    const requestId = ++menuSearchRequestId.current;
-    const branchId = activeBranch?.id;
-    const address = orderMode === "Delivery" ? activeAddress?.id : undefined;
-    if (
-      !branchId ||
-      !hasMenuSearchFilters ||
-      isVoiceSearching ||
-      voiceResultIds !== null ||
-      (orderMode === "Delivery" && !address)
-    ) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      void api
-        .getMenuItems({
-          branchId,
-          address,
-          fulfillmentType:
-            orderMode === "Delivery"
-              ? "delivery"
-              : orderMode === "Takeaway"
-                ? "takeaway"
-                : "dine-in",
-          search: searchQuery.trim() || undefined,
-          foodType: isVegOnly ? "veg" : undefined,
-          stock: "all",
+  const branchMenuItems = useMemo(() => {
+    const branchItems = selectedBranchId
+      ? menuItems.filter((item: CustomerMenuItem) => {
+          const itemBranchIds = item.branchIds || [];
+          return itemBranchIds.length > 0
+            ? itemBranchIds.includes(selectedBranchId)
+            : !item.branchId || item.branchId === selectedBranchId;
         })
-        .then((items) => {
-          if (requestId !== menuSearchRequestId.current) return;
-          setServerSearchResults({
-            key: menuSearchKey,
-            ids: items.map((item) => item._id),
-          });
-        })
-        .catch((error: unknown) => {
-          if (requestId !== menuSearchRequestId.current) return;
-          setServerSearchResults({ key: menuSearchKey, ids: [] });
-          Alert.alert(
-            "Unable to Search Menu",
-            error instanceof Error ? error.message : "Please try again.",
-          );
-        });
-    }, 250);
+      : menuItems;
 
-    return () => {
-      clearTimeout(timer);
-      if (menuSearchRequestId.current === requestId) {
-        menuSearchRequestId.current += 1;
-      }
-    };
-  }, [
-    activeAddress?.id,
-    activeBranch?.id,
-    hasMenuSearchFilters,
-    isVegOnly,
-    isVoiceSearching,
-    menuSearchKey,
-    orderMode,
-    searchQuery,
-    voiceResultIds,
-  ]);
-
-  const getFilteredData = () => {
-    let filtered = [...menuItems];
-    if (activeBranch?.id) {
-      filtered = filtered.filter((item: any) => {
-        const itemBranchIds = item.branchIds || [];
-        return itemBranchIds.length > 0
-          ? itemBranchIds.includes(activeBranch.id)
-          : !item.branchId || item.branchId === activeBranch.id;
-      });
-    }
-    if (isVegOnly) filtered = filtered.filter((item: any) => item.isVeg);
-    if (voiceResultIds) {
-      filtered = filtered.filter((item: any) =>
-        voiceResultIds.includes(item.id),
-      );
-    } else if (serverSearchResults?.key === menuSearchKey) {
-      filtered = filtered.filter((item: any) =>
-        serverSearchResults.ids.includes(item.id),
-      );
-    }
-
-    const lowerQuery = searchQuery.trim();
-    if (lowerQuery && voiceResultIds === null) {
-      filtered = filtered.filter((item: any) =>
-        matchesSearchText(lowerQuery, item.name),
-      );
-    }
-    return filtered.sort(
-      (first: any, second: any) =>
+    return [...branchItems].sort(
+      (first: CustomerMenuItem, second: CustomerMenuItem) =>
         Number(first.isAvailable !== true) -
         Number(second.isAvailable !== true),
     );
-  };
+  }, [menuItems, selectedBranchId]);
 
-  const filteredItems = isSelectedBranchOnline ? getFilteredData() : [];
-  const availableItems = filteredItems.filter(
-    (item: any) => isMenuItemInStock(item),
+  const searchWordsByMenuItemId = useMemo(
+    () =>
+      new Map(
+        branchMenuItems.map((item) => [
+          String(item.id),
+          tokenizeSearchText(item.name),
+        ]),
+      ),
+    [branchMenuItems],
   );
-  const outOfStockItems = filteredItems.filter(
-    (item: any) => !isMenuItemInStock(item),
+  const searchQueryWords = useMemo(
+    () => tokenizeSearchText(searchQuery.trim()),
+    [searchQuery],
   );
-  const listData: (
-    | { type: "section"; key: string; title: string }
-    | { type: "items"; key: string; items: any[] }
-  )[] = [];
+  const vegMenuItems = useMemo(
+    () => branchMenuItems.filter((item) => item.isVeg),
+    [branchMenuItems],
+  );
+  const hasActiveMenuFilters = hasTextSearch || voiceResultIds !== null;
+  const filteredItems = useMemo(() => {
+    if (!isSelectedBranchOnline) return [];
 
-  const addItemRows = (items: any[], keyPrefix: string) => {
-    for (let index = 0; index < items.length; index += 2) {
-      listData.push({
-        type: "items",
-        key: `${keyPrefix}-${index}`,
-        items: items.slice(index, index + 2),
-      });
+    const voiceResultIdSet = voiceResultIds
+      ? new Set(voiceResultIds.map(String))
+      : null;
+    const sourceItems = isVegOnly ? vegMenuItems : branchMenuItems;
+
+    if (searchQueryWords.length === 0 && !voiceResultIdSet) {
+      return sourceItems;
     }
-  };
 
-  addItemRows(availableItems, "available");
-  if (outOfStockItems.length > 0) {
-    listData.push({
-      type: "section",
-      key: "out-of-stock-heading",
-      title: "Out of stock",
+    return sourceItems.filter((item) => {
+      if (voiceResultIdSet && !voiceResultIdSet.has(String(item.id))) {
+        return false;
+      }
+      if (
+        searchQueryWords.length > 0 &&
+        voiceResultIds === null &&
+        !matchesSearchText(
+          searchQueryWords,
+          searchWordsByMenuItemId.get(String(item.id)) || [],
+        )
+      ) {
+        return false;
+      }
+      return true;
     });
-    addItemRows(outOfStockItems, "out-of-stock");
-  }
+  }, [
+    branchMenuItems,
+    isSelectedBranchOnline,
+    isVegOnly,
+    searchQueryWords,
+    searchWordsByMenuItemId,
+    vegMenuItems,
+    voiceResultIds,
+  ]);
+
+  const allMenuRows = useMemo(
+    () =>
+      isSelectedBranchOnline ? buildHomeFeedRows(branchMenuItems) : [],
+    [branchMenuItems, isSelectedBranchOnline],
+  );
+  const vegMenuRows = useMemo(
+    () => (isSelectedBranchOnline ? buildHomeFeedRows(vegMenuItems) : []),
+    [isSelectedBranchOnline, vegMenuItems],
+  );
+  const filteredMenuRows = useMemo(
+    () =>
+      hasActiveMenuFilters ? buildHomeFeedRows(filteredItems) : [],
+    [filteredItems, hasActiveMenuFilters],
+  );
+
+  const isHomeContentLoading =
+    !branchesLoaded ||
+    Boolean(
+      selectedBranchId &&
+        isSelectedBranchOnline &&
+        menuItemsLoadedForBranchId !== selectedBranchId,
+    );
+  const listData = hasActiveMenuFilters
+    ? filteredMenuRows
+    : isVegOnly
+      ? vegMenuRows
+      : allMenuRows;
+  const homeFeedData = useMemo<HomeFeedRow[]>(
+    () =>
+      isHomeContentLoading
+        ? [{ type: "loading", key: "home-loading" }]
+        : listData,
+    [isHomeContentLoading, listData],
+  );
 
   const offerCardHeight = offersViewportWidth * 0.4;
   const offersCarousel =
     (orderMode === "Delivery" || orderMode === "Takeaway") &&
     !searchQuery &&
-    branchOffers.length > 0 ? (
+    (!offersLoaded || branchOffers.length > 0) ? (
       <View className="w-full px-4" style={{ overflow: "hidden" }}>
         <Text
           className="mb-3 text-xl font-black"
@@ -1315,7 +1325,17 @@ export default function HomeScreen() {
         >
           Exclusive Offers
         </Text>
-        <ScrollView
+        {!offersLoaded ? (
+          <LoadingWave
+            className="h-40 rounded-[24px] border"
+            isDark={theme.isDark}
+            style={{
+              backgroundColor: theme.card,
+              borderColor: theme.border,
+            }}
+          />
+        ) : (
+          <ScrollView
           horizontal
           pagingEnabled
           showsHorizontalScrollIndicator={false}
@@ -1392,8 +1412,9 @@ export default function HomeScreen() {
               </View>
             </Pressable>
           ))}
-        </ScrollView>
-        {branchOffers.length > 1 && (
+          </ScrollView>
+        )}
+        {offersLoaded && branchOffers.length > 1 && (
           <View className="flex-row items-center justify-center -mt-5 mb-6">
             <View className="flex-row items-center">
               {branchOffers.map((offer: any, index: number) => (
@@ -1413,7 +1434,46 @@ export default function HomeScreen() {
       </View>
     ) : null;
 
-  const renderEmptyState = () => {
+  const renderHomeFeedSkeleton = useCallback(() => (
+    <View className="px-4 pb-8">
+      {Array.from({ length: 3 }, (_, row) => (
+        <View
+          key={`menu-skeleton-row-${row}`}
+          className="mb-4 flex-row justify-between"
+        >
+          {[0, 1].map((column) => (
+            <LoadingWave
+              key={`menu-skeleton-card-${row}-${column}`}
+              className="w-[48%] overflow-hidden rounded-[24px] border"
+              isDark={theme.isDark}
+              style={{
+                backgroundColor: theme.card,
+                borderColor: theme.border,
+              }}
+            >
+              <View className="h-36" style={{ backgroundColor: theme.border }} />
+              <View className="gap-2 p-3">
+                <View
+                  className="h-4 w-4/5 rounded"
+                  style={{ backgroundColor: theme.border }}
+                />
+                <View
+                  className="h-3 w-3/5 rounded"
+                  style={{ backgroundColor: theme.border }}
+                />
+                <View
+                  className="mt-2 h-8 w-1/2 rounded-lg"
+                  style={{ backgroundColor: theme.border }}
+                />
+              </View>
+            </LoadingWave>
+          ))}
+        </View>
+      ))}
+    </View>
+  ), [theme]);
+
+  const renderEmptyState = useCallback(() => {
     if (
       !selectedBranchId ||
       !isSelectedBranchOnline ||
@@ -1449,7 +1509,79 @@ export default function HomeScreen() {
         </Text>
       </View>
     );
-  };
+  }, [
+    isSelectedBranchOnline,
+    isVegOnly,
+    menuItemsLoadedForBranchId,
+    searchQuery,
+    selectedBranchId,
+    theme.muted,
+    theme.text,
+  ]);
+  const renderHomeFeedItem = useCallback(
+    ({ item: row }: { item: HomeFeedRow }) => {
+      if (row.type === "loading") {
+        return renderHomeFeedSkeleton();
+      }
+
+      if (row.type === "section") {
+        return (
+          <View className="px-4 pt-2 pb-4">
+            <Text className="text-xl font-black" style={{ color: theme.text }}>
+              {row.title}
+            </Text>
+            <Text
+              className="mt-1 text-sm font-semibold"
+              style={{ color: theme.muted }}
+            >
+              These items are currently unavailable
+            </Text>
+          </View>
+        );
+      }
+
+      return (
+        <View className="flex-row justify-between px-4 mb-4">
+          {row.items.map((menuItem) => (
+            <View key={menuItem.id} style={{ width: "48%" }}>
+              <MenuListItem
+                item={menuItem}
+                cartQuantity={
+                  cartQuantityByMenuItemId.get(String(menuItem.id)) || 0
+                }
+                onAddToCart={handleAddToCart}
+                onDecrement={handleDecrementCartItem}
+              />
+            </View>
+          ))}
+        </View>
+      );
+    },
+    [
+      cartQuantityByMenuItemId,
+      handleAddToCart,
+      handleDecrementCartItem,
+      renderHomeFeedSkeleton,
+      theme.muted,
+      theme.text,
+    ],
+  );
+  const homeFeedKeyExtractor = useCallback((row: HomeFeedRow) => row.key, []);
+  const homeFeedContentContainerStyle = useMemo(
+    () => ({ paddingBottom: activeCart.length > 0 ? 180 : 120 }),
+    [activeCart.length],
+  );
+  const homeRefreshControl = useMemo(
+    () => (
+      <RefreshControl
+        refreshing={isRefreshingHome}
+        onRefresh={() => void refreshHomeData()}
+        tintColor={theme.primary}
+        colors={[theme.primary]}
+      />
+    ),
+    [isRefreshingHome, refreshHomeData, theme.primary],
+  );
 
   const billItems =
     dineInBill?.orders.flatMap((order) =>
@@ -1480,23 +1612,23 @@ export default function HomeScreen() {
     const nearbyBranchUnavailableReason =
       isDeliveryAddress || isDeliveryBranch
         ? null
-        : !customerLocation
-          ? "location-unavailable"
-          : !item.isActive
-            ? "inactive"
-            : nearbyBranchDistance === null
+        : !item.isActive
+          ? "inactive"
+          : item.isOnline === false
+            ? "offline"
+            : customerLocation && nearbyBranchDistance === null
               ? "distance-unavailable"
-              : nearbyBranchDistance > MAX_DELIVERY_DISTANCE_KM
+              : customerLocation &&
+                  nearbyBranchDistance !== null &&
+                  nearbyBranchDistance > MAX_DELIVERY_DISTANCE_KM
                 ? "outside-range"
-                : item.isOnline === false
-                  ? "offline"
-                  : null;
+                : null;
     const isBranchSelectable = isDeliveryAddress
       ? true
       : isGuest
         ? true
         : isDeliveryBranch
-          ? deliveryBranchUnavailableReason === null
+          ? isDeliveryBranchEligible(item, activeAddress)
           : nearbyBranchUnavailableReason === null;
     const isActive = isDeliveryAddress
       ? activeAddress?.id === item.id
@@ -1561,11 +1693,7 @@ export default function HomeScreen() {
                     : deliveryBranchUnavailableReason === "distance-unavailable"
                       ? "DELIVERY DISTANCE UNAVAILABLE"
                       : "BRANCH IS OFFLINE"
-                : nearbyBranchUnavailableReason === "location-unavailable"
-                  ? isLoadingCustomerLocation
-                    ? "CHECKING YOUR LOCATION"
-                    : "CURRENT LOCATION UNAVAILABLE"
-                  : nearbyBranchUnavailableReason === "inactive"
+                : nearbyBranchUnavailableReason === "inactive"
                     ? "RESTAURANT INACTIVE"
                     : nearbyBranchUnavailableReason === "outside-range"
                       ? `OUTSIDE ${MAX_DELIVERY_DISTANCE_KM} KM RANGE`
@@ -1574,7 +1702,9 @@ export default function HomeScreen() {
                         : "RESTAURANT CLOSED"}
             </Text>
           ) : null}
-          {isDeliveryBranch && isBranchSelectable ? (
+          {isDeliveryBranch &&
+          isBranchSelectable &&
+          getDeliveryBranchDistanceKm(item, activeAddress) !== null ? (
             <Text
               className="mt-1 text-xs font-bold"
               style={{ color: theme.muted }}
@@ -1583,9 +1713,7 @@ export default function HomeScreen() {
               away
             </Text>
           ) : null}
-          {!isDeliveryAddress &&
-          !isDeliveryBranch &&
-          nearbyBranchDistance !== null ? (
+          {!isDeliveryAddress && !isDeliveryBranch && nearbyBranchDistance !== null ? (
             <Text
               className="mt-1 text-xs font-bold"
               style={{ color: theme.muted }}
@@ -1747,62 +1875,16 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      <Animated.View
-        key={orderMode}
-        entering={FadeIn.duration(400)}
-        style={{ flex: 1 }}
-      >
+      <View style={{ flex: 1 }}>
         <FlatList
           ref={homeFeedRef}
-          data={listData}
-          keyExtractor={(row) => row.key}
-          renderItem={({ item: row }) => {
-            if (row.type === "section") {
-              return (
-                <View className="px-4 pt-2 pb-4">
-                  <Text
-                    className="text-xl font-black"
-                    style={{ color: theme.text }}
-                  >
-                    {row.title}
-                  </Text>
-                  <Text
-                    className="mt-1 text-sm font-semibold"
-                    style={{ color: theme.muted }}
-                  >
-                    These items are currently unavailable
-                  </Text>
-                </View>
-              );
-            }
-
-            return (
-              <View className="flex-row justify-between px-4 mb-4">
-                {row.items.map((menuItem: any) => {
-                  const cartQuantity = activeCart.reduce(
-                    (quantity: number, cartItem: any) =>
-                      quantity +
-                      (cartItem.id === menuItem.id ? cartItem.quantity : 0),
-                    0,
-                  );
-                  return (
-                    <View key={menuItem.id} style={{ width: "48%" }}>
-                      <FoodCard
-                        item={menuItem}
-                        cartQuantity={cartQuantity}
-                        onAddToCart={(qty, addons, total) =>
-                          handleAddToCart(menuItem, qty, addons, total)
-                        }
-                        onDecrement={() =>
-                          handleDecrementCartItem(menuItem.id)
-                        }
-                      />
-                    </View>
-                  );
-                })}
-              </View>
-            );
-          }}
+          data={homeFeedData}
+          keyExtractor={homeFeedKeyExtractor}
+          initialNumToRender={4}
+          maxToRenderPerBatch={4}
+          updateCellsBatchingPeriod={25}
+          windowSize={7}
+          renderItem={renderHomeFeedItem}
           ListHeaderComponent={
             <HomeHeader
               theme={theme}
@@ -1824,12 +1906,13 @@ export default function HomeScreen() {
               onRequestBill={() => handleServiceRequest("bill")}
               onOrderTakeaway={() => router.push("/(home)/orders" as any)}
               searchQuery={searchQuery}
+              searchInputRevision={searchInputRevision}
               setSearchQuery={handleSearchQueryChange}
               isListening={isListening}
               isVoiceSearching={isVoiceSearching}
               handleVoiceSearch={handleVoiceSearch}
               isVegOnly={isVegOnly}
-              setIsVegOnly={setIsVegOnly}
+              onVegFilterChange={handleVegFilterChange}
               categories={branchCategories}
               hasSpotlightItems={listData.length > 0}
               offersCarousel={offersCarousel}
@@ -1838,6 +1921,7 @@ export default function HomeScreen() {
               greetings={greetings}
               searchPlaceholders={searchPlaceholders}
               branchContentLoaded={branchesLoaded}
+              featuredReelsLoaded={featuredReelsLoaded}
               router={router}
               activeTable={activeTable}
               timeLeft={timeLeft}
@@ -1845,27 +1929,19 @@ export default function HomeScreen() {
               isTimerRunning={dineInCartState === "waiting"}
               isBranchOnline={isSelectedBranchOnline}
               isBranchStatusLoading={!branchesLoaded}
+              hasSelectedBranch={Boolean(activeBranch)}
             />
           }
           ListEmptyComponent={renderEmptyState}
-          contentContainerStyle={{
-            paddingBottom: activeCart.length > 0 ? 180 : 120,
-          }}
+          contentContainerStyle={homeFeedContentContainerStyle}
           showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={isRefreshingHome}
-              onRefresh={() => void refreshHomeData()}
-              tintColor={theme.primary}
-              colors={[theme.primary]}
-            />
-          }
+          refreshControl={homeRefreshControl}
         />
-      </Animated.View>
+      </View>
 
       <Modal
         visible={showAddressModal}
-        animationType="slide"
+        animationType="none"
         presentationStyle="fullScreen"
         statusBarTranslucent={Platform.OS === "android"}
         navigationBarTranslucent={Platform.OS === "android"}
@@ -1939,51 +2015,6 @@ export default function HomeScreen() {
               })}
             </View>
           )}
-          {!isGuest && orderMode !== "Delivery" && (
-            <View
-              className="mx-6 mb-3 flex-row items-center rounded-xl border p-3"
-              style={{
-                borderColor: theme.border,
-                backgroundColor: theme.card,
-              }}
-            >
-              {isLoadingCustomerLocation ? (
-                <>
-                  <ActivityIndicator color={theme.primary} />
-                  <Text
-                    className="ml-3 flex-1 text-sm font-semibold"
-                    style={{ color: theme.muted }}
-                  >
-                    Checking restaurants near your current location...
-                  </Text>
-                </>
-              ) : customerLocationError ? (
-                <>
-                  <Text
-                    className="flex-1 text-sm font-semibold"
-                    style={{ color: theme.danger }}
-                  >
-                    {customerLocationError}
-                  </Text>
-                  <Pressable
-                    onPress={() => void loadCustomerLocation()}
-                    className="ml-3 rounded-lg px-3 py-2"
-                    style={{ backgroundColor: theme.primary }}
-                  >
-                    <Text className="text-xs font-black text-white">Retry</Text>
-                  </Pressable>
-                </>
-              ) : (
-                <Text
-                  className="text-sm font-semibold"
-                  style={{ color: theme.muted }}
-                >
-                  Open restaurants are sorted by distance. Restaurants beyond{" "}
-                  {MAX_DELIVERY_DISTANCE_KM} km cannot be selected.
-                </Text>
-              )}
-            </View>
-          )}
           <FlatList
             data={
               orderMode === "Delivery" &&
@@ -1998,7 +2029,6 @@ export default function HomeScreen() {
             renderItem={renderAddressModalItem}
             ListEmptyComponent={
               orderMode !== "Delivery" &&
-              !isLoadingCustomerLocation &&
               (isGuest || nearbyOpenBranches.length === 0) ? (
                 <View className="items-center px-6 py-10">
                   <Text
@@ -2116,7 +2146,11 @@ export default function HomeScreen() {
                   <Pressable
                     onPress={async () => {
                       if (!permission?.granted) {
-                        await requestPermission();
+                        Alert.alert(
+                          "Camera Permission Required",
+                          "Enable camera access in device settings to scan a table QR code.",
+                        );
+                        return;
                       }
                       setShowDineInCheckInModal(false);
                       setTimeout(() => {

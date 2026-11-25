@@ -20,6 +20,7 @@ import {
   useState,
 } from "react";
 import {
+  AppState,
   ActivityIndicator,
   Alert,
   Dimensions,
@@ -43,6 +44,7 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ProfileAvatarButton } from "../../../components/profile/ProfileAvatarButton";
+import { useOrderMode } from "../../../contexts/HomeContext";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { api } from "../../../services/api";
 import { authApi } from "../../../services/api/auth";
@@ -52,7 +54,6 @@ import type {
   CustomerDineInSession,
   CustomerOrder,
 } from "../../../services/api/customer";
-import { useOrderMode } from "../_layout";
 
 const { width, height } = Dimensions.get("window");
 
@@ -977,17 +978,19 @@ export default function OrdersScreen() {
     };
   }, []);
 
-  const loadOrders = useCallback(async () => {
+  const loadOrders = useCallback(async (forceRefresh = false) => {
     const token = await authApi.getAccessToken();
     if (!token) return;
-    const fetchedOrders = await api.getOrders();
+    const fetchedOrders = await api.getOrders(forceRefresh, (orders) => {
+      setOrders(orders.map((order) => mapCustomerOrder(order)));
+    });
     return fetchedOrders.map((order) => mapCustomerOrder(order));
   }, []);
 
-  const refreshOrders = useCallback(async () => {
+  const refreshOrders = useCallback(async (forceRefresh = false) => {
     setIsRefreshingOrders(true);
     try {
-      const fetchedOrders = await loadOrders();
+      const fetchedOrders = await loadOrders(forceRefresh);
       if (fetchedOrders) setOrders(fetchedOrders);
     } catch (error) {
       Alert.alert(
@@ -1027,11 +1030,18 @@ export default function OrdersScreen() {
 
       void refreshOrders();
       void refreshDineInSession();
+      const appStateSubscription = AppState.addEventListener(
+        "change",
+        (nextState) => {
+          if (isFocused && nextState === "active") void refreshOrders();
+        },
+      );
       const interval = setInterval(() => {
         void refreshDineInSession();
       }, 10_000);
       return () => {
         isFocused = false;
+        appStateSubscription.remove();
         clearInterval(interval);
       };
     }, [refreshOrders]),
@@ -1511,7 +1521,7 @@ export default function OrdersScreen() {
         refreshControl={
           <RefreshControl
             refreshing={isRefreshingOrders}
-            onRefresh={() => void refreshOrders()}
+            onRefresh={() => void refreshOrders(true)}
             tintColor={theme.primary}
             colors={[theme.primary]}
           />

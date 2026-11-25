@@ -69,7 +69,13 @@ function LoginScreenVideo({
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { branchId } = useLocalSearchParams<{ branchId?: string }>();
+  const { branchId, favoriteItemId, continueToCart, cartMode } =
+    useLocalSearchParams<{
+    branchId?: string;
+    favoriteItemId?: string;
+    continueToCart?: string;
+    cartMode?: string;
+  }>();
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
@@ -205,6 +211,9 @@ export default function LoginScreen() {
         params: {
           phone: fullPhoneNumber,
           ...(branchId ? { branchId } : {}),
+          ...(favoriteItemId ? { favoriteItemId } : {}),
+          ...(continueToCart ? { continueToCart } : {}),
+          ...(cartMode ? { cartMode } : {}),
         },
       });
     } catch (err) {

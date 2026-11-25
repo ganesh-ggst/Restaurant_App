@@ -17,6 +17,7 @@
     },
     "android": {
       "softwareKeyboardLayoutMode": "resize",
+      "permissions": ["android.permission.CALL_PHONE"],
       "icon": "./assets/images/android-apk-icon.png",
       "adaptiveIcon": {
         "backgroundColor": "#1A3B1D",
@@ -69,6 +70,7 @@
           }
         }
       ],
+      "expo-notifications",
       "expo-secure-store",
       "expo-video",
       [
