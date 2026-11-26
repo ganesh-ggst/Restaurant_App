@@ -1,5 +1,3 @@
-const expoConfig = require("./app.json").expo;
-
 const mapsPluginOptions = {};
 const androidMapsApiKey = process.env.GOOGLE_MAPS_ANDROID_API_KEY?.trim();
 const iosMapsApiKey = process.env.GOOGLE_MAPS_IOS_API_KEY?.trim();
@@ -20,15 +18,15 @@ if (iosMapsApiKey) {
   mapsPluginOptions.iosGoogleMapsApiKey = iosMapsApiKey;
 }
 
-module.exports = {
-  ...expoConfig,
+module.exports = ({ config }) => ({
+  ...config,
   extra: {
-    ...expoConfig.extra,
+    ...config.extra,
     androidMapsApiKeyConfigured: Boolean(androidMapsApiKey),
     iosMapsApiKeyConfigured: Boolean(iosMapsApiKey),
   },
   plugins: [
-    ...expoConfig.plugins,
+    ...config.plugins,
     ["react-native-maps", mapsPluginOptions],
     [
       "expo-location",
@@ -38,4 +36,4 @@ module.exports = {
       },
     ],
   ],
-};
+});
