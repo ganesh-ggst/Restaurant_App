@@ -207,7 +207,7 @@ export default function TableDetailScreen() {
   const tableStatus = table
     ? normalizeStatus(table.operationalStatus || table.status)
     : "free";
-  const isBlocked = status !== "free";
+  const isBlocked = Boolean(table?.isBlocked);
   const assignedWaiter =
     table && asRecord(table.assignedWaiterId)
       ? getText(asRecord(table.assignedWaiterId)?.name)
@@ -292,9 +292,11 @@ export default function TableDetailScreen() {
       await loadTableDetails();
       Alert.alert(
         "Unable to save table changes",
-        error instanceof Error
-          ? error.message
-          : "Some changes may not have been saved. Refresh the table and try again.",
+        error instanceof Error && /request validation failed/i.test(error.message)
+          ? "We couldn't update this table. Please refresh and try again."
+          : error instanceof Error
+            ? error.message
+            : "Some changes may not have been saved. Refresh the table and try again.",
       );
     } finally {
       setIsSaving(false);
@@ -315,6 +317,7 @@ export default function TableDetailScreen() {
         : [
             { id: "active", label: "Active", color: theme.primary },
             { id: "billed", label: "Billed", color: "#168f50" },
+            { id: "free", label: "Available", color: "#22c55e" },
           ];
 
   if (isLoading) {
@@ -394,15 +397,19 @@ export default function TableDetailScreen() {
         >
           <View className="mr-2 flex-1">
             <Text className="text-sm font-bold" style={{ color: theme.text }}>
-              📱 Table Block Status
+              Table Availability
             </Text>
             <Text
               className="mt-0.5 text-xs font-medium"
               style={{ color: theme.muted }}
             >
               {isBlocked
-                ? "Table is currently blocked & active."
-                : "Table is open and available."}
+                ? "This table is blocked and unavailable for check-in."
+                : tableStatus === "active"
+                  ? "A customer session is active at this table."
+                  : tableStatus === "billed"
+                    ? "This table is billed. Mark it available to release it."
+                    : "This table is available for check-in."}
             </Text>
           </View>
           <View
@@ -410,7 +417,13 @@ export default function TableDetailScreen() {
             style={{ backgroundColor: isBlocked ? "#ef4444" : "#22c55e" }}
           >
             <Text className="text-xs font-bold text-white">
-              {isBlocked ? "Blocked 🔒" : "Open 🔓"}
+              {isBlocked
+                ? "Blocked 🔒"
+                : tableStatus === "active"
+                  ? "Active"
+                  : tableStatus === "billed"
+                    ? "Billed"
+                    : "Available"}
             </Text>
           </View>
         </View>

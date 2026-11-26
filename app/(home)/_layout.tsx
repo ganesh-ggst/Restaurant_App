@@ -783,6 +783,7 @@ export default function HomeLayout() {
   );
   const [menuItemsLoadedForBranchId, setMenuItemsLoadedForBranchId] =
     useState<string | null>(null);
+  const [menuItemsLoadError, setMenuItemsLoadError] = useState(false);
   const deliveryMenuRequestId = useRef(0);
   const featuredReelsRequestId = useRef(0);
   const [isRefreshingHome, setIsRefreshingHome] = useState(false);
@@ -808,7 +809,10 @@ export default function HomeLayout() {
       image: string;
     })[]
   >([]);
+  const offersRef = useRef(offers);
   const [offersLoaded, setOffersLoaded] = useState(false);
+  const [offersLoadError, setOffersLoadError] = useState(false);
+  const [isOfflineMaintenance, setIsOfflineMaintenance] = useState(false);
   const [featuredReels, setFeaturedReels] = useState<CustomerFeaturedReel[]>(
     [],
   );
@@ -856,9 +860,10 @@ export default function HomeLayout() {
   useEffect(() => {
     menuItemsRef.current = menuItems;
     categoriesRef.current = categories;
+    offersRef.current = offers;
     activeAddressRef.current = activeAddress;
     activeBranchRef.current = activeBranch;
-  }, [activeAddress, activeBranch, categories, menuItems]);
+  }, [activeAddress, activeBranch, categories, menuItems, offers]);
 
   useEffect(() => {
     if (!activeBranch?.id) return;
@@ -1119,6 +1124,7 @@ export default function HomeLayout() {
     const applyOffers = (loadedOffers: CustomerOffer[]) => {
       if (loadId !== homeDataLoadId.current) return;
       setOffersLoaded(true);
+      setOffersLoadError(false);
       setOffers(
         loadedOffers
           .filter((offer: any) => offer.isActive)
@@ -1173,9 +1179,16 @@ export default function HomeLayout() {
       "categories",
       api.getCategories(forceRefresh, applyCategories),
     ).then(
-      applyCategories,
+      (loadedCategories) => {
+        applyCategories(loadedCategories);
+        return {
+          ok: true as const,
+          hasData: loadedCategories.some((category) => category.isActive),
+        };
+      },
       (error: unknown) => {
         console.warn("Unable to load home categories.", error);
+        return { ok: false as const, hasData: false };
       },
     );
     const branchDataPromise = measureHomeRequest(
@@ -1202,12 +1215,50 @@ export default function HomeLayout() {
       "offers",
       api.getOffers(forceRefresh, applyOffers),
     ).then(
-      applyOffers,
+      (loadedOffers) => {
+        applyOffers(loadedOffers);
+        return {
+          ok: true as const,
+          hasData: loadedOffers.some((offer) => offer.isActive),
+        };
+      },
       (error: unknown) => {
-        setOffersLoaded(true);
+        if (loadId === homeDataLoadId.current) {
+          setOffersLoaded(true);
+          setOffersLoadError(true);
+        }
         console.warn("Unable to load home offers.", error);
+        return { ok: false as const, hasData: false };
       },
     );
+    void Promise.all([
+      branchDataPromise,
+      categoryDataPromise,
+      offerDataPromise,
+    ]).then(([branchData, categoryData, offerData]) => {
+      if (loadId !== homeDataLoadId.current) return;
+      const activeBranchId = activeBranchRef.current?.id;
+      const hasSavedMenu =
+        Boolean(activeBranchId) &&
+        rawMenuBranchIdRef.current === activeBranchId &&
+        rawMenuItemsRef.current.length > 0;
+      const hasHomeData =
+        branchData.options.length > 0 ||
+        Boolean(activeBranchId) ||
+        categoryData.hasData ||
+        offerData.hasData ||
+        categoriesRef.current.length > 0 ||
+        offersRef.current.length > 0 ||
+        hasSavedMenu;
+      setIsOfflineMaintenance(
+        !branchData.ok &&
+          !categoryData.ok &&
+          !offerData.ok &&
+          !hasHomeData,
+      );
+    }).catch((error: unknown) => {
+      console.warn("Unable to determine home service availability.", error);
+    });
 
     try {
       const [
@@ -1650,6 +1701,7 @@ export default function HomeLayout() {
       menuCardItemsCache.current = mapped.cache;
       setMenuItems(mapped.items);
       setMenuItemsLoadedForBranchId(activeBranch.id);
+      setMenuItemsLoadError(false);
     };
 
     const menuRequestStartedAt = Date.now();
@@ -1672,10 +1724,16 @@ export default function HomeLayout() {
       .then(applyMenuItems)
       .catch((error: unknown) => {
         if (requestId !== deliveryMenuRequestId.current) return;
-        setMenuItems([]);
-        rawMenuItemsRef.current = [];
-        rawMenuBranchIdRef.current = null;
+        const hasSavedMenu =
+          rawMenuBranchIdRef.current === activeBranch.id &&
+          rawMenuItemsRef.current.length > 0;
+        if (!hasSavedMenu) {
+          setMenuItems([]);
+          rawMenuItemsRef.current = [];
+          rawMenuBranchIdRef.current = null;
+        }
         setMenuItemsLoadedForBranchId(activeBranch.id);
+        setMenuItemsLoadError(true);
         if (!isUnavailableRestaurantError(error)) {
           console.warn("Unable to load the branch menu.", error);
         }
@@ -1794,6 +1852,18 @@ export default function HomeLayout() {
   const selectActiveBranch = async (
     branch: CustomerBranch & { id: string; address: string },
   ) => {
+    if (
+      mode === "Dine-in" &&
+      dineInSession?._id &&
+      branch.id !== activeBranch?.id
+    ) {
+      Alert.alert(
+        "Branch Locked",
+        "You can't switch branches while checked in to a dine-in session.",
+      );
+      return;
+    }
+
     if (isGuest) {
       branchSelectionVersion.current += 1;
       setActiveBranch(branch);
@@ -2718,6 +2788,52 @@ export default function HomeLayout() {
   const isDineInCartAccepted =
     dineInCartState === "approved" && !isDineInCartPending;
 
+  if (isOfflineMaintenance) {
+    return (
+      <View
+        className="flex-1 items-center justify-center px-8"
+        style={{
+          backgroundColor: theme.bg,
+          paddingTop: insets.top,
+          paddingBottom: insets.bottom,
+        }}
+      >
+        <View
+          className="w-full max-w-md items-center rounded-3xl border p-7"
+          style={{ backgroundColor: theme.card, borderColor: theme.border }}
+        >
+          <Compass size={38} color={theme.primary} strokeWidth={2} />
+          <Text
+            className="mt-5 text-2xl font-black text-center"
+            style={{ color: theme.text }}
+          >
+            We can&apos;t connect right now
+          </Text>
+          <Text
+            className="mt-3 text-center text-sm font-medium leading-6"
+            style={{ color: theme.muted }}
+          >
+            We couldn&apos;t reach the restaurant service, and there is no saved
+            home information on this device. Please try again later.
+          </Text>
+          <Pressable
+            disabled={isRefreshingHome}
+            onPress={() => void refreshHomeData()}
+            className="mt-6 min-h-12 items-center justify-center rounded-full px-7"
+            style={{
+              backgroundColor: theme.primary,
+              opacity: isRefreshingHome ? 0.7 : 1,
+            }}
+          >
+            <Text className="font-bold text-white">
+              {isRefreshingHome ? "Checking connection..." : "Try again"}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <FavoritesContext.Provider value={{ favorites, toggleFavorite }}>
       <OrderContext.Provider
@@ -2732,8 +2848,10 @@ export default function HomeLayout() {
           menuItems,
           menuItemsLoadedForBranchId,
           categories,
+          menuItemsLoadError,
           offers,
           offersLoaded,
+          offersLoadError,
           featuredReels,
           featuredReelsLoaded: Boolean(
             activeBranch?.id &&

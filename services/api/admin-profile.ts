@@ -2,6 +2,7 @@ import axios, { isAxiosError } from "axios";
 import * as FileSystem from "expo-file-system/legacy";
 
 import { authApi } from "./auth";
+import { getFriendlyErrorMessage } from "../../utils/friendly-error";
 
 interface ApiEnvelope<T> {
   success: boolean;
@@ -408,7 +409,7 @@ async function readCached<T>(
 ): Promise<T> {
   const accessToken = await authApi.getAccessToken();
   if (!accessToken) {
-    throw new Error("Your login session is missing. Please sign in again.");
+    throw new Error(getFriendlyErrorMessage("Your login session is missing."));
   }
   if (cacheAccessToken !== accessToken) {
     cache.clear();
@@ -497,13 +498,15 @@ async function request<T>(
 ): Promise<T | undefined> {
   if (!API_BASE_URL) {
     throw new Error(
-      "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+      getFriendlyErrorMessage(
+        "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+      ),
     );
   }
 
   const accessToken = await authApi.getAccessToken();
   if (!accessToken) {
-    throw new Error("Your login session is missing. Please sign in again.");
+    throw new Error(getFriendlyErrorMessage("Your login session is missing."));
   }
 
   try {
@@ -524,7 +527,14 @@ async function request<T>(
       response.status < 300 &&
       (response.data === undefined || response.data === null);
     if (!response.data?.success && !isEmptySuccessfulDelete) {
-      throw new Error(response.data?.message || "The API request failed.");
+      throw new Error(
+        getFriendlyErrorMessage(
+          formatApiError(
+            response.data?.message || "The API request failed.",
+            response.data?.errors,
+          ),
+        ),
+      );
     }
 
     return response.data.data;
@@ -533,31 +543,43 @@ async function request<T>(
       const responseData = error.response?.data;
       const message = responseData?.message;
       if (message) {
-        throw new Error(formatApiError(message, responseData.errors));
+        throw new Error(
+          getFriendlyErrorMessage(formatApiError(message, responseData.errors)),
+        );
       }
       if (error.response?.status === 401) {
-        throw new Error("Your login session has expired. Please sign in again.");
+        throw new Error(
+          getFriendlyErrorMessage("Your login session has expired."),
+        );
       }
       if (error.response) {
-        throw new Error(`The server returned an error (${error.response.status}).`);
+        throw new Error(
+          getFriendlyErrorMessage(
+            `The server returned an error (${error.response.status}).`,
+          ),
+        );
       }
       if (error.code === "ECONNABORTED") {
-        throw new Error("The server took too long to respond. Please try again.");
+        throw new Error(
+          getFriendlyErrorMessage("The server took too long to respond."),
+        );
       }
       throw new Error(
-        "Unable to reach the server. Check EXPO_PUBLIC_API_URL and try again.",
+        getFriendlyErrorMessage(
+          "Unable to reach the server. Check EXPO_PUBLIC_API_URL and try again.",
+        ),
       );
     }
 
     throw error instanceof Error
-      ? error
-      : new Error("The API request failed. Please try again.");
+      ? new Error(getFriendlyErrorMessage(error))
+      : new Error(getFriendlyErrorMessage("The API request failed."));
   }
 }
 
 function requireData<T>(data: T | undefined, message: string): T {
   if (data === undefined || data === null) {
-    throw new Error(message);
+    throw new Error(getFriendlyErrorMessage(message));
   }
   return data;
 }
@@ -565,7 +587,7 @@ function requireData<T>(data: T | undefined, message: string): T {
 function requireArray<T>(data: T[] | undefined, message: string): T[] {
   const result = requireData(data, message);
   if (!Array.isArray(result)) {
-    throw new Error(message);
+    throw new Error(getFriendlyErrorMessage(message));
   }
   return result;
 }
@@ -613,13 +635,15 @@ async function uploadAuthScreenMedia(
 ): Promise<AdminAuthScreenMedia> {
   if (!API_BASE_URL) {
     throw new Error(
-      "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+      getFriendlyErrorMessage(
+        "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+      ),
     );
   }
 
   const accessToken = await authApi.getAccessToken();
   if (!accessToken) {
-    throw new Error("Your login session is missing. Please sign in again.");
+    throw new Error(getFriendlyErrorMessage("Your login session is missing."));
   }
 
   const formData = new FormData();
@@ -641,7 +665,10 @@ async function uploadAuthScreenMedia(
 
     if (!response.data?.success || !response.data.data?.id) {
       throw new Error(
-        response.data?.message || "The server did not save the screen media.",
+        getFriendlyErrorMessage(
+          response.data?.message || "The server did not save the screen media.",
+          "We couldn't save this media. Please try again.",
+        ),
       );
     }
 
@@ -649,20 +676,26 @@ async function uploadAuthScreenMedia(
   } catch (error) {
     if (isAxiosError<ApiEnvelope<unknown>>(error)) {
       const message = error.response?.data?.message;
-      if (message) throw new Error(message);
+      if (message) throw new Error(getFriendlyErrorMessage(message));
       if (error.response?.status === 401) {
-        throw new Error("Your login session has expired. Please sign in again.");
+        throw new Error(
+          getFriendlyErrorMessage("Your login session has expired."),
+        );
       }
       if (error.code === "ECONNABORTED") {
-        throw new Error("The video upload took too long. Please try again.");
+        throw new Error(
+          getFriendlyErrorMessage("The video upload took too long."),
+        );
       }
       if (error.response) {
         throw new Error(
-          `The server returned an error (${error.response.status}).`,
+          getFriendlyErrorMessage(
+            `The server returned an error (${error.response.status}).`,
+          ),
         );
       }
       throw new Error(
-        "Unable to reach the server. Check your connection and try again.",
+        getFriendlyErrorMessage("Unable to reach the server."),
       );
     }
     throw error instanceof Error
@@ -682,7 +715,9 @@ export const adminProfileApi = {
       !Array.isArray(data.branches) ||
       !Number.isFinite(data.total)
     ) {
-      throw new Error("The server returned an invalid branches response.");
+      throw new Error(
+        getFriendlyErrorMessage("The server returned an invalid branches response."),
+      );
     }
     return data;
   },
@@ -747,7 +782,9 @@ export const adminProfileApi = {
       "The server did not return the admin profile.",
     );
     if (!data.admin) {
-      throw new Error("The server returned an invalid admin profile.");
+      throw new Error(
+        getFriendlyErrorMessage("The server returned an invalid admin profile."),
+      );
     }
     return data;
   },
@@ -1104,7 +1141,9 @@ export const adminProfileApi = {
         );
         if (Array.isArray(data)) return data;
         if (Array.isArray(data.tables)) return data.tables;
-        throw new Error("The server returned an invalid tables response.");
+        throw new Error(
+          getFriendlyErrorMessage("The server returned an invalid tables response."),
+        );
       }),
       "The server did not return tables.",
     );
@@ -1150,7 +1189,7 @@ export const adminProfileApi = {
   async downloadTableQr(id: string): Promise<string> {
     const accessToken = await authApi.getAccessToken();
     if (!accessToken) {
-      throw new Error("Your login session is missing. Please sign in again.");
+      throw new Error(getFriendlyErrorMessage("Your login session is missing."));
     }
 
     const path = `${FileSystem.documentDirectory ?? "file://"}table-qr-${encodeURIComponent(id)}.png`;
@@ -1178,7 +1217,11 @@ export const adminProfileApi = {
     if (Array.isArray(data)) return data;
     if (Array.isArray(data.availableTables)) return data.availableTables;
     if (Array.isArray(data.tables)) return data.tables;
-    throw new Error("The server returned an invalid available-tables response.");
+    throw new Error(
+      getFriendlyErrorMessage(
+        "The server returned an invalid available-tables response.",
+      ),
+    );
   },
 
   async createWaiter(name: string): Promise<void> {
@@ -1224,7 +1267,11 @@ export const adminNotificationsApi = {
       !data.pagination ||
       typeof data.unreadCount !== "number"
     ) {
-      throw new Error("The server returned an invalid notifications response.");
+      throw new Error(
+        getFriendlyErrorMessage(
+          "The server returned an invalid notifications response.",
+        ),
+      );
     }
     return data;
   },

@@ -104,6 +104,24 @@ export async function getPersistentCache<T>(
     console.warn("Unable to read local API cache data.", error);
   }
 
+  if (forceRefresh && cached) {
+    const savedValue = cached.value;
+    const generation = cacheGeneration;
+    const version = cacheVersions.get(storageKey) || 0;
+    try {
+      return await startCacheRefresh(storageKey, load);
+    } catch (error) {
+      if (
+        generation !== cacheGeneration ||
+        version !== (cacheVersions.get(storageKey) || 0)
+      ) {
+        throw error;
+      }
+      console.warn("Unable to refresh data. Using the saved version instead.", error);
+      return savedValue;
+    }
+  }
+
   if (!forceRefresh && cached) {
     const isStale = Date.now() - cached.savedAt >= maxAgeMs;
     const shouldRevalidate =

@@ -1,4 +1,4 @@
-import Constants from "expo-constants";
+import Constants, { AppOwnership } from "expo-constants";
 import { Platform } from "react-native";
 
 type SpeechRecognitionPackage = typeof import("expo-speech-recognition");
@@ -6,10 +6,14 @@ type SpeechRecognitionPackage = typeof import("expo-speech-recognition");
 let speechRecognitionPackage: SpeechRecognitionPackage | null | undefined;
 let speechRecognitionLoadError: unknown;
 
+export function isExpoGo(): boolean {
+  return Constants.appOwnership === AppOwnership.Expo;
+}
+
 export function getSpeechRecognitionPackage():
   | SpeechRecognitionPackage
   | null {
-  if (Platform.OS === "web" || Constants.expoGoConfig) return null;
+  if (Platform.OS === "web" || isExpoGo()) return null;
   if (speechRecognitionPackage !== undefined) return speechRecognitionPackage;
 
   try {

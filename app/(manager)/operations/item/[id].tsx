@@ -196,8 +196,8 @@ export default function EditMenuItemScreen() {
             ? ""
             : String(found.prepTimeMinutes),
         );
-        setImageUrl(found.imageUrl || "");
-        setImageUrls(found.imageUrls || []);
+        setImageUrl(found.imageUrl || found.images?.[0] || "");
+        setImageUrls(found.imageUrls || found.images?.slice(1) || []);
         setFailedImageUrls([]);
         setFoodType(found.foodType === "non_veg" ? "non_veg" : "veg");
         const hasCustomTag =
@@ -409,6 +409,10 @@ export default function EditMenuItemScreen() {
       parsedRegularPrice > parsedOfferPrice
         ? `₹${parsedRegularPrice - parsedOfferPrice} OFF`
         : undefined;
+    const additionalImageUrls = imageUrls
+      .map((url) => url.trim())
+      .filter(Boolean);
+    const allImageUrls = [imageUrl.trim(), ...additionalImageUrls];
     const body: Record<string, unknown> = {
       name: itemName.trim(),
       description: description.trim(),
@@ -420,7 +424,8 @@ export default function EditMenuItemScreen() {
       availableQuantity: parsedQuantity,
       ...(prepTime.trim() ? { prepTimeMinutes: parsedPrepTime } : {}),
       imageUrl: imageUrl.trim(),
-      imageUrls: imageUrls.map((url) => url.trim()).filter(Boolean),
+      imageUrls: additionalImageUrls,
+      images: allImageUrls,
       marketingTag:
         customTagEnabled || marketingTag === "auto_discount"
           ? null

@@ -1,6 +1,7 @@
 import axios, { isAxiosError } from "axios";
 
 import { authApi } from "./auth";
+import { getFriendlyErrorMessage } from "../../utils/friendly-error";
 
 interface ApiEnvelope<T> {
   success: boolean;
@@ -49,6 +50,7 @@ export interface OperationsMenuItem {
   description?: string;
   imageUrl?: string;
   imageUrls?: string[];
+  images?: string[];
   categoryId: string | { _id: string; name?: string; icon?: string };
   isCrossSellOnly?: boolean;
   foodType?: string;
@@ -201,12 +203,14 @@ async function request<T>(
 ): Promise<T | undefined> {
   if (!API_BASE_URL) {
     throw new Error(
-      "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+      getFriendlyErrorMessage(
+        "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+      ),
     );
   }
   const accessToken = await authApi.getAccessToken();
   if (!accessToken) {
-    throw new Error("Your login session is missing. Please sign in again.");
+    throw new Error(getFriendlyErrorMessage("Your login session is missing."));
   }
 
   try {
@@ -228,46 +232,58 @@ async function request<T>(
       (hasSuccessFlag && !response.data.success) ||
       (method === "GET" && !response.data?.success)
     ) {
-      throw new Error(response.data?.message || "The API request failed.");
+      throw new Error(
+        getFriendlyErrorMessage(
+          response.data?.message || "The API request failed.",
+        ),
+      );
     }
     return response.data?.data;
   } catch (error) {
     if (isAxiosError<ApiEnvelope<unknown>>(error)) {
       const message = error.response?.data?.message;
-      if (message) throw new Error(message);
+      if (message) throw new Error(getFriendlyErrorMessage(message));
       if (error.response?.status === 401) {
         throw new Error(
-          "Your login session has expired. Please sign in again.",
+          getFriendlyErrorMessage("Your login session has expired."),
         );
       }
       if (error.response) {
         throw new Error(
-          `The server returned an error (${error.response.status}).`,
+          getFriendlyErrorMessage(
+            `The server returned an error (${error.response.status}).`,
+          ),
         );
       }
       if (error.code === "ECONNABORTED") {
         throw new Error(
-          "The server took too long to respond. Please try again.",
+          getFriendlyErrorMessage("The server took too long to respond."),
         );
       }
       throw new Error(
-        "Unable to reach the server. Check EXPO_PUBLIC_API_URL and try again.",
+        getFriendlyErrorMessage(
+          "Unable to reach the server. Check EXPO_PUBLIC_API_URL and try again.",
+        ),
       );
     }
     throw error instanceof Error
-      ? error
-      : new Error("The API request failed. Please try again.");
+      ? new Error(getFriendlyErrorMessage(error))
+      : new Error(getFriendlyErrorMessage("The API request failed."));
   }
 }
 
 function requireData<T>(data: T | undefined, message: string): T {
-  if (data === undefined || data === null) throw new Error(message);
+  if (data === undefined || data === null) {
+    throw new Error(getFriendlyErrorMessage(message));
+  }
   return data;
 }
 
 function requireArray<T>(data: T[] | undefined, message: string): T[] {
   const result = requireData(data, message);
-  if (!Array.isArray(result)) throw new Error(message);
+  if (!Array.isArray(result)) {
+    throw new Error(getFriendlyErrorMessage(message));
+  }
   return result;
 }
 
@@ -465,12 +481,16 @@ export const operationsApi = {
     }
     if (!API_BASE_URL) {
       throw new Error(
-        "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+        getFriendlyErrorMessage(
+          "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+        ),
       );
     }
     const accessToken = await authApi.getAccessToken();
     if (!accessToken) {
-      throw new Error("Your login session is missing. Please sign in again.");
+      throw new Error(
+        getFriendlyErrorMessage("Your login session is missing."),
+      );
     }
 
     const formData = new FormData();
@@ -495,7 +515,11 @@ export const operationsApi = {
         },
       );
       if (!response.data?.success) {
-        throw new Error(response.data?.message || "Image upload failed.");
+        throw new Error(
+          getFriendlyErrorMessage(
+            response.data?.message || "Image upload failed.",
+          ),
+        );
       }
 
       const data = response.data.data;
@@ -532,34 +556,43 @@ export const operationsApi = {
         );
       if (urls.length !== files.length) {
         throw new Error(
-          "The server did not return a valid URL for every uploaded image.",
+          getFriendlyErrorMessage(
+            "The server did not return a valid URL for every uploaded image.",
+            "We couldn't finish uploading all images. Please try again.",
+          ),
         );
       }
       return urls;
     } catch (error) {
       if (isAxiosError<ApiEnvelope<unknown>>(error)) {
         const message = error.response?.data?.message;
-        if (message) throw new Error(message);
+        if (message) throw new Error(getFriendlyErrorMessage(message));
         if (error.response?.status === 401) {
           throw new Error(
-            "Your login session has expired. Please sign in again.",
+            getFriendlyErrorMessage("Your login session has expired."),
           );
         }
         if (error.response) {
           throw new Error(
-            `The server returned an error (${error.response.status}).`,
+            getFriendlyErrorMessage(
+              `The server returned an error (${error.response.status}).`,
+            ),
           );
         }
         if (error.code === "ECONNABORTED") {
-          throw new Error("The image upload timed out. Please try again.");
+          throw new Error(
+            getFriendlyErrorMessage("The image upload timed out."),
+          );
         }
         throw new Error(
-          "Unable to reach the server. Check EXPO_PUBLIC_API_URL and try again.",
+          getFriendlyErrorMessage(
+            "Unable to reach the server. Check EXPO_PUBLIC_API_URL and try again.",
+          ),
         );
       }
       throw error instanceof Error
-        ? error
-        : new Error("Image upload failed. Please try again.");
+        ? new Error(getFriendlyErrorMessage(error))
+        : new Error(getFriendlyErrorMessage("Image upload failed."));
     }
   },
 

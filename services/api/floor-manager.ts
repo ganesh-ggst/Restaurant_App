@@ -1,6 +1,7 @@
 import axios, { isAxiosError } from "axios";
 
 import { authApi } from "./auth";
+import { getFriendlyErrorMessage } from "../../utils/friendly-error";
 
 interface ApiEnvelope<T> {
   success: boolean;
@@ -113,13 +114,15 @@ async function request<T>(
 ): Promise<T | undefined> {
   if (!API_BASE_URL) {
     throw new Error(
-      "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+      getFriendlyErrorMessage(
+        "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+      ),
     );
   }
 
   const accessToken = await authApi.getAccessToken();
   if (!accessToken) {
-    throw new Error("Your login session is missing. Please sign in again.");
+    throw new Error(getFriendlyErrorMessage("Your login session is missing."));
   }
 
   try {
@@ -135,35 +138,51 @@ async function request<T>(
     });
 
     if (!response.data?.success) {
-      throw new Error(response.data?.message || "The API request failed.");
+      throw new Error(
+        getFriendlyErrorMessage(
+          response.data?.message || "The API request failed.",
+        ),
+      );
     }
     return response.data.data;
   } catch (error) {
     if (isAxiosError<ApiEnvelope<unknown>>(error)) {
       const message = error.response?.data?.message;
-      if (message) throw new Error(message);
+      if (message) throw new Error(getFriendlyErrorMessage(message));
       if (error.response?.status === 401) {
-        throw new Error("Your login session has expired. Please sign in again.");
+        throw new Error(
+          getFriendlyErrorMessage("Your login session has expired."),
+        );
       }
       if (error.response) {
-        throw new Error(`The server returned an error (${error.response.status}).`);
+        throw new Error(
+          getFriendlyErrorMessage(
+            `The server returned an error (${error.response.status}).`,
+          ),
+        );
       }
       if (error.code === "ECONNABORTED") {
-        throw new Error("The server took too long to respond. Please try again.");
+        throw new Error(
+          getFriendlyErrorMessage("The server took too long to respond."),
+        );
       }
       throw new Error(
-        "Unable to reach the server. Check EXPO_PUBLIC_API_URL and try again.",
+        getFriendlyErrorMessage(
+          "Unable to reach the server. Check EXPO_PUBLIC_API_URL and try again.",
+        ),
       );
     }
 
     throw error instanceof Error
-      ? error
-      : new Error("The API request failed. Please try again.");
+      ? new Error(getFriendlyErrorMessage(error))
+      : new Error(getFriendlyErrorMessage("The API request failed."));
   }
 }
 
 function requireData<T>(data: T | undefined, message: string): T {
-  if (data === undefined || data === null) throw new Error(message);
+  if (data === undefined || data === null) {
+    throw new Error(getFriendlyErrorMessage(message));
+  }
   return data;
 }
 
@@ -174,7 +193,11 @@ export const floorManagerApi = {
       "The server did not return the floor manager dashboard.",
     );
     if (!data.checkIn || !data.tables || !data.waiters || !data.orders) {
-      throw new Error("The server returned an invalid floor manager dashboard.");
+      throw new Error(
+        getFriendlyErrorMessage(
+          "The server returned an invalid floor manager dashboard.",
+        ),
+      );
     }
     return data;
   },
@@ -192,7 +215,11 @@ export const floorManagerApi = {
       !Array.isArray(data.serviceRequests) ||
       !Array.isArray(data.orders)
     ) {
-      throw new Error("The server returned an invalid floor manager live state.");
+      throw new Error(
+        getFriendlyErrorMessage(
+          "The server returned an invalid floor manager live state.",
+        ),
+      );
     }
     return data;
   },
@@ -203,7 +230,11 @@ export const floorManagerApi = {
       "The server did not return floor manager sessions.",
     );
     if (!Array.isArray(data)) {
-      throw new Error("The server returned an invalid floor manager sessions response.");
+      throw new Error(
+        getFriendlyErrorMessage(
+          "The server returned an invalid floor manager sessions response.",
+        ),
+      );
     }
     return data;
   },
@@ -217,7 +248,9 @@ export const floorManagerApi = {
       "The server did not return table details.",
     );
     if (!data.table || !Array.isArray(data.orders)) {
-      throw new Error("The server returned invalid table details.");
+      throw new Error(
+        getFriendlyErrorMessage("The server returned invalid table details."),
+      );
     }
     return data;
   },
@@ -233,7 +266,9 @@ export const floorManagerApi = {
       "The server did not return session details.",
     );
     if (typeof data !== "object") {
-      throw new Error("The server returned invalid session details.");
+      throw new Error(
+        getFriendlyErrorMessage("The server returned invalid session details."),
+      );
     }
     return data;
   },
@@ -254,10 +289,16 @@ export const floorManagerApi = {
     status: "free" | "active" | "billed",
     customerCount: number,
   ): Promise<void> {
+    const apiStatus =
+      status === "free"
+        ? "available"
+        : status === "active"
+          ? "occupied"
+          : status;
     await request(
       "PATCH",
       `/tables/${encodeURIComponent(id)}/status`,
-      { status, customerCount },
+      { status: apiStatus, customerCount },
     );
   },
 
