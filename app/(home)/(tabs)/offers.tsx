@@ -29,8 +29,11 @@ export default function OffersScreen() {
     mode: orderMode,
     carts,
     menuItems,
+    menuItemsLoadedForBranchId,
+    menuItemsLoadError,
     offers,
     offersLoaded,
+    offersLoadError,
     activeBranch,
     refreshHomeData,
     isRefreshingHome,
@@ -78,6 +81,9 @@ export default function OffersScreen() {
     : branchOffers;
 
   const selectedOffer = displayedOffers[0];
+  const applicableItemsLoaded =
+    Boolean(selectedBranchId) &&
+    menuItemsLoadedForBranchId === selectedBranchId;
   const applicableItems = selectedOffer
     ? selectedOffer.appliesToAllItems
       ? menuItems
@@ -224,9 +230,9 @@ export default function OffersScreen() {
                 >
                   Applicable Items
                 </Text>
-                <View className="flex-row flex-wrap justify-between">
-                  {applicableItems.map((item: any) => {
-                    return (
+                {applicableItems.length > 0 ? (
+                  <View className="flex-row flex-wrap justify-between">
+                    {applicableItems.map((item: any) => (
                       <View
                         key={item.id}
                         style={{ width: "48%" }}
@@ -235,17 +241,34 @@ export default function OffersScreen() {
                         <MenuListItem
                           item={item}
                           cartQuantity={
-                            cartQuantityByMenuItemId.get(
-                              String(item.id),
-                            ) || 0
+                            cartQuantityByMenuItemId.get(String(item.id)) || 0
                           }
                           onAddToCart={handleAddToCart}
                           onDecrement={handleDecrementCartItem}
                         />
                       </View>
-                    );
-                  })}
-                </View>
+                    ))}
+                  </View>
+                ) : (
+                  <View
+                    className="rounded-2xl border px-4 py-5"
+                    style={{
+                      backgroundColor: theme.card,
+                      borderColor: theme.border,
+                    }}
+                  >
+                    <Text
+                      className="text-sm font-semibold text-center leading-5"
+                      style={{ color: theme.muted }}
+                    >
+                      {!applicableItemsLoaded
+                        ? "Loading items for this offer..."
+                        : menuItemsLoadError
+                          ? "We couldn't load this offer's items right now. Please try again later."
+                          : "No menu items currently apply to this offer."}
+                    </Text>
+                  </View>
+                )}
               </View>
             )}
           </View>
@@ -257,15 +280,21 @@ export default function OffersScreen() {
               className="mt-4 text-lg font-black text-center"
               style={{ color: theme.text }}
             >
-              {targetOfferId ? "Offer unavailable" : "No offers available"}
+              {offersLoadError
+                ? "Offers temporarily unavailable"
+                : targetOfferId
+                  ? "Offer unavailable"
+                  : "No offers available"}
             </Text>
             <Text
               className="mt-2 text-sm font-semibold text-center leading-5"
               style={{ color: theme.muted }}
             >
-              {targetOfferId
-                ? "This offer is no longer available at this branch."
-                : "This branch has no active offers right now. Please check back later."}
+              {offersLoadError
+                ? "We're having trouble loading offers right now. Please try again later."
+                : targetOfferId
+                  ? "This offer is no longer available at this branch."
+                  : "This branch has no active offers right now. Please check back later."}
             </Text>
           </View>
         ) : null}

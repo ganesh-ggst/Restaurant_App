@@ -2,6 +2,7 @@ import axios, { isAxiosError } from "axios";
 
 import type { AdminAuthScreen } from "./admin-profile";
 import { getPersistentCache } from "./persistent-cache";
+import { getFriendlyErrorMessage } from "../../utils/friendly-error";
 
 interface ApiEnvelope<T> {
   success: boolean;
@@ -42,7 +43,9 @@ export const authScreenMediaApi = {
       async () => {
         if (!API_BASE_URL) {
           throw new Error(
-            "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+            getFriendlyErrorMessage(
+              "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+            ),
           );
         }
 
@@ -67,8 +70,11 @@ export const authScreenMediaApi = {
               return null;
             }
             throw new Error(
-              response.data?.message ||
-                "Unable to load storefront screen media.",
+              getFriendlyErrorMessage(
+                response.data?.message ||
+                  "Unable to load storefront screen media.",
+                "We couldn't load this screen right now. Please try again.",
+              ),
             );
           }
 
@@ -95,20 +101,24 @@ export const authScreenMediaApi = {
           if (isAxiosError<ApiEnvelope<unknown>>(error)) {
             const message = error.response?.data?.message;
             if (/no active .*screen found/i.test(message ?? "")) return null;
-            if (message) throw new Error(message);
+            if (message) throw new Error(getFriendlyErrorMessage(message));
             if (error.response) {
               throw new Error(
-                `The server returned an error (${error.response.status}).`,
+                getFriendlyErrorMessage(
+                  `The server returned an error (${error.response.status}).`,
+                ),
               );
             }
             if (error.code === "ECONNABORTED") {
               throw new Error(
-                "Loading screen media took too long. Please try again.",
+                getFriendlyErrorMessage("Loading screen media took too long."),
               );
             }
           }
           throw new Error(
-            "Unable to reach the server while loading screen media.",
+            getFriendlyErrorMessage(
+              "Unable to reach the server while loading screen media.",
+            ),
           );
         }
       },

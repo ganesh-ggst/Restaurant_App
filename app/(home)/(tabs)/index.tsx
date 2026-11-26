@@ -54,9 +54,11 @@ import { useOrderMode } from "../../../contexts/HomeContext";
 import { useAppTheme } from "../../../hooks/useAppTheme";
 import { api } from "../../../services/api";
 import { authApi } from "../../../services/api/auth";
+import { getFriendlyErrorMessage } from "../../../utils/friendly-error";
 import {
   getSpeechRecognitionLoadError,
   getSpeechRecognitionPackage,
+  isExpoGo,
 } from "../../../services/speech-recognition";
 import {
   getBranchDistanceKm,
@@ -117,7 +119,14 @@ const formatPrice = (price: number) => {
   return Number.isInteger(price) ? price : price.toFixed(2);
 };
 
-const DRINKS_CATEGORY_ID = "6ae830cf274e70f1ee2056b1";
+function createRequestId(): string {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (character) => {
+    const randomValue = Math.floor(Math.random() * 16);
+    const value = character === "x" ? randomValue : (randomValue & 0x3) | 0x8;
+    return value.toString(16);
+  });
+}
+
 type SelectableBranch = CustomerBranch & { id: string; address: string };
 type BranchWithDistance = {
   branch: SelectableBranch;
@@ -244,9 +253,11 @@ export default function HomeScreen() {
     activeCart,
     menuItems,
     menuItemsLoadedForBranchId,
+    menuItemsLoadError,
     categories,
     offers,
     offersLoaded,
+    offersLoadError,
     featuredReels,
     featuredReelsLoaded,
     refreshHomeData,
@@ -593,6 +604,8 @@ export default function HomeScreen() {
   );
   const isOrderLocked =
     confirmedOrders.length > 0 || dineInCartState === "waiting";
+  const isDineInCheckedIn =
+    orderMode === "Dine-in" && Boolean(dineInSession?._id);
 
   const loadCustomerLocation = useCallback(async () => {
     const requestId = ++customerLocationRequestId.current;
@@ -660,7 +673,7 @@ export default function HomeScreen() {
     try {
       const session = await api.getDineInSession();
 
-      if (session) {
+      if (session && !isDineInSessionClosed(session.status)) {
         const sessionBranch = branches.find(
           (candidate: { id: string; _id?: string }) =>
             candidate.id === session.branchId ||
@@ -681,6 +694,11 @@ export default function HomeScreen() {
         return;
       }
 
+      if (session || dineInSession?._id) {
+        finishDineInSession();
+        setGlobalOrderMode("Dine-in");
+      }
+
       setActiveBranchForDineInSession(branch);
       setActiveOfferIndex(0);
       setShowAddressModal(false);
@@ -692,8 +710,11 @@ export default function HomeScreen() {
       setShowDineInCheckInModal(true);
     } catch (error) {
       Alert.alert(
-        "Unable to Check Dine-in Session",
-        error instanceof Error ? error.message : "Please try again.",
+        "Let's check your table",
+        getFriendlyErrorMessage(
+          error,
+          "We couldn't check your table right now. Please try again.",
+        ),
       );
     } finally {
       setIsCheckingDineInSession(false);
@@ -1008,16 +1029,21 @@ export default function HomeScreen() {
           ),
         );
       };
-      const items = await api.getCategoryItems(
-        DRINKS_CATEGORY_ID,
-        activeBranch.id,
-        false,
+      const items = await api.getMenuItems(
+        {
+          branchId: activeBranch.id,
+          fulfillmentType: "dine-in",
+          search: "water",
+          stock: "in_stock",
+        },
+        true,
         applyWaterItems,
       );
       applyWaterItems(items);
     } catch (error) {
+      console.warn("Unable to load water options for this branch.", error);
       setServiceError(
-        error instanceof Error ? error.message : "Please try again.",
+        "We couldn't load this restaurant's water options. Please try again or ask a team member for help.",
       );
     } finally {
       setServiceLoading(false);
@@ -1032,8 +1058,29 @@ export default function HomeScreen() {
 
     setAddingWaterItemId(item._id);
     try {
-      const added = await handleAddToCart(item, 1, [], item.price);
-      if (added) setWaterAdded(true);
+      await api.addDineInSessionWater({
+        sessionId: dineInSession._id,
+        menuItemId: item._id,
+        quantity: 1,
+        requestId: createRequestId(),
+      });
+      setWaterAdded(true);
+    } catch (error) {
+      console.warn("Unable to add water to the dine-in bill.", error);
+      const message = error instanceof Error ? error.message : "";
+      if (/session.*(expired|not found|inactive|closed)|no active/i.test(message)) {
+        setServiceError(
+          "Your table session may have ended. Please check in again or ask a team member for help.",
+        );
+      } else if (/not found|unavailable|inactive|branch/i.test(message)) {
+        setServiceError(
+          "This water option is no longer available at this restaurant. Choose another option or ask a team member for help.",
+        );
+      } else {
+        setServiceError(
+          "We couldn't add this water to your table bill. Please try again or ask a team member for help.",
+        );
+      }
     } finally {
       setAddingWaterItemId(null);
     }
@@ -1139,10 +1186,22 @@ export default function HomeScreen() {
       const loadError = getSpeechRecognitionLoadError();
       const loadErrorDetails =
         loadError instanceof Error ? `\n\nDetails: ${loadError.message}` : "";
-      Alert.alert(
-        "Voice Search Requires a Development Build",
-        `Expo Go does not include the speech-recognition native module. Build and install the app with "npx expo run:android" or "npx expo run:ios", then start Metro with "npx expo start --dev-client".${loadErrorDetails}`,
-      );
+      if (Platform.OS === "web") {
+        Alert.alert(
+          "Voice Search Unavailable",
+          "Voice search is available in the Android and iOS apps.",
+        );
+      } else if (isExpoGo()) {
+        Alert.alert(
+          "Voice Search Requires a Development Build",
+          'Expo Go does not include the speech-recognition native module. Build and install the app with "npx expo run:android" or "npx expo run:ios", then start Metro with "npx expo start --dev-client".',
+        );
+      } else {
+        Alert.alert(
+          "Voice Search Unavailable",
+          `The speech-recognition native module is not available in this app. Rebuild and reinstall the APK to include it.${loadErrorDetails}`,
+        );
+      }
       return;
     }
     if (voiceSearchInFlight.current) return;
@@ -1317,7 +1376,7 @@ export default function HomeScreen() {
   const offersCarousel =
     (orderMode === "Delivery" || orderMode === "Takeaway") &&
     !searchQuery &&
-    (!offersLoaded || branchOffers.length > 0) ? (
+    Boolean(activeBranch?.id) ? (
       <View className="w-full px-4" style={{ overflow: "hidden" }}>
         <Text
           className="mb-3 text-xl font-black"
@@ -1334,6 +1393,20 @@ export default function HomeScreen() {
               borderColor: theme.border,
             }}
           />
+        ) : branchOffers.length === 0 ? (
+          <View
+            className="mt-2 mb-8 rounded-2xl border px-4 py-5"
+            style={{ backgroundColor: theme.card, borderColor: theme.border }}
+          >
+            <Text
+              className="text-sm font-semibold text-center leading-5"
+              style={{ color: theme.muted }}
+            >
+              {offersLoadError
+                ? "Offers are temporarily unavailable. Please try again later."
+                : "There are no active offers at this branch right now."}
+            </Text>
+          </View>
         ) : (
           <ScrollView
           horizontal
@@ -1482,16 +1555,20 @@ export default function HomeScreen() {
       return null;
     }
 
-    const title = searchQuery
-      ? "No matching dishes found"
-      : isVegOnly
-        ? "No vegetarian items available"
-        : "No menu items available";
-    const description = searchQuery
-      ? `We couldn't find anything matching "${searchQuery.trim()}". Try another search.`
-      : isVegOnly
-        ? "This branch has no vegetarian items available right now."
-        : "This branch has no menu items available right now. Please check back later.";
+    const title = menuItemsLoadError
+      ? "Menu temporarily unavailable"
+      : searchQuery
+        ? "No matching dishes found"
+        : isVegOnly
+          ? "No vegetarian items available"
+          : "No menu items available";
+    const description = menuItemsLoadError
+      ? "We're having trouble loading this menu right now. Please try again later."
+      : searchQuery
+        ? `We couldn't find anything matching "${searchQuery.trim()}". Try another search.`
+        : isVegOnly
+          ? "This branch has no vegetarian items available right now."
+          : "This branch has no menu items available right now. Please check back later.";
 
     return (
       <View className="items-center justify-center py-16 px-6">
@@ -1513,6 +1590,7 @@ export default function HomeScreen() {
     isSelectedBranchOnline,
     isVegOnly,
     menuItemsLoadedForBranchId,
+    menuItemsLoadError,
     searchQuery,
     selectedBranchId,
     theme.muted,
@@ -1744,7 +1822,7 @@ export default function HomeScreen() {
       >
         <Pressable
           className="flex-1"
-          disabled={isOrderLocked}
+          disabled={isOrderLocked || isDineInCheckedIn}
           onPress={() => {
             setAddressModalSelection(isGuest ? "branch" : "address");
             setShowAddressModal(true);
@@ -1842,7 +1920,7 @@ export default function HomeScreen() {
                       ? `Table ${activeTable}`
                       : "Dining at"}
                 </Text>
-                {!isOrderLocked && (
+                {!isOrderLocked && !isDineInCheckedIn && (
                   <ChevronDown
                     size={20}
                     color={theme.text}
@@ -2494,7 +2572,7 @@ export default function HomeScreen() {
                   {serviceLoading
                     ? "Loading Water Bottles..."
                     : serviceError
-                      ? "Unable to Load Water"
+                      ? "Water request couldn't be completed"
                       : waterAdded
                         ? "Added to Your Bill"
                         : "Choose a Water Bottle"}
@@ -2575,7 +2653,7 @@ export default function HomeScreen() {
                         className="text-center font-semibold mb-4"
                         style={{ color: theme.muted }}
                       >
-                        No available water bottles were found in Drinks.
+                        No water products are currently available at this restaurant. Please ask a team member.
                       </Text>
                     )}
                   </ScrollView>
@@ -2588,7 +2666,7 @@ export default function HomeScreen() {
                       style={{ backgroundColor: theme.primary }}
                     >
                       <Text className="text-white font-black text-lg tracking-wide">
-                        Got it
+                        Close
                       </Text>
                     </Pressable>
                   )}

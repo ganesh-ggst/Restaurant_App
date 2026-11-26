@@ -3,6 +3,7 @@ import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
 import { clearAccountPersistentCache } from "./persistent-cache";
+import { getFriendlyErrorMessage } from "../../utils/friendly-error";
 
 export interface AuthUser {
   id: string;
@@ -63,7 +64,9 @@ function normalizePhone(phone: string): string {
 function getAuthUrl(path: string): string {
   if (!API_BASE_URL) {
     throw new Error(
-      "Auth API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+      getFriendlyErrorMessage(
+        "Auth API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+      ),
     );
   }
 
@@ -107,23 +110,42 @@ function getRequestError(error: unknown): Error {
   if (isAxiosError<ApiEnvelope<unknown>>(error)) {
     const message = error.response?.data?.message;
     if (message) {
-      return new Error(message);
+      return new Error(
+        getFriendlyErrorMessage(
+          message,
+          "We couldn't complete sign-in. Please try again.",
+        ),
+      );
+    }
+
+    if (error.response?.status === 401) {
+      return new Error(
+        getFriendlyErrorMessage("Your login session has expired."),
+      );
     }
 
     if (error.code === "ECONNABORTED") {
-      return new Error("The auth server took too long to respond. Please try again.");
+      return new Error(
+        getFriendlyErrorMessage("The auth server took too long to respond."),
+      );
     }
 
     return new Error(
-      "Unable to reach the auth server. Check EXPO_PUBLIC_API_URL and try again.",
+      getFriendlyErrorMessage(
+        "Unable to reach the auth server. Check EXPO_PUBLIC_API_URL and try again.",
+      ),
     );
   }
 
   if (error instanceof Error) {
-    return error;
+    return new Error(
+      getFriendlyErrorMessage(error, "We couldn't complete sign-in. Please try again."),
+    );
   }
 
-  return new Error("The auth request failed. Please try again.");
+  return new Error(
+    getFriendlyErrorMessage("The auth request failed."),
+  );
 }
 
 async function post<T>(
@@ -155,7 +177,12 @@ function requireUser<T extends { user?: AuthUser }>(
   message: string,
 ): asserts data is T & { user: AuthUser } {
   if (!data.user) {
-    throw new Error(message);
+    throw new Error(
+      getFriendlyErrorMessage(
+        message,
+        "We couldn't finish setting up your account. Please try again.",
+      ),
+    );
   }
 }
 
@@ -190,14 +217,24 @@ export const authApi = {
 
     if (!data.user.isProfileCompleted) {
       if (!data.signupToken) {
-        throw new Error("The auth server did not return a signup token.");
+        throw new Error(
+          getFriendlyErrorMessage(
+            "The auth server did not return a signup token.",
+            "We couldn't finish setting up your account. Please try again.",
+          ),
+        );
       }
       await deleteStoredToken(ACCESS_TOKEN_KEY);
       await deleteStoredToken(CACHE_USER_ID_KEY);
       await setStoredToken(SIGNUP_TOKEN_KEY, data.signupToken);
     } else {
       if (!data.accessToken) {
-        throw new Error("The auth server did not return an access token.");
+        throw new Error(
+          getFriendlyErrorMessage(
+            "The auth server did not return an access token.",
+            "We couldn't finish signing you in. Please try again.",
+          ),
+        );
       }
       await deleteStoredToken(SIGNUP_TOKEN_KEY);
       await setStoredToken(ACCESS_TOKEN_KEY, data.accessToken);
@@ -225,7 +262,12 @@ export const authApi = {
     requireUser(data, "The auth server did not return the completed profile.");
 
     if (!data.accessToken) {
-      throw new Error("The auth server did not return an access token.");
+      throw new Error(
+        getFriendlyErrorMessage(
+          "The auth server did not return an access token.",
+          "We couldn't finish signing you in. Please try again.",
+        ),
+      );
     }
 
     await setStoredToken(ACCESS_TOKEN_KEY, data.accessToken);

@@ -1,6 +1,7 @@
 import axios, { isAxiosError } from "axios";
 
 import { authApi } from "./auth";
+import { getFriendlyErrorMessage } from "../../utils/friendly-error";
 import {
   clearAccountPersistentCache,
   getAccountCacheScope,
@@ -458,6 +459,12 @@ const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL?.trim().replace(
 );
 const REQUEST_TIMEOUT_MS = 15_000;
 
+function isMissingDineInSessionMessage(message: string | undefined): boolean {
+  return /no active .*session|session not found|reservation has expired/i.test(
+    message || "",
+  );
+}
+
 async function request<T>(
   method: "GET" | "POST" | "PATCH" | "DELETE",
   path: string,
@@ -467,13 +474,17 @@ async function request<T>(
 ): Promise<T | undefined> {
   if (!API_BASE_URL) {
     throw new Error(
-      "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+      getFriendlyErrorMessage(
+        "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+      ),
     );
   }
 
   const accessToken = await authApi.getAccessToken();
   if (authenticated && !accessToken) {
-    throw new Error("Your login session is missing. Please sign in again.");
+    throw new Error(
+      getFriendlyErrorMessage("Your login session is missing."),
+    );
   }
 
   try {
@@ -491,14 +502,16 @@ async function request<T>(
     if (!response.data?.success) {
       if (
         allowMissingSession &&
-        /no active .*session|session not found/i.test(response.data?.message || "")
+        isMissingDineInSessionMessage(response.data?.message)
       ) {
         return undefined;
       }
       throw new Error(
-        formatApiError(
+        getFriendlyErrorMessage(
+          formatApiError(
           response.data?.message || "The API request failed.",
           response.data?.errors,
+          ),
         ),
       );
     }
@@ -510,38 +523,48 @@ async function request<T>(
       if (
         allowMissingSession &&
         (error.response?.status === 404 ||
-          /no active .*session|session not found/i.test(message || ""))
+          isMissingDineInSessionMessage(message))
       ) {
         return undefined;
       }
-      if (message) throw new Error(formatApiError(message, responseData.errors));
+      if (message) {
+        throw new Error(
+          getFriendlyErrorMessage(formatApiError(message, responseData.errors)),
+        );
+      }
       if (error.response?.status === 401) {
         throw new Error(
-          "Your login session has expired. Please sign in again.",
+          getFriendlyErrorMessage("Your login session has expired."),
         );
       }
       if (error.response) {
         throw new Error(
-          `The server returned an error (${error.response.status}).`,
+          getFriendlyErrorMessage(
+            `The server returned an error (${error.response.status}).`,
+          ),
         );
       }
       if (error.code === "ECONNABORTED") {
         throw new Error(
-          "The server took too long to respond. Please try again.",
+          getFriendlyErrorMessage("The server took too long to respond."),
         );
       }
       throw new Error(
-        "Unable to reach the server. Check EXPO_PUBLIC_API_URL and try again.",
+        getFriendlyErrorMessage(
+          "Unable to reach the server. Check EXPO_PUBLIC_API_URL and try again.",
+        ),
       );
     }
     throw error instanceof Error
-      ? error
-      : new Error("The API request failed. Please try again.");
+      ? new Error(getFriendlyErrorMessage(error))
+      : new Error(getFriendlyErrorMessage("The API request failed."));
   }
 }
 
 function requireData<T>(data: T | undefined, message: string): T {
-  if (data === undefined || data === null) throw new Error(message);
+  if (data === undefined || data === null) {
+    throw new Error(getFriendlyErrorMessage(message));
+  }
   return data;
 }
 
@@ -566,7 +589,7 @@ function getCartCacheResource(context: CustomerCartContext): string {
 async function getAccountCacheKey(resource: string): Promise<string> {
   const token = await authApi.getAccessToken();
   if (!token) {
-    throw new Error("Your login session is missing. Please sign in again.");
+    throw new Error(getFriendlyErrorMessage("Your login session is missing."));
   }
   const identity = (await authApi.getCacheUserId()) || token;
   return `customer:${getAccountCacheScope(identity)}:${resource}`;
@@ -636,7 +659,11 @@ export const customerApi = {
       "The server did not return available dine-in tables.",
     );
     if (!Array.isArray(result.tables)) {
-      throw new Error("The server returned an invalid available-tables response.");
+      throw new Error(
+        getFriendlyErrorMessage(
+          "The server returned an invalid available-tables response.",
+        ),
+      );
     }
     return result.tables;
   },
@@ -656,7 +683,9 @@ export const customerApi = {
     );
     const session = "session" in result ? result.session : result;
     if (!session?._id || typeof session.tableNumber !== "number") {
-      throw new Error("The server returned an invalid dine-in session.");
+      throw new Error(
+        getFriendlyErrorMessage("The server returned an invalid dine-in session."),
+      );
     }
     return session;
   },
@@ -673,7 +702,9 @@ export const customerApi = {
     );
     const session = "session" in result ? result.session : result;
     if (!session?._id || typeof session.tableNumber !== "number") {
-      throw new Error("The server returned an invalid dine-in session.");
+      throw new Error(
+        getFriendlyErrorMessage("The server returned an invalid dine-in session."),
+      );
     }
     return session;
   },
@@ -688,7 +719,9 @@ export const customerApi = {
     );
     if (result == null) return null;
     if (!result._id || typeof result.tableNumber !== "number") {
-      throw new Error("The server returned an invalid dine-in session.");
+      throw new Error(
+        getFriendlyErrorMessage("The server returned an invalid dine-in session."),
+      );
     }
     return result;
   },
@@ -698,6 +731,7 @@ export const customerApi = {
       "POST",
       "/dine-in/close",
       { sessionId },
+      true,
       true,
     );
   },
@@ -734,6 +768,20 @@ export const customerApi = {
       "POST",
       "/dine-in/service-request",
       { sessionId, type },
+      true,
+    );
+  },
+
+  async addDineInSessionWater(input: {
+    sessionId: string;
+    menuItemId: string;
+    quantity: number;
+    requestId: string;
+  }): Promise<void> {
+    await request<void>(
+      "POST",
+      "/dine-in/session/water",
+      input,
       true,
     );
   },

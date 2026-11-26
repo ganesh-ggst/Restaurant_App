@@ -1,6 +1,7 @@
 import axios, { isAxiosError } from "axios";
 
 import { authApi } from "./auth";
+import { getFriendlyErrorMessage } from "../../utils/friendly-error";
 
 interface ApiEnvelope<T> {
   success: boolean;
@@ -108,13 +109,15 @@ async function request<T>(
 ): Promise<T | undefined> {
   if (!API_BASE_URL) {
     throw new Error(
-      "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+      getFriendlyErrorMessage(
+        "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+      ),
     );
   }
 
   const accessToken = await authApi.getAccessToken();
   if (!accessToken) {
-    throw new Error("Your login session is missing. Please sign in again.");
+    throw new Error(getFriendlyErrorMessage("Your login session is missing."));
   }
 
   try {
@@ -136,36 +139,52 @@ async function request<T>(
     });
 
     if (!response.data?.success) {
-      throw new Error(response.data?.message || "The API request failed.");
+      throw new Error(
+        getFriendlyErrorMessage(
+          response.data?.message || "The API request failed.",
+        ),
+      );
     }
 
     return response.data.data;
   } catch (error) {
     if (isAxiosError<ApiEnvelope<unknown>>(error)) {
       const message = error.response?.data?.message;
-      if (message) throw new Error(message);
+      if (message) throw new Error(getFriendlyErrorMessage(message));
       if (error.response?.status === 401) {
-        throw new Error("Your login session has expired. Please sign in again.");
+        throw new Error(
+          getFriendlyErrorMessage("Your login session has expired."),
+        );
       }
       if (error.response) {
-        throw new Error(`The server returned an error (${error.response.status}).`);
+        throw new Error(
+          getFriendlyErrorMessage(
+            `The server returned an error (${error.response.status}).`,
+          ),
+        );
       }
       if (error.code === "ECONNABORTED") {
-        throw new Error("The server took too long to respond. Please try again.");
+        throw new Error(
+          getFriendlyErrorMessage("The server took too long to respond."),
+        );
       }
       throw new Error(
-        "Unable to reach the server. Check EXPO_PUBLIC_API_URL and try again.",
+        getFriendlyErrorMessage(
+          "Unable to reach the server. Check EXPO_PUBLIC_API_URL and try again.",
+        ),
       );
     }
 
     throw error instanceof Error
-      ? error
-      : new Error("The API request failed. Please try again.");
+      ? new Error(getFriendlyErrorMessage(error))
+      : new Error(getFriendlyErrorMessage("The API request failed."));
   }
 }
 
 function requireData<T>(data: T | undefined, message: string): T {
-  if (data === undefined || data === null) throw new Error(message);
+  if (data === undefined || data === null) {
+    throw new Error(getFriendlyErrorMessage(message));
+  }
   return data;
 }
 
@@ -193,7 +212,9 @@ export const managerProfileApi = {
       "The server did not return the manager profile.",
     );
     if (!data.manager) {
-      throw new Error("The server returned an invalid manager profile.");
+      throw new Error(
+        getFriendlyErrorMessage("The server returned an invalid manager profile."),
+      );
     }
     return data;
   },
@@ -216,7 +237,7 @@ export const managerProfileApi = {
   async getManagers(forceRefresh = false): Promise<ManagedManager[]> {
     const token = await authApi.getAccessToken();
     if (!token) {
-      throw new Error("Your login session is missing. Please sign in again.");
+      throw new Error(getFriendlyErrorMessage("Your login session is missing."));
     }
     if (managerListToken !== token) {
       managerListToken = token;
@@ -236,7 +257,9 @@ export const managerProfileApi = {
       );
       const managers = Array.isArray(data) ? data : data.managers;
       if (!Array.isArray(managers)) {
-        throw new Error("The server returned an invalid managers response.");
+        throw new Error(
+          getFriendlyErrorMessage("The server returned an invalid managers response."),
+        );
       }
       if (managerListToken === token) managerListCache = managers;
       return managers;
@@ -392,7 +415,11 @@ export const managerProfileApi = {
       "The server did not return manager notifications.",
     );
     if (!Array.isArray(data.notifications)) {
-      throw new Error("The server returned an invalid notifications response.");
+      throw new Error(
+        getFriendlyErrorMessage(
+          "The server returned an invalid notifications response.",
+        ),
+      );
     }
     return data;
   },

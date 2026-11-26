@@ -2220,7 +2220,7 @@ export default function OperationsDashboardScreen() {
         >
           <KeyboardAvoidingView
             className="flex-1"
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
           >
             <View
               className="flex-row items-center justify-between border-b px-5 pb-4"
@@ -2253,6 +2253,7 @@ export default function OperationsDashboardScreen() {
                 paddingBottom: 120,
               }}
               keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
               showsVerticalScrollIndicator={false}
             >
             <Text

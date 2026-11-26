@@ -1,6 +1,7 @@
 import axios, { isAxiosError } from "axios";
 
 import { authApi } from "./auth";
+import { getFriendlyErrorMessage } from "../../utils/friendly-error";
 import {
   getAccountCacheScope,
   getPersistentCache,
@@ -122,7 +123,7 @@ let userProfileRequest: Promise<UserProfile> | null = null;
 async function getAccountCacheKey(resource: string): Promise<string> {
   const token = await authApi.getAccessToken();
   if (!token) {
-    throw new Error("Your login session is missing. Please sign in again.");
+    throw new Error(getFriendlyErrorMessage("Your login session is missing."));
   }
   const identity = (await authApi.getCacheUserId()) || token;
   return `customer:${getAccountCacheScope(identity)}:${resource}`;
@@ -144,13 +145,15 @@ async function request<T>(
 ): Promise<T | undefined> {
   if (!API_BASE_URL) {
     throw new Error(
-      "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+      getFriendlyErrorMessage(
+        "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+      ),
     );
   }
 
   const accessToken = await authApi.getAccessToken();
   if (!accessToken) {
-    throw new Error("Your login session is missing. Please sign in again.");
+    throw new Error(getFriendlyErrorMessage("Your login session is missing."));
   }
 
   try {
@@ -166,7 +169,11 @@ async function request<T>(
     });
 
     if (!response.data?.success) {
-      throw new Error(response.data?.message || "The API request failed.");
+      throw new Error(
+        getFriendlyErrorMessage(
+          response.data?.message || "The API request failed.",
+        ),
+      );
     }
 
     return response.data.data;
@@ -174,25 +181,35 @@ async function request<T>(
     if (isAxiosError<ApiEnvelope<unknown>>(error)) {
       const message = error.response?.data?.message;
       if (message) {
-        throw new Error(message);
+        throw new Error(getFriendlyErrorMessage(message));
       }
       if (error.response?.status === 401) {
-        throw new Error("Your login session has expired. Please sign in again.");
+        throw new Error(
+          getFriendlyErrorMessage("Your login session has expired."),
+        );
       }
       if (error.response) {
-        throw new Error(`The server returned an error (${error.response.status}).`);
+        throw new Error(
+          getFriendlyErrorMessage(
+            `The server returned an error (${error.response.status}).`,
+          ),
+        );
       }
       if (error.code === "ECONNABORTED") {
-        throw new Error("The server took too long to respond. Please try again.");
+        throw new Error(
+          getFriendlyErrorMessage("The server took too long to respond."),
+        );
       }
       throw new Error(
-        "Unable to reach the server. Check EXPO_PUBLIC_API_URL and try again.",
+        getFriendlyErrorMessage(
+          "Unable to reach the server. Check EXPO_PUBLIC_API_URL and try again.",
+        ),
       );
     }
 
     throw error instanceof Error
-      ? error
-      : new Error("The API request failed. Please try again.");
+      ? new Error(getFriendlyErrorMessage(error))
+      : new Error(getFriendlyErrorMessage("The API request failed."));
   }
 }
 
@@ -201,7 +218,7 @@ function requireData<T>(
   message: string,
 ): T {
   if (data === undefined || data === null) {
-    throw new Error(message);
+    throw new Error(getFriendlyErrorMessage(message));
   }
   return data;
 }
@@ -240,7 +257,9 @@ function normalizeUserProfile(profile: UserProfileResponse): UserProfile {
     typeof profile.lastName !== "string" ||
     typeof profile.phone !== "string"
   ) {
-    throw new Error("The server returned an invalid profile.");
+    throw new Error(
+      getFriendlyErrorMessage("The server returned an invalid profile."),
+    );
   }
 
   return {
@@ -334,13 +353,17 @@ export const profileApi = {
   ): Promise<string> {
     if (!API_BASE_URL) {
       throw new Error(
-        "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+        getFriendlyErrorMessage(
+          "API is not configured. Set EXPO_PUBLIC_API_URL to your backend server origin.",
+        ),
       );
     }
 
     const accessToken = await authApi.getAccessToken();
     if (!accessToken) {
-      throw new Error("Your login session is missing. Please sign in again.");
+      throw new Error(
+        getFriendlyErrorMessage("Your login session is missing."),
+      );
     }
 
     const formData = new FormData();
@@ -361,7 +384,11 @@ export const profileApi = {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       if (!response.data?.success) {
-        throw new Error(response.data?.message || "Avatar upload failed.");
+        throw new Error(
+          getFriendlyErrorMessage(
+            response.data?.message || "Avatar upload failed.",
+          ),
+        );
       }
 
       const data = response.data.data;
@@ -373,7 +400,11 @@ export const profileApi = {
             data?.user?.avatar,
         );
       if (!avatarUrl) {
-        throw new Error("The server did not return the uploaded avatar URL.");
+        throw new Error(
+          getFriendlyErrorMessage(
+            "The server did not return the uploaded avatar URL.",
+          ),
+        );
       }
       if (cachedUserProfile) {
         cachedUserProfile = { ...cachedUserProfile, avatarUrl };
@@ -383,23 +414,33 @@ export const profileApi = {
     } catch (error) {
       if (isAxiosError<ApiEnvelope<unknown>>(error)) {
         const message = error.response?.data?.message;
-        if (message) throw new Error(message);
+        if (message) throw new Error(getFriendlyErrorMessage(message));
         if (error.response?.status === 401) {
-          throw new Error("Your login session has expired. Please sign in again.");
+          throw new Error(
+            getFriendlyErrorMessage("Your login session has expired."),
+          );
         }
         if (error.response) {
-          throw new Error(`The server returned an error (${error.response.status}).`);
+          throw new Error(
+            getFriendlyErrorMessage(
+              `The server returned an error (${error.response.status}).`,
+            ),
+          );
         }
         if (error.code === "ECONNABORTED") {
-          throw new Error("The avatar upload timed out. Please try again.");
+          throw new Error(
+            getFriendlyErrorMessage("The avatar upload timed out."),
+          );
         }
         throw new Error(
-          "Unable to reach the server. Check EXPO_PUBLIC_API_URL and try again.",
+          getFriendlyErrorMessage(
+            "Unable to reach the server. Check EXPO_PUBLIC_API_URL and try again.",
+          ),
         );
       }
       throw error instanceof Error
-        ? error
-        : new Error("Avatar upload failed. Please try again.");
+        ? new Error(getFriendlyErrorMessage(error))
+        : new Error(getFriendlyErrorMessage("Avatar upload failed."));
     }
   },
 
@@ -418,7 +459,11 @@ export const profileApi = {
           "The server did not return your addresses.",
         );
         if (!Array.isArray(addresses)) {
-          throw new Error("The server returned an invalid addresses response.");
+          throw new Error(
+            getFriendlyErrorMessage(
+              "The server returned an invalid addresses response.",
+            ),
+          );
         }
         return addresses;
       },
@@ -453,7 +498,9 @@ export const profileApi = {
     );
     const address = isAddressResponse(result) ? result.address : result;
     if (!address?._id) {
-      throw new Error("The server returned an invalid saved address.");
+      throw new Error(
+        getFriendlyErrorMessage("The server returned an invalid saved address."),
+      );
     }
     await invalidateAccountCache("addresses");
     return address;
