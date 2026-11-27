@@ -772,20 +772,6 @@ export const customerApi = {
     );
   },
 
-  async addDineInSessionWater(input: {
-    sessionId: string;
-    menuItemId: string;
-    quantity: number;
-    requestId: string;
-  }): Promise<void> {
-    await request<void>(
-      "POST",
-      "/dine-in/session/water",
-      input,
-      true,
-    );
-  },
-
   async getDineInWifi(): Promise<CustomerDineInWifiConnection[]> {
     const result = requireData(
       await request<{ wifiConnections: CustomerDineInWifiConnection[] }>(

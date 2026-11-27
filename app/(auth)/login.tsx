@@ -1,6 +1,15 @@
+import { useEvent } from "expo";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { type ComponentRef, useCallback, useEffect, useRef, useState } from "react";
+import { VideoView, useVideoPlayer } from "expo-video";
+import { X } from "lucide-react-native";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentRef,
+} from "react";
 import {
   ActivityIndicator,
   Image,
@@ -15,9 +24,6 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import { X } from "lucide-react-native";
-import { VideoView, useVideoPlayer } from "expo-video";
-import { useEvent } from "expo";
 import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import {
@@ -71,11 +77,11 @@ export default function LoginScreen() {
   const router = useRouter();
   const { branchId, favoriteItemId, continueToCart, cartMode } =
     useLocalSearchParams<{
-    branchId?: string;
-    favoriteItemId?: string;
-    continueToCart?: string;
-    cartMode?: string;
-  }>();
+      branchId?: string;
+      favoriteItemId?: string;
+      continueToCart?: string;
+      cartMode?: string;
+    }>();
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
@@ -155,7 +161,10 @@ export default function LoginScreen() {
         }
       })
       .catch((mediaError: unknown) => {
-        console.error("Unable to load the active login screen media.", mediaError);
+        console.error(
+          "Unable to load the active login screen media.",
+          mediaError,
+        );
         if (isCurrent) {
           setLoginMediaResult({
             branchId,
@@ -220,7 +229,9 @@ export default function LoginScreen() {
       if (otpRequestVersion.current !== requestVersion) return;
 
       setError(
-        err instanceof Error ? err.message : "Failed to send OTP. Please try again.",
+        err instanceof Error
+          ? err.message
+          : "Failed to send OTP. Please try again.",
       );
     } finally {
       setLoading(false);
@@ -245,10 +256,7 @@ export default function LoginScreen() {
 
   const legalNotice = (
     <View className="items-center px-5 pt-1">
-      <Text
-        className="text-center text-[10px]"
-        style={{ color: theme.muted }}
-      >
+      <Text className="text-center text-[10px]" style={{ color: theme.muted }}>
         By continuing, you agree to our
       </Text>
       <View className="mt-0.5 flex-row items-center justify-center">
@@ -304,10 +312,7 @@ export default function LoginScreen() {
               className="flex-row items-center justify-between border-b px-5 py-4"
               style={{ borderBottomColor: theme.border }}
             >
-              <Text
-                className="text-lg font-bold"
-                style={{ color: theme.text }}
-              >
+              <Text className="text-lg font-bold" style={{ color: theme.text }}>
                 Terms & Conditions
               </Text>
               <Pressable
@@ -360,8 +365,8 @@ export default function LoginScreen() {
               >
                 Menu items, prices, and availability may change. Review your
                 order details and any applicable charges before confirming.
-                order changes or cancellations are subject to the restaurant&apos;s
-                policy.
+                order changes or cancellations are subject to the
+                restaurant&apos;s policy.
               </Text>
 
               <Text
@@ -370,9 +375,12 @@ export default function LoginScreen() {
               >
                 Updates
               </Text>
-              <Text className="text-sm leading-5" style={{ color: theme.muted }}>
-                These terms may be updated from time to time. Please review
-                them when using the app.
+              <Text
+                className="text-sm leading-5"
+                style={{ color: theme.muted }}
+              >
+                These terms may be updated from time to time. Please review them
+                when using the app.
               </Text>
             </ScrollView>
 
@@ -395,9 +403,7 @@ export default function LoginScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <Animated.View
-          className="flex-grow pb-3"
-        >
+        <Animated.View className="flex-grow pb-3">
           <View
             className="relative w-full px-5"
             style={{
@@ -467,9 +473,15 @@ export default function LoginScreen() {
             </View>
 
             <Card variant="default" className="p-3">
+              <Text
+                className="mb-1 text-[11px] font-medium"
+                style={{ color: theme.text }}
+              >
+                Get Started With Your Whatsapp Number
+              </Text>
               <Input
                 ref={inputRef}
-                placeholder="Enter Phone Number"
+                placeholder="Enter mobile number"
                 value={phone}
                 onChangeText={(text) => {
                   const numericText = text.replace(/[^0-9]/g, "");
