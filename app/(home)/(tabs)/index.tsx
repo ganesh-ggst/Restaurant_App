@@ -119,14 +119,6 @@ const formatPrice = (price: number) => {
   return Number.isInteger(price) ? price : price.toFixed(2);
 };
 
-function createRequestId(): string {
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (character) => {
-    const randomValue = Math.floor(Math.random() * 16);
-    const value = character === "x" ? randomValue : (randomValue & 0x3) | 0x8;
-    return value.toString(16);
-  });
-}
-
 type SelectableBranch = CustomerBranch & { id: string; address: string };
 type BranchWithDistance = {
   branch: SelectableBranch;
@@ -1050,23 +1042,22 @@ export default function HomeScreen() {
     }
   };
 
-  const handleAddWaterToBill = async (item: CustomerMenuItem) => {
+  const handleAddWaterToCart = async (item: CustomerMenuItem) => {
     if (orderMode !== "Dine-in" || !activeTable || !dineInSession?._id) {
-      setServiceError("Check in to a dine-in table before adding water.");
+      setServiceError("Check in to a dine-in table before adding water to your cart.");
       return;
     }
 
     setAddingWaterItemId(item._id);
     try {
-      await api.addDineInSessionWater({
-        sessionId: dineInSession._id,
-        menuItemId: item._id,
-        quantity: 1,
-        requestId: createRequestId(),
-      });
-      setWaterAdded(true);
+      const added = await handleAddToCart(item, 1, [], item.price);
+      if (added) {
+        setWaterAdded(true);
+      } else {
+        setServiceError("We couldn't add this water bottle to your cart.");
+      }
     } catch (error) {
-      console.warn("Unable to add water to the dine-in bill.", error);
+      console.warn("Unable to add water to the dine-in cart.", error);
       const message = error instanceof Error ? error.message : "";
       if (/session.*(expired|not found|inactive|closed)|no active/i.test(message)) {
         setServiceError(
@@ -1078,7 +1069,7 @@ export default function HomeScreen() {
         );
       } else {
         setServiceError(
-          "We couldn't add this water to your table bill. Please try again or ask a team member for help.",
+          "We couldn't add this water to your cart. Please try again or ask a team member for help.",
         );
       }
     } finally {
@@ -2574,7 +2565,7 @@ export default function HomeScreen() {
                     : serviceError
                       ? "Water request couldn't be completed"
                       : waterAdded
-                        ? "Added to Your Bill"
+                        ? "Added to Your Cart"
                         : "Choose a Water Bottle"}
                 </Text>
                 <Text
@@ -2585,8 +2576,8 @@ export default function HomeScreen() {
                     (serviceLoading
                       ? "Finding available water bottles for this branch..."
                       : waterAdded
-                        ? `The water bottle was added to the bill for Table ${activeTable}.`
-                        : `Select a water bottle to add it to the bill for Table ${activeTable}.`)}
+                        ? `The water bottle was added to the cart for Table ${activeTable}.`
+                        : `Select a water bottle to add it to the cart for Table ${activeTable}.`)}
                 </Text>
                 {!serviceLoading && !serviceError && !waterAdded && (
                   <ScrollView
@@ -2635,7 +2626,7 @@ export default function HomeScreen() {
                             </Text>
                           </View>
                           <Pressable
-                            onPress={() => void handleAddWaterToBill(item)}
+                            onPress={() => void handleAddWaterToCart(item)}
                             disabled={addingWaterItemId !== null}
                             className="rounded-2xl px-4 py-3"
                             style={{ backgroundColor: theme.primary }}
@@ -2643,7 +2634,7 @@ export default function HomeScreen() {
                             <Text className="text-white font-black">
                               {addingWaterItemId === item._id
                                 ? "Adding..."
-                                : "Add to Bill"}
+                                : "Add to Cart"}
                             </Text>
                           </Pressable>
                         </View>

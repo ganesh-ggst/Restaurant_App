@@ -18,6 +18,7 @@ import {
   Store,
   Sun,
   TableProperties,
+  Trash2,
   UserPlus,
   UserRound,
   UserRoundPen,
@@ -31,16 +32,19 @@ import {
   Image,
   Modal,
   Pressable,
+  Platform,
   RefreshControl,
   ScrollView,
   Text,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { Image as ExpoImage } from "expo-image";
 
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { useCurrentManager } from "../../hooks/useCurrentManager";
 import { saveThemePreference } from "../../services/theme-preference";
+import { clearPersistentCache } from "../../services/api/persistent-cache";
 import {
   AdminProfile,
   adminProfileApi,
@@ -229,6 +233,34 @@ export default function ManagerProfileView({
     Alert.alert(
       "Coming Soon",
       `${featureName} is currently under development.`,
+    );
+  };
+
+  const clearCachedData = () => {
+    Alert.alert(
+      "Clear cached data",
+      "Locally saved menus, offers, profile data, and images will be removed. They will load again when needed.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Clear",
+          style: "destructive",
+          onPress: () => {
+            void (async () => {
+              await clearPersistentCache();
+              if (Platform.OS !== "web") {
+                await ExpoImage.clearDiskCache();
+                await ExpoImage.clearMemoryCache();
+              }
+            })().catch((error: unknown) => {
+              Alert.alert(
+                "Unable to Clear Cached Data",
+                error instanceof Error ? error.message : "Please try again.",
+              );
+            });
+          },
+        },
+      ],
     );
   };
 
@@ -499,6 +531,12 @@ export default function ManagerProfileView({
               icon={Globe}
               label="Language"
               onPress={() => handleComingSoon("Language Selection")}
+              theme={theme}
+            />
+            <SettingsRow
+              icon={Trash2}
+              label="Clear cached data"
+              onPress={clearCachedData}
               isLast
               theme={theme}
             />

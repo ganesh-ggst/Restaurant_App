@@ -223,6 +223,18 @@ function requireData<T>(
   return data;
 }
 
+function normalizeMobileNumber(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  const nationalNumber =
+    digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits;
+
+  if (!/^\d{10}$/.test(nationalNumber)) {
+    throw new Error("Please enter a valid 10-digit mobile number.");
+  }
+
+  return nationalNumber;
+}
+
 function getAvatarUrl(value: unknown): string {
   if (typeof value === "string") return value.trim();
   if (!value || typeof value !== "object") return "";
@@ -278,6 +290,26 @@ function normalizeUserProfile(profile: UserProfileResponse): UserProfile {
 }
 
 export const profileApi = {
+  async sendPhoneChangeOtp(phone: string): Promise<void> {
+    await request("POST", "/users/me/phone/send-otp", {
+      phone: normalizeMobileNumber(phone),
+    });
+  },
+
+  async verifyPhoneChangeOtp(phone: string, otp: string): Promise<void> {
+    const normalizedOtp = otp.trim();
+    if (!/^\d{6}$/.test(normalizedOtp)) {
+      throw new Error("Enter the 6-digit verification code.");
+    }
+
+    await request("PATCH", "/users/me/phone/verify-otp", {
+      phone: normalizeMobileNumber(phone),
+      otp: normalizedOtp,
+    });
+    cachedUserProfile = null;
+    await invalidateAccountCache("profile");
+  },
+
   async getMyProfile(
     forceRefresh = false,
     onUpdate?: (profile: UserProfile) => void,
