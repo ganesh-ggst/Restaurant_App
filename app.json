@@ -2,7 +2,7 @@
   "expo": {
     "name": "Green Spice",
     "slug": "Restaurant_App",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "green-spice",
@@ -13,11 +13,13 @@
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       },
-      "buildNumber": "3"
+      "buildNumber": "4"
     },
     "android": {
       "softwareKeyboardLayoutMode": "resize",
-      "permissions": ["android.permission.CALL_PHONE"],
+      "permissions": [
+        "android.permission.CALL_PHONE"
+      ],
       "icon": "./assets/images/android-apk-icon.png",
       "adaptiveIcon": {
         "backgroundColor": "#1A3B1D",
@@ -26,7 +28,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.ggst.greenspice",
-      "versionCode": 3
+      "versionCode": 4
     },
     "web": {
       "output": "static",
@@ -50,7 +52,9 @@
         {
           "photosPermission": "Allow Restaurant_App to access photos.",
           "savePhotosPermission": "Allow Restaurant_App to save table QR codes.",
-          "granularPermissions": ["photo"]
+          "granularPermissions": [
+            "photo"
+          ]
         }
       ],
       [
